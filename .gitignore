@@ -1,0 +1,25 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Frontend
+/frontend/node_modules/
+/frontend/dist/
+*.tsbuildinfo
+
+# Release artifacts
+/dist/
+
+# Local configuration and logs
+.env
+.env.*
+!.env.example
+.mise.local.toml
+*.log
+
+# Editor and operating system files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store

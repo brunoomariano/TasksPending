@@ -6,6 +6,7 @@ import {
   DEFAULT_VIEW,
   groupKey,
   renderApp,
+  renderControls,
   type View,
 } from "./render";
 
@@ -104,6 +105,14 @@ const ready = (v: View = view(), data: DashboardSnapshot = snapshot()) =>
     v,
   );
 
+/** The buttons and last update shown next to the clock. */
+const controls = (data: DashboardSnapshot = snapshot()) =>
+  renderControls({
+    kind: "ready",
+    fetchedAt: new Date("2026-09-28T10:00:00Z"),
+    snapshot: data,
+  });
+
 describe("renderApp", () => {
   /**
    * With the API down, the page says it is unavailable and why, and shows no
@@ -200,10 +209,9 @@ describe("renderApp", () => {
    * source, its board, status, last fetch and failure reason.
    */
   test("sources live behind a button that opens a modal", () => {
-    const closed = ready();
-    expect(closed).toContain('data-action="sources"');
-    expect(closed).not.toContain('class="sources-modal"');
-    expect(closed).not.toContain('class="attention"');
+    expect(controls()).toContain('data-action="sources"');
+    expect(controls()).not.toContain('class="attention"');
+    expect(ready()).not.toContain('class="sources-modal"');
 
     const broken = snapshot();
     broken.sources[1] = {
@@ -213,7 +221,7 @@ describe("renderApp", () => {
       message: "401 <bad> credentials",
     };
     const open = ready(view({ sourcesOpen: true }), broken);
-    expect(open).toMatch(
+    expect(controls(broken)).toMatch(
       /data-action="sources"[^>]*>\s*<span class="attention"[^>]*><svg/,
     );
     expect(open).toContain('class="sources-modal"');
@@ -229,7 +237,7 @@ describe("renderApp", () => {
 
     const html = ready(view({ sourcesOpen: true }), broken);
 
-    expect(html).toMatch(
+    expect(controls(broken)).toMatch(
       /data-action="sources"[^>]*>\s*<span class="attention"[^>]*><svg/,
     );
     expect(html).toContain("invalid config config.toml: &lt;bad&gt;");
@@ -321,8 +329,25 @@ describe("renderApp", () => {
     expect(renderApp({ kind: "loading" })).toContain("Loading");
   });
 
-  /** With data on screen, a button refreshes every source now. */
-  test("offers a refresh button", () => {
-    expect(ready()).toContain('data-action="refresh"');
+  /**
+   * Next to the clock: Sources and Refresh, with the last data fetch below
+   * them. Before any data there is nothing to refresh or inspect.
+   */
+  test("controls next to the clock show the buttons and last fetch", () => {
+    const html = controls();
+
+    expect(html).toMatch(
+      /data-action="sources"[\s\S]*data-action="refresh"[\s\S]*class="updated"/,
+    );
+    expect(renderControls({ kind: "loading" })).toBe("");
+  });
+
+  /** The page has no header: no product title, no pending count. */
+  test("the dashboard has no header, title or pending count", () => {
+    const html = ready();
+
+    expect(html).not.toContain("TasksPending");
+    expect(html).not.toContain("pending<");
+    expect(html).not.toContain('data-action="refresh"');
   });
 });

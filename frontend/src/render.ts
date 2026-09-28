@@ -96,24 +96,33 @@ export function renderApp(state: ViewState, view: View = DEFAULT_VIEW): string {
   }
 }
 
-function renderMessage(message: string): string {
+/**
+ * Sources and Refresh, with the last data fetch below them; shown next to
+ * the clock once there is data.
+ */
+export function renderControls(state: ViewState): string {
+  if (state.kind !== "ready" && state.kind !== "stale") {
+    return "";
+  }
+  const { snapshot } = state;
+  const sources = needsAttention(snapshot)
+    ? `<span class="attention" aria-label="attention needed">${icon("warning")}</span>`
+    : icon("sources");
   return `
-    <header class="topbar">
-      <div>
-        <h1>TasksPending</h1>
-        <p>${escapeHtml(message)}</p>
-      </div>
-    </header>
+    <div class="actions">
+      <button type="button" class="button sources-button" data-action="sources" aria-label="Sources">${sources}<span class="label">Sources</span></button>
+      <button type="button" class="button primary refresh" data-action="refresh" aria-label="Refresh">${icon("refresh")}<span class="label">Refresh</span></button>
+    </div>
+    <p class="updated">${icon("clock")} Updated ${escapeHtml(localTime(snapshot.generated_at))}</p>
   `;
+}
+
+function renderMessage(message: string): string {
+  return `<p class="message">${escapeHtml(message)}</p>`;
 }
 
 function renderUnavailable(error: string): string {
   return `
-    <header class="topbar">
-      <div>
-        <h1>TasksPending</h1>
-      </div>
-    </header>
     <section class="unavailable" role="alert">
       <h2>API unavailable</h2>
       <p>${escapeHtml(error)}</p>
@@ -143,31 +152,7 @@ function renderSnapshot(
       board.groups.map((group) => [group.source, group.icon] as const),
     ),
   );
-  const pending = new Set(
-    boards.flatMap((board) =>
-      board.groups.flatMap((group) =>
-        group.columns.flatMap((column) => column.cards.map((card) => card.id)),
-      ),
-    ),
-  ).size;
-  const warning = needsAttention(snapshot)
-    ? `<span class="attention" aria-label="attention needed">${icon("warning")}</span>`
-    : icon("sources");
   return `
-    <header class="topbar">
-      <div>
-        <h1>TasksPending</h1>
-        <p class="meta">
-          <span>${pending} pending</span>
-          <span class="dot" aria-hidden="true">·</span>
-          ${icon("clock")} ${escapeHtml(localTime(snapshot.generated_at))}
-        </p>
-      </div>
-      <div class="actions">
-        <button type="button" class="button sources-button" data-action="sources" aria-label="Sources">${warning}<span class="label">Sources</span></button>
-        <button type="button" class="button primary refresh" data-action="refresh" aria-label="Refresh">${icon("refresh")}<span class="label">Refresh</span></button>
-      </div>
-    </header>
     ${banner}
     <nav class="filters">
       ${renderFilter("All", "", view.board === null)}

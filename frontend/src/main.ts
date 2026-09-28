@@ -2,7 +2,7 @@ import "./styles.css";
 import { loadSnapshot, requestRefresh } from "./api";
 import { startClock } from "./clock";
 import { startPolling } from "./poll";
-import { DEFAULT_VIEW, renderApp, type View } from "./render";
+import { DEFAULT_VIEW, renderApp, renderControls, type View } from "./render";
 import type { ViewState } from "./state";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -73,7 +73,8 @@ if (clock) {
 }
 
 const app = document.querySelector<HTMLElement>("#app");
-if (app) {
+const controls = document.querySelector<HTMLElement>("#controls");
+if (app && controls) {
   let view = savedView();
   let shown: ViewState = { kind: "loading" };
   /** While set, the Refresh button stays disabled with this label. */
@@ -81,7 +82,8 @@ if (app) {
 
   const draw = () => {
     app.innerHTML = renderApp(shown, view);
-    const button = app.querySelector<HTMLButtonElement>(
+    controls.innerHTML = renderControls(shown);
+    const button = controls.querySelector<HTMLButtonElement>(
       '[data-action="refresh"]',
     );
     if (button && refreshHold && Date.now() < refreshHold.until) {
@@ -115,7 +117,8 @@ if (app) {
       change({ sourcesOpen: false });
     }
   });
-  app.addEventListener("click", async (event) => {
+  // The buttons live next to the clock, outside `app`.
+  document.body.addEventListener("click", async (event) => {
     const target = event.target as HTMLElement;
 
     const filter = target.closest<HTMLElement>("[data-board]");

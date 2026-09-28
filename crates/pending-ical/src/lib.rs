@@ -54,10 +54,10 @@ pub enum When {
 }
 
 impl When {
-    const ALL: [When; 4] = [When::Now, When::Today, When::Tomorrow, When::Later];
+    pub const ALL: [When; 4] = [When::Now, When::Today, When::Tomorrow, When::Later];
 
-    /// The column name `occurrences` uses for this bucket.
-    fn default_name(self) -> &'static str {
+    /// The column name [`occurrence_items`] uses for this bucket.
+    pub fn default_name(self) -> &'static str {
         match self {
             When::Now => "Now",
             When::Today => "Today",
@@ -189,7 +189,7 @@ impl PendingSource for IcalSource {
 }
 
 /// The machine's time zone, for day boundaries and displayed times.
-fn local_zone() -> Tz {
+pub fn local_zone() -> Tz {
     iana_time_zone::get_timezone()
         .ok()
         .and_then(|name| name.parse().ok())
@@ -227,7 +227,7 @@ pub fn occurrences(
         }
     }
 
-    let mut found = Vec::new();
+    let mut found: Vec<Occurrence> = Vec::new();
     for event in &events {
         if event.cancelled() {
             continue;
@@ -278,23 +278,36 @@ pub fn occurrences(
             } else {
                 start + duration
             };
-            let not_over = finish > now || (duration.is_zero() && start >= now);
-            if not_over && start < end {
-                found.push((start, finish, all_day, event));
-            }
+            let day = start.with_timezone(&zone).date_naive();
+            found.push(Occurrence {
+                id: format!("ical:{}:{}", event.uid, start.to_rfc3339()),
+                title: event.summary.clone().unwrap_or_default(),
+                location: event.location.clone(),
+                url: event
+                    .url
+                    .clone()
+                    .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+                    .or_else(|| {
+                        google.then(|| {
+                            format!(
+                                "https://calendar.google.com/calendar/r/day/{}",
+                                day.format("%Y/%-m/%-d")
+                            )
+                        })
+                    }),
+                start,
+                finish,
+                all_day,
+                updated_at: event
+                    .last_modified
+                    .as_ref()
+                    .and_then(|prop| parse_time(prop, zone))
+                    .map(|(at, _)| at),
+            });
         }
     }
 
-    found.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.3.uid.cmp(&b.3.uid)));
-    found.truncate(window.max_events);
-
-    let today = now.with_timezone(&zone).date_naive();
-    let items = found
-        .into_iter()
-        .map(|(start, finish, all_day, event)| {
-            card(event, start, finish, all_day, now, today, zone, google)
-        })
-        .collect();
+    let items = occurrence_items(found, now, window, zone);
 
     let mut warnings = Vec::new();
     if unreadable > 0 {
@@ -305,81 +318,93 @@ pub fn occurrences(
     Ok(SourceBatch { items, warnings })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn card(
-    event: &Event,
-    start: DateTime<Utc>,
-    finish: DateTime<Utc>,
-    all_day: bool,
+/// One occurrence of a calendar event, from any calendar source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Occurrence {
+    /// Stable per occurrence, e.g. `ical:{uid}:{start}`.
+    pub id: String,
+    pub title: String,
+    pub location: Option<String>,
+    pub url: Option<String>,
+    pub start: DateTime<Utc>,
+    pub finish: DateTime<Utc>,
+    pub all_day: bool,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// The occurrences inside `window` as cards in time-bucket columns (named as
+/// [`When`]'s defaults): not over yet, starting before the window ends,
+/// soonest first, at most `window.max_events`.
+pub fn occurrence_items(
+    mut found: Vec<Occurrence>,
     now: DateTime<Utc>,
-    today: NaiveDate,
+    window: Window,
     zone: Tz,
-    google: bool,
-) -> SourceItem {
-    let local_start = start.with_timezone(&zone);
+) -> Vec<SourceItem> {
+    let end = now + chrono::Duration::days(window.days as i64);
+    found.retain(|o| {
+        let not_over = o.finish > now || (o.finish == o.start && o.start >= now);
+        not_over && o.start < end
+    });
+    found.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.id.cmp(&b.id)));
+    found.truncate(window.max_events);
+
+    let today = now.with_timezone(&zone).date_naive();
+    found
+        .into_iter()
+        .map(|occurrence| card(occurrence, now, today, zone))
+        .collect()
+}
+
+fn card(o: Occurrence, now: DateTime<Utc>, today: NaiveDate, zone: Tz) -> SourceItem {
+    let local_start = o.start.with_timezone(&zone);
     let day = local_start.date_naive();
-    let section = if all_day {
+    let section = if o.all_day {
         if day <= today {
             "Today"
         } else {
             day_section(day, today)
         }
-    } else if start <= now {
+    } else if o.start <= now {
         "Now"
     } else {
         day_section(day, today)
     };
 
-    let mut body = if all_day {
+    let mut body = if o.all_day {
         format!("{} · all day", local_start.format("%a %d %b"))
-    } else if finish == start {
+    } else if o.finish == o.start {
         local_start.format("%a %d %b %H:%M").to_string()
     } else {
         format!(
             "{}–{}",
             local_start.format("%a %d %b %H:%M"),
-            finish.with_timezone(&zone).format("%H:%M")
+            o.finish.with_timezone(&zone).format("%H:%M")
         )
     };
-    if let Some(location) = event.location.as_deref().filter(|l| !l.is_empty()) {
+    if let Some(location) = o.location.as_deref().filter(|l| !l.is_empty()) {
         body.push_str(&format!(" · {location}"));
     }
-
-    let url = event
-        .url
-        .clone()
-        .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
-        .or_else(|| {
-            google.then(|| {
-                format!(
-                    "https://calendar.google.com/calendar/r/day/{}",
-                    day.format("%Y/%-m/%-d")
-                )
-            })
-        });
 
     SourceItem {
         column: section.to_owned(),
         card: PendingCard {
-            id: format!("ical:{}:{}", event.uid, start.to_rfc3339()),
-            title: event
-                .summary
-                .clone()
-                .unwrap_or_else(|| "(no title)".to_owned()),
+            id: o.id,
+            title: if o.title.is_empty() {
+                "(no title)".to_owned()
+            } else {
+                o.title
+            },
             body,
             source: "calendar".to_owned(),
-            url,
-            due_at: Some(start),
-            severity: if !all_day && start <= now + IMMINENT {
+            url: o.url,
+            due_at: Some(o.start),
+            severity: if !o.all_day && o.start <= now + IMMINENT {
                 CardSeverity::Warning
             } else {
                 CardSeverity::Info
             },
-            updated_at: event
-                .last_modified
-                .as_ref()
-                .and_then(|prop| parse_time(prop, zone))
-                .map_or(now, |(at, _)| at),
+            updated_at: o.updated_at.unwrap_or(now),
         },
     }
 }

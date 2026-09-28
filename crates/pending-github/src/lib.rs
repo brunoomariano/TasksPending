@@ -264,7 +264,12 @@ const GH_TIMEOUT: Duration = Duration::from_secs(5);
 /// Token from `gh auth token`, if the GitHub CLI is installed, logged in and
 /// answers within a few seconds.
 pub fn gh_cli_token() -> Option<String> {
-    let mut child = std::process::Command::new("gh")
+    gh_cli_token_with("gh", GH_TIMEOUT)
+}
+
+/// [`gh_cli_token`] with the program and time limit given, for tests.
+pub fn gh_cli_token_with(program: &str, limit: Duration) -> Option<String> {
+    let mut child = std::process::Command::new(program)
         .args(["auth", "token"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -272,7 +277,7 @@ pub fn gh_cli_token() -> Option<String> {
         .spawn()
         .ok()?;
 
-    let deadline = std::time::Instant::now() + GH_TIMEOUT;
+    let deadline = std::time::Instant::now() + limit;
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => break,

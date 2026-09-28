@@ -459,3 +459,44 @@ fn tokens_are_trimmed() {
     let env = |key: &str| (key == "GITHUB_TOKEN").then(|| "abc\n".to_owned());
     assert_eq!(resolve_token(&env, &|| None), Some("abc".to_owned()));
 }
+
+#[cfg(unix)]
+fn fake_gh(name: &str, script: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("fake-gh");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// O token vem da saída do `gh auth token`; saída com erro, vazia ou um `gh`
+/// que trava não viram token, e o travamento desiste no limite.
+#[cfg(unix)]
+#[test]
+fn gh_cli_token_handles_success_failure_and_hangs() {
+    use pending_github::gh_cli_token_with;
+    use std::time::{Duration, Instant};
+
+    let ok = fake_gh("ok", "echo ' gho_from_cli '");
+    let fails = fake_gh("fails", "echo 'not logged in' >&2; exit 1");
+    let empty = fake_gh("empty", "true");
+    let hangs = fake_gh("hangs", "sleep 30");
+    let limit = Duration::from_millis(300);
+
+    assert_eq!(
+        gh_cli_token_with(ok.to_str().unwrap(), limit),
+        Some("gho_from_cli".to_owned())
+    );
+    assert_eq!(gh_cli_token_with(fails.to_str().unwrap(), limit), None);
+    assert_eq!(gh_cli_token_with(empty.to_str().unwrap(), limit), None);
+    assert_eq!(gh_cli_token_with("/nonexistent/gh", limit), None);
+
+    let started = Instant::now();
+    assert_eq!(gh_cli_token_with(hangs.to_str().unwrap(), limit), None);
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "gave up at the limit"
+    );
+}

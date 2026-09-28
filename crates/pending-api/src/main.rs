@@ -125,15 +125,14 @@ fn app(aggregator: Aggregator, static_dir: Option<&Path>) -> Router {
 /// `--static-dir`, else `frontend/` next to the binary's `bin/` directory (the
 /// release bundle layout), if it has an `index.html`.
 fn resolve_static_dir(cli: Option<PathBuf>) -> Option<PathBuf> {
-    if cli.is_some() {
-        return cli;
-    }
-    let bundled = std::env::current_exe()
-        .ok()?
-        .parent()?
-        .parent()?
-        .join("frontend");
-    bundled.join("index.html").is_file().then_some(bundled)
+    cli.or_else(|| bundled_frontend(&std::env::current_exe().ok()?))
+}
+
+/// `<bundle>/frontend` for a binary at `<bundle>/bin/<name>`, when it holds an
+/// `index.html`.
+fn bundled_frontend(exe: &Path) -> Option<PathBuf> {
+    let frontend = exe.parent()?.parent()?.join("frontend");
+    frontend.join("index.html").is_file().then_some(frontend)
 }
 
 async fn healthz() -> Json<Health> {
@@ -355,5 +354,24 @@ mod tests {
         let (status, _) = post(app(idle_aggregator(), None), "/api/v1/refresh", false).await;
 
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    /// No bundle de release (`bin/` ao lado de `frontend/`), a API acha o
+    /// frontend sozinha; sem `index.html`, não serve nada; a flag vence.
+    #[test]
+    fn static_dir_comes_from_flag_or_release_bundle() {
+        let bundle =
+            std::env::temp_dir().join(format!("tasks-pending-bundle-{}", std::process::id()));
+        std::fs::create_dir_all(bundle.join("bin")).unwrap();
+        std::fs::create_dir_all(bundle.join("frontend")).unwrap();
+        let exe = bundle.join("bin/pending-api");
+
+        assert_eq!(bundled_frontend(&exe), None, "no index.html yet");
+        std::fs::write(bundle.join("frontend/index.html"), "<main></main>").unwrap();
+        assert_eq!(bundled_frontend(&exe), Some(bundle.join("frontend")));
+
+        let flag = PathBuf::from("/explicit/dist");
+        assert_eq!(resolve_static_dir(Some(flag.clone())), Some(flag));
+        let _ = std::fs::remove_dir_all(&bundle);
     }
 }

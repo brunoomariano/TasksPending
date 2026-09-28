@@ -5,6 +5,7 @@ import {
   columnKey,
   DEFAULT_VIEW,
   groupKey,
+  hideKey,
   renderApp,
   renderControls,
   type View,
@@ -106,12 +107,15 @@ const ready = (v: View = view(), data: DashboardSnapshot = snapshot()) =>
   );
 
 /** The buttons and last update shown next to the clock. */
-const controls = (data: DashboardSnapshot = snapshot()) =>
-  renderControls({
-    kind: "ready",
-    fetchedAt: new Date("2026-09-28T10:00:00Z"),
-    snapshot: data,
-  });
+const controls = (data: DashboardSnapshot = snapshot(), v: View = view()) =>
+  renderControls(
+    {
+      kind: "ready",
+      fetchedAt: new Date("2026-09-28T10:00:00Z"),
+      snapshot: data,
+    },
+    v,
+  );
 
 describe("renderApp", () => {
   /**
@@ -141,17 +145,115 @@ describe("renderApp", () => {
     );
   });
 
-  /** The board filter is optional: "All" by default, or a single board. */
-  test("the board filter narrows the page to one board", () => {
-    expect(ready()).toMatch(/class="filter active" data-board="">\s*All/);
+  /**
+   * The board filter lives in a settings dialog opened by a gear, the third
+   * button next to the clock; the page itself shows no filter. It is
+   * optional: "All" by default, or a single board.
+   */
+  test("the board filter lives in the settings dialog", () => {
+    expect(controls()).toMatch(
+      /data-action="sources"[\s\S]*data-action="refresh"[\s\S]*data-action="settings"/,
+    );
+    expect(ready()).not.toContain("data-board=");
 
-    const html = ready(view({ board: "Personal" }));
+    const settings = ready(view({ settingsOpen: true }));
+    expect(settings).toContain('class="modal settings-modal"');
+    expect(settings).toMatch(/class="filter active" data-board="">\s*All/);
+    expect(settings).toContain('data-action="close-modal"');
 
+    const html = ready(view({ board: "Personal", settingsOpen: true }));
     expect(html).toMatch(
       /class="filter active" data-board="Personal">\s*Personal/,
     );
     expect(html).toContain("todoist</h2>");
     expect(html).not.toContain("plane</h2>");
+  });
+
+  /**
+   * Settings also hide a whole board, a group or a single column: they list
+   * every board with its groups and columns, each with a "shown" checkbox;
+   * children of a hidden item are greyed out.
+   */
+  test("settings list boards, groups and columns to hide", () => {
+    const hidden = new Set([hideKey.group("Work", "github")]);
+    const html = ready(view({ settingsOpen: true, hidden }));
+    const modal =
+      html.match(
+        /<section class="modal settings-modal"[\s\S]*<\/section>/,
+      )?.[0] ?? "";
+
+    for (const key of [
+      hideKey.board("Work"),
+      hideKey.board("Personal"),
+      hideKey.group("Work", "plane"),
+      hideKey.column("Work", "plane", "Mine"),
+      hideKey.column("Personal", "todoist", "Today"),
+    ]) {
+      expect(modal).toMatch(new RegExp(`data-hide="${key}" checked`));
+    }
+    expect(modal).toMatch(
+      new RegExp(`data-hide="${hideKey.group("Work", "github")}"(?! checked)`),
+    );
+    expect(modal).toMatch(
+      new RegExp(
+        `data-hide="${hideKey.column("Work", "github", "Review")}" checked disabled`,
+      ),
+    );
+  });
+
+  /** A hidden board, group or column is not drawn, whatever the filter. */
+  test("hidden boards, groups and columns are not drawn", () => {
+    const board = ready(view({ hidden: new Set([hideKey.board("Personal")]) }));
+    expect(board).not.toContain("todoist</h2>");
+    expect(board).toContain("plane</h2>");
+
+    const group = ready(
+      view({ hidden: new Set([hideKey.group("Work", "plane")]) }),
+    );
+    expect(group).not.toContain("plane</h2>");
+    expect(group).toContain("github</h2>");
+
+    // Hidden empty columns stay hidden when empty columns are shown, and
+    // are not counted.
+    const column = ready(
+      view({
+        hidden: new Set([hideKey.column("Work", "github", "My PRs")]),
+        expanded: new Set([groupKey("Work", "github")]),
+      }),
+    );
+    expect(column).not.toContain("My PRs");
+    expect(column).toContain("Notifications");
+    expect(
+      ready(
+        view({ hidden: new Set([hideKey.column("Work", "github", "My PRs")]) }),
+      ),
+    ).toMatch(/<\/svg> 1 empty/);
+
+    // A group whose columns are all hidden goes away too.
+    const all = ready(
+      view({
+        hidden: new Set([hideKey.column("Personal", "todoist", "Today")]),
+      }),
+    );
+    expect(all).not.toContain("todoist</h2>");
+  });
+
+  /** The gear also shows when something is hidden. */
+  test("the gear marks hidden items", () => {
+    expect(
+      controls(
+        snapshot(),
+        view({ hidden: new Set([hideKey.board("Personal")]) }),
+      ),
+    ).toMatch(/aria-label="Settings \(1 hidden\)"[\s\S]*class="filter-dot"/);
+  });
+
+  /** While one board is picked, the gear says so, so nothing looks missing. */
+  test("the gear marks an active board filter", () => {
+    expect(controls()).not.toContain('class="filter-dot"');
+    expect(controls(snapshot(), view({ board: "Personal" }))).toMatch(
+      /data-action="settings"[^>]*aria-label="Settings \(showing Personal\)"[\s\S]*class="filter-dot"/,
+    );
   });
 
   /**
@@ -211,7 +313,7 @@ describe("renderApp", () => {
   test("sources live behind a button that opens a modal", () => {
     expect(controls()).toContain('data-action="sources"');
     expect(controls()).not.toContain('class="attention"');
-    expect(ready()).not.toContain('class="sources-modal"');
+    expect(ready()).not.toContain('class="modal sources-modal"');
 
     const broken = snapshot();
     broken.sources[1] = {
@@ -224,10 +326,10 @@ describe("renderApp", () => {
     expect(controls(broken)).toMatch(
       /data-action="sources"[^>]*>\s*<span class="attention"[^>]*><svg/,
     );
-    expect(open).toContain('class="sources-modal"');
+    expect(open).toContain('class="modal sources-modal"');
     expect(open).toMatch(/plane[\s\S]*Work[\s\S]*ready/);
     expect(open).toContain("401 &lt;bad&gt; credentials");
-    expect(open).toContain('data-action="close-sources"');
+    expect(open).toContain('data-action="close-modal"');
   });
 
   /** A saved config with an error also lights the button's warning. */

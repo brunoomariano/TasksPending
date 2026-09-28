@@ -19,6 +19,7 @@ function savedView(): View {
       board?: string | null;
       expanded?: string[];
       openColumns?: string[];
+      hidden?: string[];
     };
     const set = (list: unknown) =>
       new Set(Array.isArray(list) ? list.map(String) : []);
@@ -27,6 +28,7 @@ function savedView(): View {
       board: typeof saved.board === "string" ? saved.board : null,
       expanded: set(saved.expanded),
       openColumns: set(saved.openColumns),
+      hidden: set(saved.hidden),
     };
   } catch {
     return DEFAULT_VIEW;
@@ -41,6 +43,7 @@ function saveView(view: View): void {
         board: view.board,
         expanded: [...view.expanded],
         openColumns: [...view.openColumns],
+        hidden: [...view.hidden],
       }),
     );
   } catch {
@@ -82,7 +85,7 @@ if (app && controls) {
 
   const draw = () => {
     app.innerHTML = renderApp(shown, view);
-    controls.innerHTML = renderControls(shown);
+    controls.innerHTML = renderControls(shown, view);
     const button = controls.querySelector<HTMLButtonElement>(
       '[data-action="refresh"]',
     );
@@ -113,8 +116,8 @@ if (app && controls) {
     }
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && view.sourcesOpen) {
-      change({ sourcesOpen: false });
+    if (event.key === "Escape" && (view.sourcesOpen || view.settingsOpen)) {
+      change({ sourcesOpen: false, settingsOpen: false });
     }
   });
   // The buttons live next to the clock, outside `app`.
@@ -133,6 +136,11 @@ if (app && controls) {
       });
       return;
     }
+    const hide = target.closest<HTMLElement>("[data-hide]");
+    if (hide) {
+      change({ hidden: flip(view.hidden, hide.dataset.hide ?? "") });
+      return;
+    }
     const more = target.closest<HTMLElement>("[data-more-column]");
     if (more) {
       change({
@@ -144,10 +152,14 @@ if (app && controls) {
       change({ sourcesOpen: true });
       return;
     }
+    if (target.closest('[data-action="settings"]')) {
+      change({ settingsOpen: true });
+      return;
+    }
     // Close on the × button or a click on the backdrop itself.
-    const close = target.closest<HTMLElement>('[data-action="close-sources"]');
+    const close = target.closest<HTMLElement>('[data-action="close-modal"]');
     if (close && (close === target || close.classList.contains("close"))) {
-      change({ sourcesOpen: false });
+      change({ sourcesOpen: false, settingsOpen: false });
       return;
     }
 

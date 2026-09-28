@@ -141,12 +141,11 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 20px 28px 0;
 }
 
 .filter {
   padding: 5px 12px;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
   color: var(--text-2);
@@ -159,10 +158,10 @@ button {
 }
 
 .filter.active {
-  border-color: var(--border);
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* Kanban: groups (one per source) side by side, scrolling sideways. */
@@ -367,7 +366,7 @@ button {
   backdrop-filter: blur(2px);
 }
 
-.sources-modal {
+.modal {
   width: min(600px, 100%);
   max-height: 80vh;
   overflow: auto;
@@ -378,19 +377,19 @@ button {
   box-shadow: 0 20px 50px rgb(0 0 0 / 35%);
 }
 
-.sources-modal header {
+.modal header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.sources-modal h2 {
+.modal h2 {
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
 }
 
-.sources-modal .close {
+.modal .close {
   display: inline-flex;
   padding: 4px;
   border: 0;
@@ -400,7 +399,7 @@ button {
   cursor: pointer;
 }
 
-.sources-modal .close:hover {
+.modal .close:hover {
   background: var(--surface-2);
   color: var(--text);
 }
@@ -468,10 +467,6 @@ button {
 }
 
 @media (max-width: 640px) {
-  .filters {
-    margin: 16px 16px 0;
-  }
-
   .board {
     padding: 16px 16px 24px;
   }
@@ -585,4 +580,120 @@ button {
     flex: none;
     width: 100%;
   }
+}
+
+.icon-button {
+  position: relative;
+  width: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+/* A board filter is on. */
+.filter-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.settings-modal h3 {
+  margin: 16px 0 8px;
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* Show/hide tree in Settings. */
+.visibility,
+.visibility ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.visibility ul {
+  padding-left: 18px;
+}
+
+.visibility-board + .visibility-board {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+
+.visibility-board > .switch-row {
+  font-weight: 600;
+}
+
+.switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.switch-row.inherited {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.switch {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: background 120ms;
+  appearance: none;
+  cursor: pointer;
+}
+
+.switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: var(--shadow);
+  transition: transform 120ms;
+  content: "";
+}
+
+.switch:checked {
+  background: var(--accent);
+}
+
+.switch:checked::after {
+  transform: translateX(14px);
+}
+
+.switch:disabled {
+  cursor: default;
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }

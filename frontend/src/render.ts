@@ -15,6 +15,8 @@ const ICON_PATHS = {
   warning:
     '<path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  settings:
+    '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   eye: '<path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/>',
   eyeOff:
     '<path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/>',
@@ -49,14 +51,27 @@ export interface View {
   expanded: ReadonlySet<string>;
   /** Columns (see `columnKey`) showing every card, not just the first ones. */
   openColumns: ReadonlySet<string>;
+  /** Boards, groups and columns switched off (see `hideKey`). */
+  hidden: ReadonlySet<string>;
   sourcesOpen: boolean;
+  settingsOpen: boolean;
 }
 
 export const DEFAULT_VIEW: View = {
   board: null,
   expanded: new Set(),
   openColumns: new Set(),
+  hidden: new Set(),
   sourcesOpen: false,
+  settingsOpen: false,
+};
+
+/** Keys of the things settings can hide. */
+export const hideKey = {
+  board: (board: string) => `board:${board}`,
+  group: (board: string, source: string) => `group:${board}/${source}`,
+  column: (board: string, source: string, column: string) =>
+    `column:${board}/${source}/${column}`,
 };
 
 /** Cards a column shows before "show more". */
@@ -100,7 +115,10 @@ export function renderApp(state: ViewState, view: View = DEFAULT_VIEW): string {
  * Sources and Refresh, with the last data fetch below them; shown next to
  * the clock once there is data.
  */
-export function renderControls(state: ViewState): string {
+export function renderControls(
+  state: ViewState,
+  view: View = DEFAULT_VIEW,
+): string {
   if (state.kind !== "ready" && state.kind !== "stale") {
     return "";
   }
@@ -112,9 +130,23 @@ export function renderControls(state: ViewState): string {
     <div class="actions">
       <button type="button" class="button sources-button" data-action="sources" aria-label="Sources">${sources}<span class="label">Sources</span></button>
       <button type="button" class="button primary refresh" data-action="refresh" aria-label="Refresh">${icon("refresh")}<span class="label">Refresh</span></button>
+      <button type="button" class="button icon-button settings-button" data-action="settings" aria-label="${escapeHtml(settingsLabel(view))}" title="Settings">${icon("settings")}${
+        view.board === null && view.hidden.size === 0
+          ? ""
+          : '<span class="filter-dot"></span>'
+      }</button>
     </div>
     <p class="updated">${icon("clock")} Updated ${escapeHtml(localTime(snapshot.generated_at))}</p>
   `;
+}
+
+/** "Settings", plus what the settings currently change. */
+function settingsLabel(view: View): string {
+  const changes = [
+    view.board === null ? "" : `showing ${view.board}`,
+    view.hidden.size === 0 ? "" : `${view.hidden.size} hidden`,
+  ].filter(Boolean);
+  return changes.length ? `Settings (${changes.join(", ")})` : "Settings";
 }
 
 function renderMessage(message: string): string {
@@ -145,7 +177,9 @@ function renderSnapshot(
   banner: string,
 ): string {
   const boards = snapshot.boards.filter(
-    (board) => view.board === null || board.name === view.board,
+    (board) =>
+      (view.board === null || board.name === view.board) &&
+      !view.hidden.has(hideKey.board(board.name)),
   );
   const icons = new Map(
     snapshot.boards.flatMap((board) =>
@@ -154,24 +188,20 @@ function renderSnapshot(
   );
   return `
     ${banner}
-    <nav class="filters">
-      ${renderFilter("All", "", view.board === null)}
-      ${snapshot.boards
-        .map((board) =>
-          renderFilter(board.name, board.name, view.board === board.name),
-        )
-        .join("")}
-    </nav>
     <section class="board">
       ${boards
         .flatMap((board) =>
-          board.groups.map((group) =>
-            renderGroup(board.name, group, snapshot, view),
-          ),
+          board.groups
+            .filter(
+              (group) =>
+                !view.hidden.has(hideKey.group(board.name, group.source)),
+            )
+            .map((group) => renderGroup(board.name, group, snapshot, view)),
         )
         .join("")}
     </section>
     ${view.sourcesOpen ? renderSourcesModal(snapshot, icons) : ""}
+    ${view.settingsOpen ? renderSettingsModal(snapshot, view) : ""}
   `;
 }
 
@@ -203,10 +233,15 @@ function renderGroup(
 ): string {
   const key = groupKey(board, group.source);
   const expanded = view.expanded.has(key);
-  const empty = group.columns.filter((column) => column.cards.length === 0);
-  const shown = group.columns.filter(
-    (column) => column.cards.length > 0 || expanded,
+  const visible = group.columns.filter(
+    (column) =>
+      !view.hidden.has(hideKey.column(board, group.source, column.name)),
   );
+  if (visible.length === 0) {
+    return "";
+  }
+  const empty = visible.filter((column) => column.cards.length === 0);
+  const shown = visible.filter((column) => column.cards.length > 0 || expanded);
   const health = snapshot.sources.find((s) => s.name === group.source);
   const toggle = empty.length
     ? `<button type="button" class="empty-toggle" data-toggle-empty="${escapeHtml(key)}" title="${expanded ? "Hide" : "Show"} empty columns">
@@ -317,15 +352,104 @@ function renderSourcesModal(
     ? `<p class="stale" role="alert">Config not reloaded (the previous one is still running): ${escapeHtml(snapshot.config_error)}</p>`
     : "";
 
+  return renderModal(
+    "Sources",
+    "sources-modal",
+    `${configError}<ul>${rows}</ul>`,
+  );
+}
+
+/** Page settings: for now, which board to show. */
+function renderSettingsModal(snapshot: DashboardSnapshot, view: View): string {
+  return renderModal(
+    "Settings",
+    "settings-modal",
+    `
+      <h3>Board</h3>
+      <nav class="filters">
+        ${renderFilter("All", "", view.board === null)}
+        ${snapshot.boards
+          .map((board) =>
+            renderFilter(board.name, board.name, view.board === board.name),
+          )
+          .join("")}
+      </nav>
+      <h3>Show or hide</h3>
+      <ul class="visibility">
+        ${snapshot.boards
+          .map((board) => {
+            const boardOff = view.hidden.has(hideKey.board(board.name));
+            const groups = board.groups
+              .map((group) => {
+                const groupOff = view.hidden.has(
+                  hideKey.group(board.name, group.source),
+                );
+                const columns = group.columns
+                  .map(
+                    (column) => `
+                      <li>${renderSwitch(
+                        column.name,
+                        hideKey.column(board.name, group.source, column.name),
+                        view,
+                        boardOff || groupOff,
+                      )}</li>`,
+                  )
+                  .join("");
+                return `
+                  <li>
+                    ${renderSwitch(
+                      group.source,
+                      hideKey.group(board.name, group.source),
+                      view,
+                      boardOff,
+                      sourceIcon(group.icon),
+                    )}
+                    <ul>${columns}</ul>
+                  </li>`;
+              })
+              .join("");
+            return `
+              <li class="visibility-board">
+                ${renderSwitch(board.name, hideKey.board(board.name), view, false)}
+                <ul>${groups}</ul>
+              </li>`;
+          })
+          .join("")}
+      </ul>
+    `,
+  );
+}
+
+/**
+ * A show/hide switch; `inherited` greys it out when a parent is hidden,
+ * keeping its own setting for when the parent comes back.
+ */
+function renderSwitch(
+  label: string,
+  key: string,
+  view: View,
+  inherited: boolean,
+  prefix = "",
+): string {
+  const on = !view.hidden.has(key);
   return `
-    <div class="modal-backdrop" data-action="close-sources">
-      <section class="sources-modal" role="dialog" aria-modal="true" aria-label="Sources">
+    <label class="switch-row${inherited ? " inherited" : ""}">
+      <span class="switch-label">${prefix}${escapeHtml(label)}</span>
+      <input type="checkbox" role="switch" class="switch" data-hide="${escapeHtml(key)}"${on ? " checked" : ""}${inherited ? " disabled" : ""} aria-label="Show ${escapeHtml(label)}">
+    </label>
+  `;
+}
+
+/** A dialog over the page; the × or a click outside closes it. */
+function renderModal(title: string, kind: string, body: string): string {
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal ${kind}" role="dialog" aria-modal="true" aria-label="${title}">
         <header>
-          <h2>Sources</h2>
-          <button type="button" class="close" data-action="close-sources" aria-label="Close">${icon("close")}</button>
+          <h2>${title}</h2>
+          <button type="button" class="close" data-action="close-modal" aria-label="Close">${icon("close")}</button>
         </header>
-        ${configError}
-        <ul>${rows}</ul>
+        ${body}
       </section>
     </div>
   `;

@@ -204,6 +204,7 @@ mod tests {
                                     source: "github".to_owned(),
                                     url: None,
                                     severity: CardSeverity::Warning,
+                                    due_at: None,
                                     updated_at: at,
                                 },
                             }],
@@ -287,6 +288,7 @@ mod tests {
                     source: "github".to_owned(),
                     url: None,
                     severity: CardSeverity::Info,
+                    due_at: None,
                     updated_at: at,
                 },
             })

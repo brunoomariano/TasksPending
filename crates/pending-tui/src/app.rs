@@ -184,6 +184,7 @@ mod tests {
                 source: "test".to_owned(),
                 url: url.map(str::to_owned),
                 severity: CardSeverity::Info,
+                due_at: None,
                 updated_at: Utc.with_ymd_and_hms(2026, 9, 28, 10, 0, 0).unwrap(),
             },
         }

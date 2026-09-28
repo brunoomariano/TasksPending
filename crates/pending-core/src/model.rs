@@ -28,6 +28,10 @@ pub struct PendingCard {
     pub body: String,
     pub source: String,
     pub url: Option<String>,
+    /// When the card is due or starts (deadline, event). Cards with one sort
+    /// soonest first.
+    #[serde(default)]
+    pub due_at: Option<DateTime<Utc>>,
     pub severity: CardSeverity,
     pub updated_at: DateTime<Utc>,
 }
@@ -73,6 +77,7 @@ mod tests {
             source: "github".to_owned(),
             url: Some("https://github.com/o/r/pull/1".to_owned()),
             severity: CardSeverity::Info,
+            due_at: None,
             updated_at: chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2026, 9, 28, 10, 30, 0)
                 .unwrap(),
         };

@@ -365,6 +365,7 @@ impl Issue {
             source: "github".to_owned(),
             url: Some(self.html_url),
             severity,
+            due_at: None,
             updated_at: self.updated_at,
         }
     }

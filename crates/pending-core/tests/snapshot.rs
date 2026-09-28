@@ -20,6 +20,7 @@ fn item(section: &str, id: &str, severity: CardSeverity, hour: u32) -> SourceIte
             source: "test".to_owned(),
             url: None,
             severity,
+            due_at: None,
             updated_at: at(hour),
         },
     }
@@ -347,5 +348,33 @@ fn cached_source_shows_previous_cards_while_refreshing() {
             .unwrap_or("")
             .contains("previous run"),
         "{github:?}"
+    );
+}
+
+/// Cards com data (evento, prazo) vêm antes dos sem data e em ordem do mais
+/// próximo para o mais distante, dentro da mesma gravidade.
+#[test]
+fn cards_with_a_due_time_come_soonest_first() {
+    let due = |mut item: SourceItem, hour: u32| {
+        item.card.due_at = Some(at(hour));
+        item
+    };
+    let snapshot = build_snapshot(
+        at(12),
+        vec![ok(
+            "calendar",
+            "Work",
+            vec![
+                item("Today", "undated", CardSeverity::Info, 9),
+                due(item("Today", "late", CardSeverity::Info, 1), 18),
+                due(item("Today", "soon", CardSeverity::Info, 1), 13),
+                due(item("Today", "urgent", CardSeverity::Warning, 1), 20),
+            ],
+        )],
+    );
+
+    assert_eq!(
+        layout(&snapshot),
+        vec!["Work/Today: urgent,soon,late,undated"]
     );
 }

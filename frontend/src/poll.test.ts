@@ -21,6 +21,7 @@ const snapshot = (generatedAt: string, title = "a"): DashboardSnapshot => ({
               source: "github",
               url: null,
               severity: "info",
+              due_at: null,
               updated_at: "2026-09-28T09:00:00Z",
             },
           ],

@@ -75,6 +75,7 @@ fn batch(id: &str) -> SourceBatch {
                 source: "test".to_owned(),
                 url: None,
                 severity: CardSeverity::Info,
+                due_at: None,
                 updated_at: Utc::now(),
             },
         }],

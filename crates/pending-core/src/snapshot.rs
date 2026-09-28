@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
@@ -52,7 +53,8 @@ pub enum SourceOutcome {
 ///   are dropped; their source shows as `Degraded` and names them.
 /// - Source warnings also make the source `Degraded`.
 /// - Lanes and sections keep first-seen order. Cards inside a section are
-///   sorted by severity (critical first), then by most recent `updated_at`.
+///   sorted by severity (critical first), then cards with a `due_at`, soonest
+///   first, then by most recent `updated_at`.
 pub fn build_snapshot(
     generated_at: DateTime<Utc>,
     reports: Vec<SourceReport>,
@@ -144,9 +146,14 @@ pub fn build_snapshot(
     }
 
     for section in lanes.iter_mut().flat_map(|l| l.sections.iter_mut()) {
-        section
-            .cards
-            .sort_by_key(|card| std::cmp::Reverse((card.severity, card.updated_at)));
+        section.cards.sort_by_key(|card| {
+            (
+                Reverse(card.severity),
+                card.due_at.is_none(),
+                card.due_at,
+                Reverse(card.updated_at),
+            )
+        });
     }
 
     DashboardSnapshot {

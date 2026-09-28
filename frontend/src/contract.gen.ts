@@ -6,7 +6,12 @@ export type Lane = { name: string, sections: Array<Section>, };
 
 export type Section = { name: string, cards: Array<PendingCard>, };
 
-export type PendingCard = { id: string, title: string, body: string, source: string, url: string | null, severity: CardSeverity, updated_at: string, };
+export type PendingCard = { id: string, title: string, body: string, source: string, url: string | null, 
+/**
+ * When the card is due or starts (deadline, event). Cards with one sort
+ * soonest first.
+ */
+due_at: string | null, severity: CardSeverity, updated_at: string, };
 
 export type CardSeverity = "info" | "warning" | "critical";
 

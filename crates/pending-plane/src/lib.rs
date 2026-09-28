@@ -300,6 +300,9 @@ impl Api {
                         settings.base_url, settings.workspace_slug, project.id
                     )),
                     severity,
+                    due_at: due
+                        .and_then(|due| due.and_hms_opt(0, 0, 0))
+                        .map(|due| due.and_utc()),
                     updated_at: issue
                         .get("updated_at")
                         .and_then(Value::as_str)

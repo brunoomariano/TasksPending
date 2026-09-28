@@ -22,6 +22,7 @@ impl SampleSource {
                 source: Self::NAME.to_owned(),
                 url: None,
                 severity,
+                due_at: None,
                 updated_at: at,
             },
         };

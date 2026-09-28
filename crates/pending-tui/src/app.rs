@@ -6,7 +6,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pending_core::{Board, Column, DashboardSnapshot, PendingCard};
 
 /// Minimum wait between manual refreshes. Each one queries every source, and
-/// provider APIs rate-limit (GitHub search: 30 requests per minute).
+/// provider APIs rate-limit (GitHub search: 30 requests per minute, and every
+/// GitHub column is one search).
 pub const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
 
 struct Notice {

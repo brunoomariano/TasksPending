@@ -20,6 +20,9 @@ const PAGE_SIZE: usize = 50;
 /// hanging search becomes a warning instead of failing the whole refresh.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Searches running at once. Each column is one search, and the search API
+/// allows 30 per minute per user.
+const MAX_CONCURRENT_SEARCHES: usize = 3;
 
 /// One column: a GitHub search query (the search syntax of github.com).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -102,12 +105,14 @@ impl GithubSource {
         let mut failures = Vec::new();
         let mut retry_at = None;
 
-        let results = join_all(
-            self.columns
-                .iter()
-                .map(|column| self.search(token, &column.query)),
-        )
-        .await;
+        // A few at a time: GitHub discourages concurrent search requests
+        // (secondary rate limit). Results keep column order.
+        let mut results = Vec::with_capacity(self.columns.len());
+        for chunk in self.columns.chunks(MAX_CONCURRENT_SEARCHES) {
+            results.extend(
+                join_all(chunk.iter().map(|column| self.search(token, &column.query))).await,
+            );
+        }
 
         for (column, result) in self.columns.iter().zip(results) {
             match result {

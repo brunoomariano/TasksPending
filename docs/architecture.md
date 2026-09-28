@@ -50,7 +50,7 @@ The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME
 - `ical` (`pending-ical`): upcoming events from an iCal feed (Google Calendar's secret address); recurrences expanded with `rrule`. Cards set `due_at` to the event start.
 - `plane` (`pending-plane`): the workspace's work items, read per project and filtered locally per column; request shapes follow PlaneCockpit.
 - `todoist` (`pending-todoist`): one Todoist filter query per column (API v1).
-- `github` (`pending-github`): search API for review requests, authored pull requests and assigned issues; token precedence and error handling follow `ghpending`. See `docs/operations.md`.
+- `github` (`pending-github`): one search API query per column (defaults: review requests, authored pull requests, assigned issues), three at a time; token precedence and error handling follow `ghpending`. See `docs/operations.md`.
 
 ## Reference Repositories
 

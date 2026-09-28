@@ -39,13 +39,13 @@ const snapshot = (): DashboardSnapshot => ({
   ],
   boards: [
     {
-      name: "Trabalho",
+      name: "Work",
       groups: [
         {
           source: "plane",
           columns: [
             {
-              name: "Minhas",
+              name: "Mine",
               cards: [
                 card("API-1", {
                   title: "<script>alert(1)</script>",
@@ -54,25 +54,25 @@ const snapshot = (): DashboardSnapshot => ({
                 }),
               ],
             },
-            { name: "Inbox vazia", cards: [] },
+            { name: "Empty inbox", cards: [] },
           ],
         },
         {
           source: "github",
           columns: [
-            { name: "Revisão", cards: [card("gh-1")] },
-            { name: "Meus PRs", cards: [] },
-            { name: "Notificações", cards: [] },
+            { name: "Review", cards: [card("gh-1")] },
+            { name: "My PRs", cards: [] },
+            { name: "Notifications", cards: [] },
           ],
         },
       ],
     },
     {
-      name: "Pessoal",
+      name: "Personal",
       groups: [
         {
           source: "todoist",
-          columns: [{ name: "Hoje", cards: [card("todo-1")] }],
+          columns: [{ name: "Today", cards: [card("todo-1")] }],
         },
       ],
     },
@@ -98,8 +98,8 @@ const ready = (v: View = view(), data: DashboardSnapshot = snapshot()) =>
 
 describe("renderApp", () => {
   /**
-   * Com a API fora do ar, a tela diz que ela está indisponível e por quê, e não
-   * mostra nenhum card, para ninguém agir sobre pendências inventadas.
+   * With the API down, the page says it is unavailable and why, and shows no
+   * cards, so nobody acts on made-up pending work.
    */
   test("shows the API error and no cards when unavailable", () => {
     const html = renderApp({ kind: "unavailable", error: "HTTP 503" });
@@ -109,72 +109,70 @@ describe("renderApp", () => {
     expect(html).not.toContain('class="card');
   });
 
-  /**
-   * A página mostra os grupos de todas as áreas; o nome da área aparece ao
-   * lado do nome do grupo.
-   */
+  /** The page shows every board's groups, each labelled with its board. */
   test("shows every board's groups, each labelled with its board", () => {
     const html = ready();
 
     expect(html).toMatch(
-      /<h2>plane<\/h2>\s*<span class="group-board">Trabalho<\/span>/,
+      /plane<\/h2>\s*<span class="group-board">Work<\/span>/,
     );
     expect(html).toMatch(
-      /<h2>github<\/h2>\s*<span class="group-board">Trabalho<\/span>/,
+      /github<\/h2>\s*<span class="group-board">Work<\/span>/,
     );
     expect(html).toMatch(
-      /<h2>todoist<\/h2>\s*<span class="group-board">Pessoal<\/span>/,
+      /todoist<\/h2>\s*<span class="group-board">Personal<\/span>/,
     );
   });
 
-  /** O filtro do topo é opcional: "Todas" por padrão, ou uma área só. */
+  /** The board filter is optional: "All" by default, or a single board. */
   test("the board filter narrows the page to one board", () => {
-    expect(ready()).toMatch(/class="filter active" data-board="">\s*Todas/);
+    expect(ready()).toMatch(/class="filter active" data-board="">\s*All/);
 
-    const html = ready(view({ board: "Pessoal" }));
+    const html = ready(view({ board: "Personal" }));
 
     expect(html).toMatch(
-      /class="filter active" data-board="Pessoal">\s*Pessoal/,
+      /class="filter active" data-board="Personal">\s*Personal/,
     );
-    expect(html).toContain("<h2>todoist</h2>");
-    expect(html).not.toContain("<h2>plane</h2>");
+    expect(html).toContain("todoist</h2>");
+    expect(html).not.toContain("plane</h2>");
   });
 
   /**
-   * Colunas vazias somem; um botão no canto do grupo diz quantas são e, ao
-   * abrir, mostra essas colunas com a última atualização da fonte.
+   * Empty columns are hidden; a button in the group's corner says how many,
+   * and opening it shows them with the source's last update.
    */
   test("empty columns hide behind a per-group toggle", () => {
     const collapsed = ready();
-    expect(collapsed).not.toContain("Meus PRs");
-    expect(collapsed).not.toContain("Inbox vazia");
+    expect(collapsed).not.toContain("My PRs");
+    expect(collapsed).not.toContain("Empty inbox");
     expect(collapsed).toMatch(
       new RegExp(
-        `data-toggle-empty="${groupKey("Trabalho", "github")}">\\s*2 vazias`,
+        `data-toggle-empty="${groupKey("Work", "github")}"[^>]*>\\s*<svg[\\s\\S]*?</svg> 2 empty`,
       ),
     );
 
     const expanded = ready(
-      view({ expanded: new Set([groupKey("Trabalho", "github")]) }),
+      view({ expanded: new Set([groupKey("Work", "github")]) }),
     );
-    expect(expanded).toContain("Meus PRs");
-    expect(expanded).toContain("Notificações");
+    expect(expanded).toContain("My PRs");
+    expect(expanded).toContain("Notifications");
     expect(expanded).toContain("updated");
-    expect(expanded).not.toContain("Inbox vazia");
-    expect(expanded).toMatch(/ocultar vazias/);
+    expect(expanded).not.toContain("Empty inbox");
+    expect(expanded).toMatch(/hide empty/);
   });
 
-  /** Os cards não trazem selo de gravidade (Info/Warning/Critical). */
-  test("cards carry no severity label", () => {
+  /** Cards carry no severity label or colour (Info/Warning/Critical). */
+  test("cards carry no severity marker", () => {
     const html = ready();
 
     expect(html).not.toMatch(/>\s*(Info|Warning|Critical)\s*</);
-    expect(html).toContain('class="card severity-critical"');
+    expect(html).not.toContain("severity");
+    expect(html).toContain('class="card"');
   });
 
   /**
-   * Texto vindo das fontes é escapado, porque títulos de issue podem conter
-   * HTML; o título vira link só para http(s).
+   * Text from sources is escaped, since issue titles may contain HTML; the
+   * title links only to http(s) URLs.
    */
   test("escapes source text and links only http urls", () => {
     const html = ready();
@@ -190,14 +188,14 @@ describe("renderApp", () => {
   });
 
   /**
-   * As fontes não ficam expostas na página: um botão abre um modal com cada
-   * fonte, a área dela, o estado, o último fetch e o motivo de falha.
+   * Sources are not spread over the page: a button opens a modal with each
+   * source, its board, status, last fetch and failure reason.
    */
   test("sources live behind a button that opens a modal", () => {
     const closed = ready();
     expect(closed).toContain('data-action="sources"');
     expect(closed).not.toContain('class="sources-modal"');
-    expect(closed).not.toContain("⚠");
+    expect(closed).not.toContain('class="attention"');
 
     const broken = snapshot();
     broken.sources[1] = {
@@ -208,15 +206,15 @@ describe("renderApp", () => {
     };
     const open = ready(view({ sourcesOpen: true }), broken);
     expect(open).toMatch(
-      /data-action="sources"[^>]*>\s*<span class="attention"[^>]*>⚠/,
+      /data-action="sources"[^>]*>\s*<span class="attention"[^>]*><svg/,
     );
     expect(open).toContain('class="sources-modal"');
-    expect(open).toMatch(/plane[\s\S]*Trabalho[\s\S]*ready/);
+    expect(open).toMatch(/plane[\s\S]*Work[\s\S]*ready/);
     expect(open).toContain("401 &lt;bad&gt; credentials");
     expect(open).toContain('data-action="close-sources"');
   });
 
-  /** Uma configuração salva com erro também acende o aviso do botão. */
+  /** A saved config with an error also lights the button's warning. */
   test("config errors light the warning and show in the modal", () => {
     const broken = snapshot();
     broken.config_error = "invalid config config.toml: <bad>";
@@ -224,14 +222,14 @@ describe("renderApp", () => {
     const html = ready(view({ sourcesOpen: true }), broken);
 
     expect(html).toMatch(
-      /data-action="sources"[^>]*>\s*<span class="attention"[^>]*>⚠/,
+      /data-action="sources"[^>]*>\s*<span class="attention"[^>]*><svg/,
     );
     expect(html).toContain("invalid config config.toml: &lt;bad&gt;");
   });
 
   /**
-   * Os cards não repetem datas: o prazo ou horário já vem no texto do card
-   * (a fonte o escreve), e o último fetch fica no topo.
+   * Cards repeat no dates: the source writes the due or event time into the
+   * body, and the last fetch is at the top.
    */
   test("cards show no separate due or update line", () => {
     const withDue = snapshot();
@@ -245,8 +243,8 @@ describe("renderApp", () => {
   });
 
   /**
-   * Com a API fora do ar depois de já ter mostrado dados, os cards continuam
-   * visíveis sob um aviso de que são antigos, com o motivo.
+   * When the API goes down after data was shown, the cards stay visible under
+   * a warning that they are old, with the reason.
    */
   test("stale state keeps the cards under a warning", () => {
     const html = renderApp(
@@ -264,12 +262,12 @@ describe("renderApp", () => {
     expect(html).toContain("HTTP 502");
   });
 
-  /** Antes da primeira resposta, a tela diz que está carregando. */
+  /** Before the first response, the page says it is loading. */
   test("loading state", () => {
     expect(renderApp({ kind: "loading" })).toContain("Loading");
   });
 
-  /** Com dados na tela, há um botão para atualizar todas as fontes agora. */
+  /** With data on screen, a button refreshes every source now. */
   test("offers a refresh button", () => {
     expect(ready()).toContain('data-action="refresh"');
   });

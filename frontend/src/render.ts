@@ -7,6 +7,42 @@ import type {
 } from "./contract.gen";
 import type { ViewState } from "./state";
 
+/** Stroke icons (Lucide shapes), inline so the page needs no icon font. */
+const ICON_PATHS = {
+  refresh:
+    '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+  sources:
+    '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  warning:
+    '<path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  eye: '<path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff:
+    '<path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/>',
+  inbox:
+    '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11"/>',
+  clock:
+    '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  ok: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  failed:
+    '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  layers:
+    '<path d="m12.83 2.18 8.58 3.9a1 1 0 0 1 0 1.83l-8.58 3.9a2 2 0 0 1-1.66 0L2.6 7.9a1 1 0 0 1 0-1.83l8.58-3.9a2 2 0 0 1 1.66 0Z"/><path d="m2 12 8.58 3.91a2 2 0 0 0 1.66 0L21 12"/><path d="m2 17 8.58 3.91a2 2 0 0 0 1.66 0L21 17"/>',
+} as const;
+
+type IconName = keyof typeof ICON_PATHS;
+
+function icon(name: IconName): string {
+  return `<svg class="icon icon-${name}" viewBox="0 0 24 24" aria-hidden="true">${ICON_PATHS[name]}</svg>`;
+}
+
+const STATUS_ICON: Record<SourceHealth["status"], IconName> = {
+  ready: "ok",
+  refreshing: "refresh",
+  degraded: "warning",
+  failed: "failed",
+};
+
 /** Choices of the person looking at the page. */
 export interface View {
   /** Only this board's groups; `null` shows every board. */
@@ -90,22 +126,22 @@ function renderSnapshot(
     (board) => view.board === null || board.name === view.board,
   );
   const warning = needsAttention(snapshot)
-    ? '<span class="attention" aria-label="attention needed">⚠</span>'
-    : "";
+    ? `<span class="attention" aria-label="attention needed">${icon("warning")}</span>`
+    : icon("sources");
   return `
     <header class="topbar">
       <div>
         <h1>TasksPending</h1>
-        <p>${escapeHtml(localTime(snapshot.generated_at))}</p>
+        <p class="meta">${icon("clock")} ${escapeHtml(localTime(snapshot.generated_at))}</p>
       </div>
       <div class="actions">
-        <button type="button" class="sources-button" data-action="sources">${warning} Sources</button>
-        <button type="button" class="refresh" data-action="refresh">Refresh</button>
+        <button type="button" class="button sources-button" data-action="sources" aria-label="Sources">${warning}<span class="label">Sources</span></button>
+        <button type="button" class="button primary refresh" data-action="refresh" aria-label="Refresh">${icon("refresh")}<span class="label">Refresh</span></button>
       </div>
     </header>
     ${banner}
     <nav class="filters">
-      ${renderFilter("Todas", "", view.board === null)}
+      ${renderFilter("All", "", view.board === null)}
       ${snapshot.boards
         .map((board) =>
           renderFilter(board.name, board.name, view.board === board.name),
@@ -147,18 +183,18 @@ function renderGroup(
   );
   const health = snapshot.sources.find((s) => s.name === group.source);
   const toggle = empty.length
-    ? `<button type="button" class="empty-toggle" data-toggle-empty="${escapeHtml(key)}">
-        ${expanded ? "ocultar vazias" : `${empty.length} vazia${empty.length > 1 ? "s" : ""}`}
+    ? `<button type="button" class="empty-toggle" data-toggle-empty="${escapeHtml(key)}" title="${expanded ? "Hide" : "Show"} empty columns">
+        ${expanded ? `${icon("eyeOff")} hide empty` : `${icon("eye")} ${empty.length} empty`}
       </button>`
     : "";
   const columns = shown.length
     ? shown.map((column) => renderColumn(column, health)).join("")
-    : '<p class="empty">Nada pendente.</p>';
+    : `<p class="empty">${icon("inbox")} Nothing pending.</p>`;
 
   return `
     <section class="group">
       <header class="group-header">
-        <h2>${escapeHtml(group.source)}</h2>
+        <h2>${icon("layers")}${escapeHtml(group.source)}</h2>
         <span class="group-board">${escapeHtml(board)}</span>
         ${toggle}
       </header>
@@ -173,14 +209,14 @@ function renderColumn(
 ): string {
   const cards = column.cards.length
     ? column.cards.map(renderCard).join("")
-    : `<p class="empty">— ${
+    : `<p class="empty">${icon("inbox")} ${
         health?.last_refresh_at
           ? `updated ${escapeHtml(localTime(health.last_refresh_at))}`
           : "not refreshed yet"
       }</p>`;
   return `
     <section class="column">
-      <h3>${escapeHtml(column.name)} <span>${column.cards.length}</span></h3>
+      <h3>${escapeHtml(column.name)} <span class="count">${column.cards.length}</span></h3>
       <div class="cards">${cards}</div>
     </section>
   `;
@@ -192,10 +228,10 @@ function renderCard(card: PendingCard): string {
       ? `<a href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">${escapeHtml(card.title)}</a>`
       : escapeHtml(card.title);
   // No date line: sources write the due time or event time into the body,
-  // and the last fetch time is at the top.
+  // and the last fetch time is at the top. No severity marker either.
 
   return `
-    <article class="card severity-${card.severity}">
+    <article class="card">
       <strong class="card-title">${title}</strong>
       <p>${escapeHtml(card.body)}</p>
     </article>
@@ -216,7 +252,7 @@ function renderSourcesModal(snapshot: DashboardSnapshot): string {
             <strong>${escapeHtml(source.name)}</strong>
             <span class="group-board">${escapeHtml(boardOf(source.name))}</span>
           </div>
-          <div class="source-status">${source.status}</div>
+          <div class="source-status">${icon(STATUS_ICON[source.status])}${source.status}</div>
           <div class="source-time">${
             source.last_refresh_at
               ? `last fetch ${escapeHtml(localTime(source.last_refresh_at))}`
@@ -236,7 +272,7 @@ function renderSourcesModal(snapshot: DashboardSnapshot): string {
       <section class="sources-modal" role="dialog" aria-modal="true" aria-label="Sources">
         <header>
           <h2>Sources</h2>
-          <button type="button" class="close" data-action="close-sources" aria-label="Close">×</button>
+          <button type="button" class="close" data-action="close-sources" aria-label="Close">${icon("close")}</button>
         </header>
         ${configError}
         <ul>${rows}</ul>

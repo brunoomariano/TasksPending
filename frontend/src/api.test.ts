@@ -3,8 +3,8 @@ import { loadSnapshot, requestRefresh } from "./api";
 
 describe("loadSnapshot", () => {
   /**
-   * Quando a API responde com erro, o dashboard precisa saber que falhou em vez
-   * de receber dados de exemplo que parecem reais.
+   * When the API answers with an error, the dashboard must know it failed
+   * instead of getting sample data that looks real.
    */
   test("reports HTTP failures instead of returning sample data", async () => {
     const unavailable = async () => new Response("down", { status: 503 });
@@ -14,7 +14,7 @@ describe("loadSnapshot", () => {
     expect(result).toEqual({ ok: false, error: "HTTP 503" });
   });
 
-  /** Com a API respondendo, o dashboard recebe o snapshot como veio. */
+  /** With the API answering, the dashboard gets the snapshot as sent. */
   test("returns the snapshot when the API answers", async () => {
     const snapshot = {
       generated_at: "2026-09-28T10:00:00Z",
@@ -27,7 +27,7 @@ describe("loadSnapshot", () => {
     expect(await loadSnapshot(ok)).toEqual({ ok: true, snapshot });
   });
 
-  /** Falha de rede vira erro visível com a mensagem original. */
+  /** A network failure becomes a visible error with the original message. */
   test("reports network failures", async () => {
     const offline = async (): Promise<Response> => {
       throw new TypeError("Failed to fetch");
@@ -40,8 +40,8 @@ describe("loadSnapshot", () => {
   });
 
   /**
-   * Um 200 que não tem forma de snapshot (proxy, versão errada da API) vira
-   * erro visível em vez de quebrar a renderização e deixar a página em branco.
+   * A 200 that is not shaped like a snapshot (a proxy, the wrong API version)
+   * becomes a visible error instead of breaking rendering and blanking the page.
    */
   test("reports responses that are not a snapshot", async () => {
     const wrongShape = async () => Response.json({ hello: "world" });
@@ -52,7 +52,7 @@ describe("loadSnapshot", () => {
     });
   });
 
-  /** Uma API que não responde vira erro depois do limite, em vez de travar. */
+  /** An API that never answers becomes an error after the limit, not a hang. */
   test("gives up on requests that hang", async () => {
     const hanging = (_input: string, init?: RequestInit) =>
       new Promise<Response>((_, reject) => {
@@ -68,7 +68,7 @@ describe("loadSnapshot", () => {
 });
 
 describe("requestRefresh", () => {
-  /** O pedido vai com o cabeçalho que a API exige do dashboard. */
+  /** The request carries the header the API requires from the dashboard. */
   test("asks the API to refresh every source", async () => {
     let sent: RequestInit | undefined;
     const accepted = async (_input: string, init?: RequestInit) => {

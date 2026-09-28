@@ -39,6 +39,16 @@ function saveView(view: View): void {
   }
 }
 
+/** Changes a button's text, keeping its icon. */
+function setLabel(button: HTMLElement, text: string): void {
+  const label = button.querySelector(".label");
+  if (label) {
+    label.textContent = text;
+  } else {
+    button.textContent = text;
+  }
+}
+
 const app = document.querySelector<HTMLElement>("#app");
 if (app) {
   let view = savedView();
@@ -53,7 +63,8 @@ if (app) {
     );
     if (button && refreshHold && Date.now() < refreshHold.until) {
       button.disabled = true;
-      button.textContent = refreshHold.label;
+      button.classList.add("spinning");
+      setLabel(button, refreshHold.label);
     }
   };
   const change = (next: Partial<View>) => {
@@ -129,7 +140,7 @@ if (app) {
       draw();
     } else {
       button.disabled = false;
-      button.textContent = `Refresh (${result.error})`;
+      setLabel(button, `Refresh (${result.error})`);
     }
   });
 }

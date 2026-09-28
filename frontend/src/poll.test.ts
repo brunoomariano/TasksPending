@@ -46,9 +46,9 @@ describe("startPolling", () => {
   afterEach(() => vi.useRealTimers());
 
   /**
-   * O dashboard consulta a API no intervalo e redesenha quando os dados
-   * mudam; um snapshot igual ao anterior (só com outro generated_at) não
-   * redesenha, para não perder scroll nem foco à toa.
+   * The dashboard polls the API on an interval and redraws when the data
+   * changes; a snapshot equal to the previous one (only generated_at differs)
+   * does not redraw, so scroll and focus are not lost for nothing.
    */
   test("polls on the interval and re-renders only on changes", async () => {
     const results: SnapshotResult[] = [
@@ -75,7 +75,7 @@ describe("startPolling", () => {
     expect(states.map((s) => s.kind)).toEqual(["ready", "ready"]);
   });
 
-  /** Uma falha depois de um sucesso vira estado antigo, sem sumir com os cards. */
+  /** A failure after a success becomes the stale state, keeping the cards. */
   test("a failed poll after success renders the stale state", async () => {
     const results: SnapshotResult[] = [
       { ok: true, snapshot: snapshot("10:00") },
@@ -97,7 +97,7 @@ describe("startPolling", () => {
     expect(states.map((s) => s.kind)).toEqual(["ready", "stale"]);
   });
 
-  /** Com a aba escondida, o dashboard não consulta a API. */
+  /** With the tab hidden, the dashboard does not poll the API. */
   test("does not poll while the tab is hidden", async () => {
     const load = always({ ok: true, snapshot: snapshot("10:00") });
     let hidden = false;
@@ -116,7 +116,7 @@ describe("startPolling", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  /** Depois de parar, nenhuma consulta nova acontece. */
+  /** After stopping, no new poll happens. */
   test("stop cancels future polls", async () => {
     const load = always({ ok: true, snapshot: snapshot("10:00") });
     const { stop } = startPolling({
@@ -132,7 +132,7 @@ describe("startPolling", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
-  /** Um erro ao desenhar não para as consultas seguintes. */
+  /** A rendering error does not stop the next polls. */
   test("keeps polling when rendering throws", async () => {
     const results: SnapshotResult[] = [
       { ok: true, snapshot: snapshot("10:00") },
@@ -159,8 +159,8 @@ describe("startPolling", () => {
   });
 
   /**
-   * Quando a aba volta a ficar visível, o dashboard atualiza na hora, sem
-   * esperar o intervalo, e não duplica a consulta agendada.
+   * When the tab becomes visible again, the dashboard updates right away,
+   * without waiting for the interval, and without doubling the scheduled poll.
    */
   test("pollNow refreshes immediately without doubling the schedule", async () => {
     const load = always({ ok: true, snapshot: snapshot("10:00") });
@@ -184,8 +184,8 @@ describe("startPolling", () => {
   });
 
   /**
-   * Se desenhar falhou, a próxima consulta tenta de novo mesmo com os mesmos
-   * dados, em vez de considerar a tela atualizada.
+   * If drawing failed, the next poll tries again even with the same data,
+   * instead of treating the screen as up to date.
    */
   test("retries rendering the same data after a render failure", async () => {
     const load = always({ ok: true, snapshot: snapshot("10:00") });

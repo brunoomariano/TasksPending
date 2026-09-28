@@ -40,14 +40,14 @@ const t1 = new Date("2026-09-28T10:00:00Z");
 const t2 = new Date("2026-09-28T10:01:00Z");
 
 describe("nextState", () => {
-  /** A primeira resposta boa mostra o snapshot e quando ele chegou. */
+  /** The first good response shows the snapshot and when it arrived. */
   test("a successful load shows the snapshot", () => {
     expect(
       nextState({ kind: "loading" }, { ok: true, snapshot: snapshot("a") }, t1),
     ).toEqual({ kind: "ready", snapshot: snapshot("a"), fetchedAt: t1 });
   });
 
-  /** Sem nenhum dado anterior, a falha mostra a API indisponível. */
+  /** With no earlier data, a failure shows the API as unavailable. */
   test("a failure before any data is unavailable", () => {
     expect(
       nextState({ kind: "loading" }, { ok: false, error: "HTTP 503" }, t1),
@@ -55,8 +55,8 @@ describe("nextState", () => {
   });
 
   /**
-   * Uma falha depois de um sucesso mantém os últimos cards na tela, marcados
-   * como antigos, com o horário da última resposta boa e o motivo.
+   * A failure after a success keeps the last cards on screen, marked as old,
+   * with the time of the last good response and the reason.
    */
   test("a failure after data keeps the last snapshot as stale", () => {
     const ready: ViewState = {

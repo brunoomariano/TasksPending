@@ -36,10 +36,13 @@ Do not treat `make ci` as read-only; it runs formatters. Use `make ci-check` whe
 - Prefer explicit small ports over dynamic registries until there is real duplication.
 - Avoid copying volatile provider details into docs; link to source code or live provider docs instead.
 - Secrets stay out of git. Commit examples, never real tokens.
+- The repository is in English: code, comments, test descriptions, UI text, docs and commit messages.
 
 ## Frontend
 
 The frontend is intentionally lightweight: Vite plus vanilla TypeScript. Keep framework adoption as an explicit decision when dashboard interaction becomes complex enough to justify it.
+
+Visual style: simple and quiet. Colours come from the design tokens at the top of `frontend/src/styles.css` (dark by default, light when the system asks). Icons are inline SVG in `render.ts` (Lucide shapes), no icon font or package. Cards carry no severity colour or label.
 
 ## Release
 

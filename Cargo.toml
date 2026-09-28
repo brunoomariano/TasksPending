@@ -11,8 +11,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
-repository = "https://github.com/brunomariano/TasksPending"
-homepage = "https://github.com/brunomariano/TasksPending"
+repository = "https://github.com/brunoomariano/TasksPending"
+homepage = "https://github.com/brunoomariano/TasksPending"
 
 [workspace.dependencies]
 anyhow = "1.0"

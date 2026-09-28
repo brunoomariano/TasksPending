@@ -381,6 +381,8 @@ fn invalid_column_filters_name_the_source_and_column() {
     for (name, body) in [
         ("typo.toml", "assigne = \"me\""),
         ("value.toml", "assignee = \"somebody\""),
+        ("group.toml", "state_group = [\"in_progress\"]"),
+        ("priority.toml", "priority = [\"p1\"]"),
     ] {
         let path = dir.join(name);
         std::fs::write(

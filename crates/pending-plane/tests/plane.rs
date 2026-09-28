@@ -624,7 +624,7 @@ async fn configured_columns_filter_by_assignee_state_and_priority() {
             "Urgent",
             PlaneColumn {
                 assignee: Assignee::Any,
-                priority: vec!["urgent".to_owned()],
+                priority: vec![pending_plane::Priority::Urgent],
                 ..PlaneColumn::default()
             },
         ),
@@ -648,4 +648,71 @@ async fn configured_columns_filter_by_assignee_state_and_priority() {
         source.columns(),
         vec!["Mine", "Inbox unassigned", "In review (others)", "Urgent"]
     );
+}
+
+/// `state` sozinho não é restringido aos grupos abertos: uma coluna "Done"
+/// mostra itens concluídos; nomes de estado casam sem diferenciar maiúsculas,
+/// inclusive com acento.
+#[tokio::test]
+async fn state_names_alone_select_any_group_and_ignore_case() {
+    use pending_plane::{Assignee, PlaneColumn};
+
+    let stub = Stub::default();
+    let with_state = |mut value: Value, name: &str, group: &str| {
+        value["state"] = json!({ "id": format!("s-{name}"), "name": name, "group": group });
+        value
+    };
+    one_project(
+        &stub,
+        vec![
+            with_state(
+                issue("i1", 1, "Shipped", "completed", ME),
+                "Done",
+                "completed",
+            ),
+            with_state(
+                issue("i2", 2, "Revisando", "started", ME),
+                "Em Revisão",
+                "started",
+            ),
+        ],
+    );
+    let base = serve(stub).await;
+    let column = |name: &str, state: &str| PlaneColumn {
+        name: name.to_owned(),
+        assignee: Assignee::Any,
+        state: vec![state.to_owned()],
+        ..PlaneColumn::default()
+    };
+
+    let batch = source(base)
+        .with_columns(vec![
+            column("Done", "done"),
+            column("Revisão", "EM REVISÃO"),
+        ])
+        .refresh()
+        .await
+        .expect("refresh succeeds");
+
+    assert_eq!(
+        ids(&batch),
+        vec![
+            ("Done".to_owned(), "plane:API-1".to_owned()),
+            ("Revisão".to_owned(), "plane:API-2".to_owned()),
+        ]
+    );
+}
+
+/// Item de outra pessoa com estado desconhecido não deixa a fonte degradada
+/// quando nenhuma coluna mostraria itens dela.
+#[tokio::test]
+async fn unknown_states_of_items_no_column_shows_are_not_reported() {
+    let stub = Stub::default();
+    let mut theirs = issue("i1", 1, "Theirs", "started", "someone-else");
+    theirs["state"] = json!("s-deleted");
+    one_project(&stub, vec![theirs]);
+
+    let batch = refresh(stub).await.expect("refresh succeeds");
+
+    assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
 }

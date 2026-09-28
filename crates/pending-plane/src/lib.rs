@@ -28,8 +28,59 @@ const MAX_PAGES: usize = 20;
 const CLOUD_API_HOST: &str = "https://api.plane.so";
 const CLOUD_WEB_URL: &str = "https://app.plane.so";
 
-/// State groups that count as open when a column does not list its own.
-const OPEN_GROUPS: [&str; 3] = ["backlog", "unstarted", "started"];
+/// State groups that count as open when a column lists neither groups nor
+/// state names.
+const OPEN_GROUPS: [StateGroup; 3] = [
+    StateGroup::Backlog,
+    StateGroup::Unstarted,
+    StateGroup::Started,
+];
+
+/// Plane's state groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StateGroup {
+    Backlog,
+    Unstarted,
+    Started,
+    Completed,
+    Cancelled,
+}
+
+impl StateGroup {
+    fn as_str(self) -> &'static str {
+        match self {
+            StateGroup::Backlog => "backlog",
+            StateGroup::Unstarted => "unstarted",
+            StateGroup::Started => "started",
+            StateGroup::Completed => "completed",
+            StateGroup::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// Plane's priorities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Priority {
+    Urgent,
+    High,
+    Medium,
+    Low,
+    None,
+}
+
+impl Priority {
+    fn as_str(self) -> &'static str {
+        match self {
+            Priority::Urgent => "urgent",
+            Priority::High => "high",
+            Priority::Medium => "medium",
+            Priority::Low => "low",
+            Priority::None => "none",
+        }
+    }
+}
 
 /// Whose work items a column shows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -47,7 +98,8 @@ pub enum Assignee {
 }
 
 /// One column: a filter over the workspace's work items, applied locally.
-/// Empty lists match everything; `state_group` defaults to the open groups.
+/// Empty lists match everything; without `state_group` or `state`, only open
+/// groups match.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlaneColumn {
@@ -55,30 +107,33 @@ pub struct PlaneColumn {
     pub name: String,
     #[serde(default)]
     pub assignee: Assignee,
-    /// `backlog`, `unstarted`, `started`, `completed`, `cancelled`.
     #[serde(default)]
-    pub state_group: Vec<String>,
-    /// State names, e.g. `In Review` (case-insensitive).
+    pub state_group: Vec<StateGroup>,
+    /// State names, e.g. `In Review` (case-insensitive, accents included).
     #[serde(default)]
     pub state: Vec<String>,
     /// Project identifiers, e.g. `API`.
     #[serde(default)]
     pub project: Vec<String>,
-    /// `urgent`, `high`, `medium`, `low`, `none`.
     #[serde(default)]
-    pub priority: Vec<String>,
+    pub priority: Vec<Priority>,
 }
 
 impl PlaneColumn {
     fn matches(&self, facts: &Facts, me: &str) -> bool {
-        let in_list = |list: &[String], value: &str| {
-            list.is_empty() || list.iter().any(|item| item.eq_ignore_ascii_case(value))
-        };
         let groups_ok = if self.state_group.is_empty() {
-            OPEN_GROUPS.contains(&facts.group.as_str())
+            // Naming states picks them in any group ("Done" is completed).
+            !self.state.is_empty() || OPEN_GROUPS.iter().any(|g| g.as_str() == facts.group)
         } else {
-            in_list(&self.state_group, &facts.group)
+            self.state_group.iter().any(|g| g.as_str() == facts.group)
         };
+        groups_ok
+            && self.matches_ignoring_state(facts, me)
+            && (self.state.is_empty() || self.state.iter().any(|s| same_name(s, &facts.state_name)))
+    }
+
+    /// Whether the item could show here if its state were known.
+    fn matches_ignoring_state(&self, facts: &Facts, me: &str) -> bool {
         let mine = facts.assignees.iter().any(|a| a == me);
         let assignee_ok = match self.assignee {
             Assignee::Me => mine,
@@ -86,26 +141,31 @@ impl PlaneColumn {
             Assignee::Others => !facts.assignees.is_empty() && !mine,
             Assignee::Any => true,
         };
-        groups_ok
-            && assignee_ok
-            && in_list(&self.state, &facts.state_name)
-            && in_list(&self.project, &facts.project)
-            && in_list(&self.priority, &facts.priority)
+        assignee_ok
+            && (self.project.is_empty()
+                || self.project.iter().any(|p| same_name(p, &facts.project)))
+            && (self.priority.is_empty()
+                || self.priority.iter().any(|p| p.as_str() == facts.priority))
     }
+}
+
+/// Case-insensitive comparison that also folds accented letters' case.
+fn same_name(a: &str, b: &str) -> bool {
+    a.trim().to_lowercase() == b.trim().to_lowercase()
 }
 
 /// Columns used when the configuration declares none: your open items by
 /// state group.
 pub fn default_columns() -> Vec<PlaneColumn> {
     [
-        ("In progress", "started"),
-        ("To do", "unstarted"),
-        ("Backlog", "backlog"),
+        ("In progress", StateGroup::Started),
+        ("To do", StateGroup::Unstarted),
+        ("Backlog", StateGroup::Backlog),
     ]
     .into_iter()
     .map(|(name, group)| PlaneColumn {
         name: name.to_owned(),
-        state_group: vec![group.to_owned()],
+        state_group: vec![group],
         ..PlaneColumn::default()
     })
     .collect()
@@ -360,7 +420,15 @@ impl Api {
                                     });
                                 }
                             }
-                            Described::UnknownState => unknown_state += 1,
+                            // Only items some column could show are worth a warning.
+                            Described::UnknownState(facts)
+                                if columns
+                                    .iter()
+                                    .any(|c| c.matches_ignoring_state(&facts, &me)) =>
+                            {
+                                unknown_state += 1
+                            }
+                            Described::UnknownState(_) => {}
                             Described::Malformed => {}
                         }
                     }
@@ -478,9 +546,6 @@ impl Api {
             },
             _ => (None, None),
         };
-        let Some(group) = group else {
-            return Described::UnknownState;
-        };
         let (Some(id), Some(sequence)) = (
             issue.get("id").and_then(Value::as_str),
             issue.get("sequence_id").and_then(Value::as_u64),
@@ -493,7 +558,7 @@ impl Api {
             .and_then(Value::as_array)
             .map(|list| list.iter().collect())
             .unwrap_or_default();
-        let assignee_ids = assignees
+        let assignee_ids: Vec<String> = assignees
             .iter()
             .filter_map(|a| a.as_str().or_else(|| a.get("id").and_then(Value::as_str)))
             .map(str::to_owned)
@@ -513,6 +578,16 @@ impl Api {
             .get("priority")
             .and_then(Value::as_str)
             .unwrap_or("none");
+
+        let Some(group) = group else {
+            return Described::UnknownState(Facts {
+                group: String::new(),
+                state_name: String::new(),
+                assignees: assignee_ids,
+                priority: priority.to_owned(),
+                project: project.identifier.clone(),
+            });
+        };
 
         let severity = match priority {
             _ if overdue => CardSeverity::Critical,
@@ -611,8 +686,8 @@ impl Api {
 
 enum Described {
     Card(Facts, Box<PendingCard>),
-    /// Its state group could not be determined.
-    UnknownState,
+    /// Its state group could not be determined; facts without the state.
+    UnknownState(Facts),
     /// Missing id or sequence number.
     Malformed,
 }

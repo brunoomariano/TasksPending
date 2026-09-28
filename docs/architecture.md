@@ -27,13 +27,17 @@ Every source implements the `PendingSource` port: `refresh()` returns a `SourceB
 
 The frontend types in `frontend/src/contract.gen.ts` are generated from these Rust types with `make contract`.
 
-## First-Cut Runtime
+## Runtime
 
-The current runtime returns the snapshot of the built-in `SampleSource`. The next iteration should introduce:
+`pending-runtime` owns scheduling. `Aggregator::start` runs one refresh loop per source, each on its own interval (measured from the end of the previous refresh), with a timeout that turns a hung refresh into a failure. The latest `SourceOutcome` of each source lives in memory, so reading a snapshot never waits for a source:
 
-- source refresh scheduling;
-- cache/persistence boundaries;
-- GitHub as the first concrete source, borrowing ideas from `ghpending`.
+- before the first result, the source is `pending` (`refreshing` on the dashboard);
+- a failure after a success keeps the last batch as `stale`;
+- the loops stop when the last `Aggregator` handle is dropped.
+
+There is no persistence yet: a restart starts every source as `pending` again. The API serves the built-in `SampleSource` until config loading exists.
+
+Next: config loading, then GitHub as the first concrete source, borrowing ideas from `ghpending`.
 
 ## Reference Repositories
 

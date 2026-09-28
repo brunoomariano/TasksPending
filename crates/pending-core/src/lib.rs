@@ -5,7 +5,7 @@ pub mod sample;
 pub mod snapshot;
 pub mod source;
 
-pub use config::{AppConfig, SourceConfig, SourceKind};
+pub use config::{AppConfig, DEFAULT_LANE, SourceConfig, SourceKind};
 pub use model::{
     CardSeverity, DashboardSnapshot, Lane, PendingCard, Section, SourceHealth, SourceStatus,
 };

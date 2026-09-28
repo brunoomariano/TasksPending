@@ -18,4 +18,4 @@ The bootstrap has config structs in `pending-core`, but no config file is loaded
 
 ## Observability
 
-The API initializes `tracing_subscriber` and logs startup information. Future source refresh jobs should include source name, refresh duration, item count, and failure reason without logging secrets.
+The API initializes `tracing_subscriber` (filter via `RUST_LOG`). Every source refresh logs the source name, duration, item and warning counts, or the failure reason. Sources must never put secrets in error messages, because those reach logs and the dashboard.

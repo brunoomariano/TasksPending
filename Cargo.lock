@@ -1166,8 +1166,11 @@ dependencies = [
  "axum",
  "clap",
  "pending-core",
+ "pending-runtime",
  "serde",
+ "serde_json",
  "tokio",
+ "tower",
  "tower-http",
  "tracing",
  "tracing-subscriber",
@@ -1184,6 +1187,16 @@ dependencies = [
  "tokio",
  "toml",
  "ts-rs",
+]
+
+[[package]]
+name = "pending-runtime"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pending-core",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

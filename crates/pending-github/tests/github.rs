@@ -271,6 +271,11 @@ async fn rate_limit_is_reported_with_the_reset_time() {
     let message = error.to_string();
     assert!(message.contains("rate limit"), "{message}");
     assert!(message.contains("2026-09-28T"), "{message}");
+    assert_eq!(
+        error.retry_at(),
+        chrono::DateTime::from_timestamp(1_790_600_000, 0),
+        "the aggregator waits until the reset"
+    );
 }
 
 /// Se a busca achou mais itens do que os carregados, a fonte avisa quantos

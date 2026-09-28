@@ -3,6 +3,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -39,12 +40,24 @@ pub struct SourceBatch {
 #[error("{message}")]
 pub struct SourceError {
     message: String,
+    retry_at: Option<DateTime<Utc>>,
 }
 
 impl SourceError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            retry_at: None,
         }
+    }
+
+    /// The provider said not to try again before `at` (e.g. a rate limit).
+    pub fn with_retry_at(mut self, at: DateTime<Utc>) -> Self {
+        self.retry_at = Some(at);
+        self
+    }
+
+    pub fn retry_at(&self) -> Option<DateTime<Utc>> {
+        self.retry_at
     }
 }

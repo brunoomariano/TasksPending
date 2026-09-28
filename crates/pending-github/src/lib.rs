@@ -78,6 +78,7 @@ impl GithubSource {
         let mut seen = HashSet::new();
         let mut batch = SourceBatch::default();
         let mut failures = Vec::new();
+        let mut retry_at = None;
 
         let [review, authored, assigned] = &SEARCHES;
         let (review, authored, assigned) = tokio::join!(
@@ -113,15 +114,22 @@ impl GithubSource {
                         }
                     }
                 }
-                Err(message) => failures.push(format!("{}: {message}", search.section)),
+                Err(failure) => {
+                    retry_at = retry_at.max(failure.retry_at);
+                    failures.push(format!("{}: {}", search.section, failure.message));
+                }
             }
         }
 
         if failures.len() == SEARCHES.len() {
-            return Err(SourceError::new(format!(
+            let error = SourceError::new(format!(
                 "all GitHub searches failed; {}",
                 failures.join("; ")
-            )));
+            ));
+            return Err(match retry_at {
+                Some(at) => error.with_retry_at(at),
+                None => error,
+            });
         }
         batch.warnings.extend(failures);
         Ok(batch)
@@ -129,7 +137,7 @@ impl GithubSource {
 
     /// Returns a message safe to show and log: it never contains the token or
     /// the request URL.
-    async fn search(&self, token: &str, query: &str) -> Result<SearchPage, String> {
+    async fn search(&self, token: &str, query: &str) -> Result<SearchPage, SearchFailure> {
         let per_page = PAGE_SIZE.to_string();
         let response = self
             .client
@@ -154,14 +162,19 @@ impl GithubSource {
 
         let status = response.status();
         if status.is_success() {
-            return response
-                .json::<SearchPage>()
-                .await
-                .map_err(|error| format!("unexpected GitHub response: {}", self.describe(error)));
+            return response.json::<SearchPage>().await.map_err(|error| {
+                format!("unexpected GitHub response: {}", self.describe(error)).into()
+            });
         }
 
         if let Some(reset) = rate_limit_reset(status, response.headers()) {
-            return Err(format!("GitHub rate limit exceeded; resets at {reset}"));
+            return Err(SearchFailure {
+                message: format!(
+                    "GitHub rate limit exceeded; resets at {}",
+                    reset.to_rfc3339()
+                ),
+                retry_at: Some(reset),
+            });
         }
         let message = response
             .json::<ApiError>()
@@ -170,7 +183,8 @@ impl GithubSource {
             .unwrap_or_default();
         Err(format!("GitHub API returned {status}: {message}")
             .trim_end_matches([':', ' '])
-            .to_owned())
+            .to_owned()
+            .into())
     }
 }
 
@@ -209,7 +223,26 @@ impl PendingSource for GithubSource {
     }
 }
 
-fn rate_limit_reset(status: StatusCode, headers: &reqwest::header::HeaderMap) -> Option<String> {
+/// Why one search failed; safe to show and log.
+struct SearchFailure {
+    message: String,
+    /// When GitHub says the rate limit resets.
+    retry_at: Option<DateTime<Utc>>,
+}
+
+impl From<String> for SearchFailure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            retry_at: None,
+        }
+    }
+}
+
+fn rate_limit_reset(
+    status: StatusCode,
+    headers: &reqwest::header::HeaderMap,
+) -> Option<DateTime<Utc>> {
     let limited = matches!(
         status,
         StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS
@@ -224,7 +257,7 @@ fn rate_limit_reset(status: StatusCode, headers: &reqwest::header::HeaderMap) ->
         .ok()?
         .parse()
         .ok()?;
-    Some(DateTime::from_timestamp(reset, 0)?.to_rfc3339())
+    DateTime::from_timestamp(reset, 0)
 }
 
 /// Token precedence: `GITHUB_TOKEN`, `GH_TOKEN`, then `gh`. Empty values are

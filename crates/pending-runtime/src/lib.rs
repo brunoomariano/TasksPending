@@ -7,7 +7,7 @@
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use pending_core::{
     DashboardSnapshot, PendingSource, SourceBatch, SourceError, SourceOutcome, SourceReport,
     build_snapshot,
@@ -170,6 +170,7 @@ impl Aggregator {
 
 async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared: Arc<Shared>) {
     let name = spec.name.clone();
+    let mut failures: u32 = 0;
     loop {
         let started = Instant::now();
         let result = refresh_once(&spec.source, timeout).await;
@@ -187,6 +188,18 @@ async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared:
         }
 
         let succeeded = result.is_ok();
+        let wait = match &result {
+            Ok(_) => {
+                failures = 0;
+                spec.interval
+            }
+            Err(error) => {
+                failures = failures.saturating_add(1);
+                let wait = backoff(spec.interval, failures, error.retry_at());
+                warn!(source = %name, failures, next_in = ?wait, "backing off");
+                wait
+            }
+        };
         {
             let mut reports = shared
                 .reports
@@ -201,10 +214,24 @@ async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared:
         }
 
         tokio::select! {
-            () = tokio::time::sleep(spec.interval) => {}
+            () = tokio::time::sleep(wait) => {}
             () = shared.wake.notified() => {}
         }
     }
+}
+
+/// Longest backoff, as a multiple of the source's interval.
+const MAX_BACKOFF_FACTOR: u32 = 16;
+
+/// Wait after the `failures`-th failure in a row: the interval doubled per
+/// failure, up to [`MAX_BACKOFF_FACTOR`] times, and never before `retry_at`.
+fn backoff(interval: Duration, failures: u32, retry_at: Option<DateTime<Utc>>) -> Duration {
+    let factor = 2u32.saturating_pow(failures).min(MAX_BACKOFF_FACTOR);
+    let wait = interval.saturating_mul(factor);
+    let until_retry = retry_at
+        .and_then(|at| (at - Utc::now()).to_std().ok())
+        .unwrap_or_default();
+    wait.max(until_retry)
 }
 
 /// Runs one refresh in its own task so a panicking source becomes a failed

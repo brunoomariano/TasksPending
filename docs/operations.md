@@ -49,7 +49,7 @@ Tokens are read from the environment by each source, never from the config file.
 
 - Token: `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token` (given up after 5 s; the API logs before running it, the TUI starts silently until then), resolved once at startup for all GitHub sources. Without a token the source shows as failed with a setup hint; restart after logging in.
 - The three searches run in parallel, each limited to 10 s, so a hanging search becomes a warning for its section instead of failing the refresh. Keep `timeout_seconds` above 10, or the aggregator timeout fails the whole refresh first.
-- One failed search keeps the other sections and makes the source degraded; all searches failing makes it failed. Rate limiting reports the reset time.
+- One failed search keeps the other sections and makes the source degraded; all searches failing makes it failed. Rate limiting reports the reset time, and the source is not queried again before it.
 - Each search loads up to 50 items; more than that, or GitHub reporting incomplete results, shows as a warning. Draft pull requests are marked in the card.
 - Error messages never include the token or request URLs.
 

@@ -275,7 +275,8 @@ async fn a_panicking_source_fails_and_keeps_being_refreshed() {
         "{panicky:?}"
     );
 
-    advance(10).await;
+    // A falha dobra a espera: a nova consulta acontece em t=20.
+    advance(20).await;
     let snapshot = aggregator.snapshot();
     assert_eq!(health(&snapshot, "panicky").status, SourceStatus::Ready);
     assert_eq!(card_ids(&snapshot), vec!["recovered"]);
@@ -307,7 +308,8 @@ async fn repeated_failures_keep_the_last_success_time_until_recovery() {
     assert_eq!(github.last_refresh_at, success_at);
     assert_eq!(card_ids(&snapshot), vec!["old"]);
 
-    advance(10).await;
+    // Falhas em t=10 e t=30 (backoff de 20s e 40s); sucesso em t=70.
+    advance(50).await;
     let snapshot = aggregator.snapshot();
     assert_eq!(health(&snapshot, "github").status, SourceStatus::Ready);
     assert_eq!(card_ids(&snapshot), vec!["new"]);
@@ -356,4 +358,54 @@ async fn refresh_now_refreshes_every_source_immediately() {
     );
     advance(2).await;
     assert_eq!(a_calls.load(Ordering::SeqCst), 3);
+}
+
+/// Uma fonte que falha seguidas vezes é consultada cada vez menos (o dobro do
+/// intervalo a cada falha), para não martelar uma API fora do ar; o primeiro
+/// sucesso volta ao intervalo normal.
+#[tokio::test(start_paused = true)]
+async fn failing_sources_back_off_and_recover() {
+    let (github, calls) = Scripted::new(
+        "github",
+        vec![
+            Err(SourceError::new("503")),
+            Err(SourceError::new("503")),
+            Ok(batch("a")),
+        ],
+    );
+    let _aggregator = Aggregator::start(vec![spec(github, 10)], TIMEOUT);
+
+    // Falhas em t=0 e t=20 (espera 2x); sucesso em t=60 (espera 4x).
+    advance(1).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    advance(20).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    advance(30).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "second failure waits 40s");
+    advance(10).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+    // Depois do sucesso, volta ao intervalo de 10s.
+    advance(10).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+}
+
+/// Quando a API diz até quando está limitando (rate limit), a fonte só volta a
+/// ser consultada depois desse horário.
+#[tokio::test(start_paused = true)]
+async fn rate_limited_sources_wait_until_the_reset() {
+    let retry_at = Utc::now() + chrono::Duration::seconds(300);
+    let (github, calls) = Scripted::new(
+        "github",
+        vec![
+            Err(SourceError::new("rate limited").with_retry_at(retry_at)),
+            Ok(batch("a")),
+        ],
+    );
+    let _aggregator = Aggregator::start(vec![spec(github, 10)], TIMEOUT);
+
+    advance(290).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    advance(15).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
 }

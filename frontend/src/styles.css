@@ -45,35 +45,6 @@ body {
   font-size: 0.9rem;
 }
 
-.tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 16px 24px 0;
-}
-
-.tab {
-  padding: 6px 14px;
-  border: 1px solid #2b3540;
-  border-radius: 999px;
-  background: transparent;
-  color: #c7d1da;
-  font: inherit;
-  cursor: pointer;
-}
-
-.tab span {
-  margin-left: 4px;
-  color: #8795a1;
-  font-size: 0.8rem;
-}
-
-.tab.active {
-  border-color: #54a7ff;
-  background: #1b2a3a;
-  color: #e8edf2;
-}
-
 /* Kanban: groups (one per source) side by side, scrolling sideways. */
 .board {
   display: flex;
@@ -91,7 +62,14 @@ body {
   background: #131a20;
 }
 
-.group h2 {
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.group-header h2 {
   margin: 0 0 10px;
   color: #54a7ff;
   font-size: 0.95rem;
@@ -139,13 +117,7 @@ body {
 }
 
 .card-title {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.card-title strong {
+  display: block;
   min-width: 0;
   overflow-wrap: anywhere;
   font-size: 0.95rem;
@@ -158,16 +130,6 @@ body {
 
 .card-title a:hover {
   text-decoration: underline;
-}
-
-.card-title span {
-  flex: 0 0 auto;
-  color: #101418;
-  border-radius: 999px;
-  padding: 2px 8px;
-  background: #9fb0c0;
-  font-size: 0.75rem;
-  font-weight: 700;
 }
 
 .card p {
@@ -213,24 +175,6 @@ body {
 .refresh:disabled {
   opacity: 0.6;
   cursor: default;
-}
-
-.sources {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 16px 24px 0;
-  padding: 0;
-  list-style: none;
-  font-size: 0.85rem;
-}
-
-.source {
-  padding: 4px 10px;
-  border: 1px solid #28313a;
-  border-radius: 999px;
-  color: #c7d1da;
-  overflow-wrap: anywhere;
 }
 
 .source-ready {
@@ -282,4 +226,151 @@ body {
   .column {
     flex-basis: 240px;
   }
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sources-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid #2b3540;
+  border-radius: 6px;
+  background: transparent;
+  color: #e8edf2;
+  font: inherit;
+  cursor: pointer;
+}
+
+.attention {
+  color: #ffd166;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 24px 0;
+}
+
+.filter {
+  padding: 4px 12px;
+  border: 1px solid #2b3540;
+  border-radius: 999px;
+  background: transparent;
+  color: #c7d1da;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.filter.active {
+  border-color: #54a7ff;
+  background: #1b2a3a;
+  color: #e8edf2;
+}
+
+.group-board {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #1f2830;
+  color: #8795a1;
+  font-size: 0.75rem;
+}
+
+.empty-toggle {
+  margin-left: auto;
+  padding: 2px 10px;
+  border: 1px solid #2b3540;
+  border-radius: 999px;
+  background: transparent;
+  color: #8795a1;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 10vh 16px;
+  background: rgb(0 0 0 / 55%);
+}
+
+.sources-modal {
+  width: min(640px, 100%);
+  max-height: 80vh;
+  overflow: auto;
+  padding: 16px 20px;
+  border: 1px solid #2b3540;
+  border-radius: 10px;
+  background: #151b21;
+}
+
+.sources-modal header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sources-modal h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.sources-modal .close {
+  border: 0;
+  background: transparent;
+  color: #c7d1da;
+  font-size: 1.4rem;
+  cursor: pointer;
+}
+
+.sources-modal ul {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.source-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  padding: 10px 12px;
+  border: 1px solid #2b3540;
+  border-left-width: 4px;
+  border-radius: 8px;
+}
+
+.source-row div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source-status {
+  text-align: right;
+  font-weight: 600;
+}
+
+.source-time {
+  grid-column: 1 / -1;
+  color: #8795a1;
+  font-size: 0.8rem;
+}
+
+.source-row p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #c7d1da;
+  overflow-wrap: anywhere;
 }

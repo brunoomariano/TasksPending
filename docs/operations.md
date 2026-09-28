@@ -68,7 +68,11 @@ Keys: `1`–`9` or `Tab`/`Shift+Tab` switch boards; `h`/`l` or left/right move b
 
 ## Web Dashboard
 
-The frontend polls `/api/v1/snapshot` every 15 seconds while the tab is visible and redraws only when cards or source health change. It shows each source's status and failure reason, and a Refresh button that calls `POST /api/v1/refresh` and reads the result a couple of seconds later. If the API stops answering after a successful load, the last cards stay on screen under a warning with the time of the last good response.
+The page shows the groups of every board side by side, each labelled with its board; the filter at the top (All, or one board) is optional and remembered per browser. Empty columns are hidden: a button at the right of the group header tells how many there are and shows them, with the source's last fetch time. Cards show the title (a link when the source has one), details and, when there is one, the due time; the time of the last data fetch is at the top.
+
+Source health is behind the **Sources** button, which opens a dialog with each source's board, status, last fetch and failure reason, plus a config error when the saved config was not reloaded. The button shows ⚠ when any source is degraded or failed, or the config has an error.
+
+The page polls `/api/v1/snapshot` every 15 seconds while the tab is visible and redraws only when something changed. If the API stops answering after a successful load, the last cards stay on screen under a warning. The Refresh button calls `POST /api/v1/refresh`.
 
 `pending-api` serves the built frontend at `/` from `--static-dir <dir>`, or from `../frontend` next to the binary when it has an `index.html` (release bundle layout). Without either it serves only the API. An explicit `--static-dir` without `index.html` fails at startup.
 

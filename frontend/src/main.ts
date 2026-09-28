@@ -1,7 +1,7 @@
 import "./styles.css";
 import { loadSnapshot, requestRefresh } from "./api";
 import { startPolling } from "./poll";
-import { renderApp } from "./render";
+import { renderApp, type View } from "./render";
 import type { ViewState } from "./state";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -9,42 +9,45 @@ const POLL_INTERVAL_MS = 15_000;
 const AFTER_REFRESH_MS = 2_000;
 /** Matches the API cooldown; the button comes back even if nothing changed. */
 const REFRESH_COOLDOWN_MS = 10_000;
-const BOARD_KEY = "tasks-pending.board";
+const VIEW_KEY = "tasks-pending.view";
 
-/** The last chosen tab's name; a per-browser convenience, fine to lose. */
-function savedBoard(): string {
+/** Filter and expanded groups, remembered per browser; fine to lose. */
+function savedView(): View {
   try {
-    return localStorage.getItem(BOARD_KEY) ?? "";
+    const saved = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "{}") as {
+      board?: string | null;
+      expanded?: string[];
+    };
+    return {
+      board: typeof saved.board === "string" ? saved.board : null,
+      expanded: new Set(Array.isArray(saved.expanded) ? saved.expanded : []),
+      sourcesOpen: false,
+    };
   } catch {
-    return "";
+    return { board: null, expanded: new Set(), sourcesOpen: false };
   }
 }
 
-function saveBoard(name: string): void {
+function saveView(view: View): void {
   try {
-    localStorage.setItem(BOARD_KEY, name);
+    localStorage.setItem(
+      VIEW_KEY,
+      JSON.stringify({ board: view.board, expanded: [...view.expanded] }),
+    );
   } catch {
-    // Storage unavailable (private mode): the tab just isn't remembered.
+    // Storage unavailable (private mode): the view just isn't remembered.
   }
 }
 
 const app = document.querySelector<HTMLElement>("#app");
 if (app) {
-  let boardName = savedBoard();
+  let view = savedView();
   let shown: ViewState = { kind: "loading" };
   /** While set, the Refresh button stays disabled with this label. */
   let refreshHold: { until: number; label: string } | null = null;
 
-  const boardIndex = (): number => {
-    if (shown.kind !== "ready" && shown.kind !== "stale") {
-      return 0;
-    }
-    const index = shown.snapshot.boards.findIndex((b) => b.name === boardName);
-    return Math.max(index, 0);
-  };
-
   const draw = () => {
-    app.innerHTML = renderApp(shown, boardIndex());
+    app.innerHTML = renderApp(shown, view);
     const button = app.querySelector<HTMLButtonElement>(
       '[data-action="refresh"]',
     );
@@ -52,6 +55,11 @@ if (app) {
       button.disabled = true;
       button.textContent = refreshHold.label;
     }
+  };
+  const change = (next: Partial<View>) => {
+    view = { ...view, ...next };
+    saveView(view);
+    draw();
   };
   draw();
   const poller = startPolling({
@@ -68,18 +76,40 @@ if (app) {
       poller.pollNow();
     }
   });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && view.sourcesOpen) {
+      change({ sourcesOpen: false });
+    }
+  });
   app.addEventListener("click", async (event) => {
     const target = event.target as HTMLElement;
-    const tab = target.closest<HTMLElement>("[data-board]");
-    if (tab) {
-      if (shown.kind === "ready" || shown.kind === "stale") {
-        boardName =
-          shown.snapshot.boards[Number(tab.dataset.board)]?.name ?? "";
-        saveBoard(boardName);
-      }
-      draw();
+
+    const filter = target.closest<HTMLElement>("[data-board]");
+    if (filter) {
+      change({ board: filter.dataset.board || null });
       return;
     }
+    const toggle = target.closest<HTMLElement>("[data-toggle-empty]");
+    if (toggle) {
+      const key = toggle.dataset.toggleEmpty ?? "";
+      const expanded = new Set(view.expanded);
+      if (!expanded.delete(key)) {
+        expanded.add(key);
+      }
+      change({ expanded });
+      return;
+    }
+    if (target.closest('[data-action="sources"]')) {
+      change({ sourcesOpen: true });
+      return;
+    }
+    // Close on the × button or a click on the backdrop itself.
+    const close = target.closest<HTMLElement>('[data-action="close-sources"]');
+    if (close && (close === target || close.classList.contains("close"))) {
+      change({ sourcesOpen: false });
+      return;
+    }
+
     const button = target.closest<HTMLButtonElement>('[data-action="refresh"]');
     if (!button) {
       return;

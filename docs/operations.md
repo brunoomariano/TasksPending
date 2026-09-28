@@ -7,6 +7,12 @@
 - Frontend: `make frontend-dev`
 - Verification: `make ci-check`
 
+## TUI
+
+`pending-tui` runs the same aggregator as the API in-process, so it works without the API running. It reads the same config (`--config` or the default locations) and redraws every 250 ms.
+
+Keys: `j`/`k` or arrows move the selection, `Enter` opens the selected card's link (`xdg-open`, or `open` on macOS), `r` refreshes every source now, `q`/`Esc`/`Ctrl-C` quit. The Sources panel shows each source's status and failure reason; action failures show in the footer.
+
 ## HTTP Endpoints
 
 - `GET /healthz`: process health and version.

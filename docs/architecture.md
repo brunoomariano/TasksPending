@@ -35,6 +35,8 @@ The frontend types in `frontend/src/contract.gen.ts` are generated from these Ru
 - a failure after a success keeps the last batch as `stale`;
 - the loops stop when the last `Aggregator` handle is dropped.
 
+`Aggregator::refresh_now` wakes every source waiting for its interval (the TUI's `r` key).
+
 There is no persistence yet: a restart starts every source as `pending` again.
 
 `pending_runtime::config` locates and loads the config file, validates it with `AppConfig::validate`, and turns each enabled source into a `SourceSpec`. The source's configured `name` is what source health shows.

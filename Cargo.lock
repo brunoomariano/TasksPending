@@ -1616,10 +1616,13 @@ name = "pending-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "crossterm",
  "pending-core",
+ "pending-runtime",
  "ratatui",
+ "tokio",
 ]
 
 [[package]]

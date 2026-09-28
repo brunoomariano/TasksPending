@@ -43,4 +43,4 @@ make frontend-dev
 
 ## Current State
 
-The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Sources available: `github` (review requests, your pull requests, assigned issues) and the built-in `sample`. Next: the TUI on the shared runtime, then frontend polling.
+The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Sources available: `github` (review requests, your pull requests, assigned issues) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). Next: frontend polling and the API serving the built frontend.

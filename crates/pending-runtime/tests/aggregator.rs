@@ -233,3 +233,104 @@ async fn dropping_the_aggregator_stops_refreshing() {
     advance(60).await;
     assert_eq!(calls.load(Ordering::SeqCst), after_drop);
 }
+
+/// Fonte que entra em pânico nas primeiras consultas e depois responde.
+struct Panicky {
+    calls: Arc<AtomicUsize>,
+    panics: usize,
+}
+
+impl PendingSource for Panicky {
+    fn name(&self) -> &str {
+        "panicky"
+    }
+
+    fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call < self.panics {
+            panic!("bug in source");
+        }
+        Box::pin(async { Ok(batch("recovered")) })
+    }
+}
+
+/// Um bug que faz a fonte entrar em pânico não pode congelar o status dela:
+/// o refresh conta como falha com o motivo, e a fonte continua sendo
+/// consultada no intervalo seguinte.
+#[tokio::test(start_paused = true)]
+async fn a_panicking_source_fails_and_keeps_being_refreshed() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let source = Arc::new(Panicky {
+        calls: calls.clone(),
+        panics: 1,
+    });
+    let aggregator = Aggregator::start(vec![spec(source, 10)], TIMEOUT);
+
+    advance(1).await;
+    let snapshot = aggregator.snapshot();
+    let panicky = health(&snapshot, "panicky");
+    assert_eq!(panicky.status, SourceStatus::Failed);
+    assert!(
+        panicky
+            .message
+            .as_deref()
+            .unwrap_or("")
+            .contains("bug in source"),
+        "{panicky:?}"
+    );
+
+    advance(10).await;
+    let snapshot = aggregator.snapshot();
+    assert_eq!(health(&snapshot, "panicky").status, SourceStatus::Ready);
+    assert_eq!(card_ids(&snapshot), vec!["recovered"]);
+}
+
+/// Falhas seguidas continuam mostrando o horário do último sucesso, e o
+/// primeiro sucesso depois delas deixa a fonte pronta de novo.
+#[tokio::test(start_paused = true)]
+async fn repeated_failures_keep_the_last_success_time_until_recovery() {
+    let (github, _) = Scripted::new(
+        "github",
+        vec![
+            Ok(batch("old")),
+            Err(SourceError::new("503")),
+            Err(SourceError::new("503")),
+            Ok(batch("new")),
+        ],
+    );
+    let aggregator = Aggregator::start(vec![spec(github, 10)], TIMEOUT);
+
+    advance(1).await;
+    let success_at = health(&aggregator.snapshot(), "github").last_refresh_at;
+    assert!(success_at.is_some());
+
+    advance(20).await;
+    let snapshot = aggregator.snapshot();
+    let github = health(&snapshot, "github");
+    assert_eq!(github.status, SourceStatus::Degraded);
+    assert_eq!(github.last_refresh_at, success_at);
+    assert_eq!(card_ids(&snapshot), vec!["old"]);
+
+    advance(10).await;
+    let snapshot = aggregator.snapshot();
+    assert_eq!(health(&snapshot, "github").status, SourceStatus::Ready);
+    assert_eq!(card_ids(&snapshot), vec!["new"]);
+}
+
+/// A mensagem de timeout mostra a duração real, mesmo abaixo de um segundo.
+#[tokio::test(start_paused = true)]
+async fn timeout_message_shows_sub_second_durations() {
+    let aggregator = Aggregator::start(
+        vec![spec(Scripted::slow("github", Duration::from_secs(600)), 60)],
+        Duration::from_millis(500),
+    );
+
+    advance(1).await;
+
+    let snapshot = aggregator.snapshot();
+    let message = health(&snapshot, "github")
+        .message
+        .clone()
+        .unwrap_or_default();
+    assert!(message.contains("500ms"), "{message}");
+}

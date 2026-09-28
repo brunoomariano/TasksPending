@@ -18,7 +18,7 @@ pub struct SourceReport {
 pub enum SourceOutcome {
     /// The first refresh has not finished yet.
     Pending,
-    /// The latest refresh succeeded.
+    /// The latest refresh succeeded. `refreshed_at` is when it completed.
     Fresh {
         batch: SourceBatch,
         refreshed_at: DateTime<Utc>,

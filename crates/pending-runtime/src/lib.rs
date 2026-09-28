@@ -4,12 +4,13 @@
 //! and keeps the latest [`SourceOutcome`] of each one in memory. Reading a
 //! snapshot never waits for a source.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use chrono::Utc;
 use pending_core::{
-    DashboardSnapshot, PendingSource, SourceError, SourceOutcome, SourceReport, build_snapshot,
+    DashboardSnapshot, PendingSource, SourceBatch, SourceError, SourceOutcome, SourceReport,
+    build_snapshot,
 };
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -84,7 +85,13 @@ impl Aggregator {
     }
 
     pub fn snapshot(&self) -> DashboardSnapshot {
-        let reports = self.reports.read().expect("reports lock poisoned").clone();
+        // Writers never panic while holding the lock, but a poisoned lock must
+        // not take every snapshot request down with it.
+        let reports = self
+            .reports
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         build_snapshot(Utc::now(), reports)
     }
 }
@@ -98,13 +105,7 @@ async fn refresh_loop(
     let name = spec.name.clone();
     loop {
         let started = Instant::now();
-        let result = match tokio::time::timeout(timeout, spec.source.refresh()).await {
-            Ok(result) => result,
-            Err(_) => Err(SourceError::new(format!(
-                "timed out after {}s",
-                timeout.as_secs()
-            ))),
-        };
+        let result = refresh_once(&spec.source, timeout).await;
         let elapsed_ms = started.elapsed().as_millis();
 
         match &result {
@@ -119,7 +120,7 @@ async fn refresh_loop(
         }
 
         {
-            let mut reports = reports.write().expect("reports lock poisoned");
+            let mut reports = reports.write().unwrap_or_else(PoisonError::into_inner);
             let report = &mut reports[index];
             let previous = std::mem::replace(&mut report.outcome, SourceOutcome::Pending);
             report.outcome = next_outcome(previous, result);
@@ -129,9 +130,46 @@ async fn refresh_loop(
     }
 }
 
+/// Runs one refresh in its own task so a panicking source becomes a failed
+/// refresh instead of killing the loop. The task is aborted on timeout and when
+/// the loop itself is aborted.
+async fn refresh_once(
+    source: &Arc<dyn PendingSource>,
+    timeout: Duration,
+) -> Result<SourceBatch, SourceError> {
+    let source = source.clone();
+    let mut task = AbortOnDrop(tokio::spawn(async move { source.refresh().await }));
+
+    match tokio::time::timeout(timeout, &mut task.0).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) if error.is_panic() => Err(SourceError::new(format!(
+            "refresh panicked: {}",
+            panic_message(error.into_panic())
+        ))),
+        Ok(Err(_)) => Err(SourceError::new("refresh was cancelled")),
+        Err(_) => Err(SourceError::new(format!("timed out after {timeout:?}"))),
+    }
+}
+
+struct AbortOnDrop<T>(JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".to_owned())
+}
+
 fn next_outcome(
     previous: SourceOutcome,
-    result: Result<pending_core::SourceBatch, SourceError>,
+    result: Result<SourceBatch, SourceError>,
 ) -> SourceOutcome {
     match (result, previous) {
         (Ok(batch), _) => SourceOutcome::Fresh {

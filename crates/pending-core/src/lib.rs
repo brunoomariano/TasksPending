@@ -1,4 +1,5 @@
 pub mod config;
+pub mod contract;
 pub mod model;
 pub mod snapshot;
 

@@ -21,6 +21,7 @@ Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Lane`, `Secti
 - `make test`: Rust tests.
 - `make up`: run the API on `127.0.0.1:8080`.
 - `make tui`: run the TUI.
+- `make contract`: regenerate `frontend/src/contract.gen.ts` from the `pending-core` model.
 - `make frontend-dev`: run the frontend dev server.
 - `make release-local`: build a local release bundle under `dist/`.
 
@@ -30,6 +31,7 @@ Do not treat `make ci` as read-only; it runs formatters. Use `make ci-check` whe
 
 - Keep source-specific API details out of UI crates. Normalize into `pending-core`.
 - Put contracts and invariants in the core crate first, then adapt them in API/TUI/frontend.
+- The frontend never hand-writes API types: it imports them from `contract.gen.ts`, and a core test fails when that file is stale.
 - Prefer explicit small ports over dynamic registries until there is real duplication.
 - Avoid copying volatile provider details into docs; link to source code or live provider docs instead.
 - Secrets stay out of git. Commit examples, never real tokens.

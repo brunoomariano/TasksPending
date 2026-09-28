@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := ci-check
 
-.PHONY: bootstrap doctor ci ci-check test fmt lint build up down logs tui frontend-dev frontend-build release-local
+.PHONY: bootstrap doctor ci ci-check test fmt lint build up down logs tui contract frontend-dev frontend-build release-local
 
 bootstrap:
 	cargo fetch --locked
@@ -46,6 +46,9 @@ logs:
 
 tui:
 	cargo run -p pending-tui
+
+contract:
+	UPDATE_CONTRACT=1 cargo test -p pending-core --test contract --locked
 
 frontend-dev:
 	npm --prefix frontend run dev

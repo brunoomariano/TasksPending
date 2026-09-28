@@ -21,4 +21,4 @@ The local verification gate is:
 make ci-check
 ```
 
-It checks Rust formatting, Clippy, Rust tests, TypeScript type checking, and frontend build.
+It checks Rust formatting, Clippy, Rust tests (including the TypeScript contract drift check), TypeScript type checking, and frontend build.

@@ -596,7 +596,8 @@ impl Api {
             _ => CardSeverity::Info,
         };
 
-        let mut body = format!("{reference} · {}", project.name);
+        // The reference is the card title; the issue name leads the details.
+        let mut body = format!("{} · {}", str_field(issue, "name"), project.name);
         if let Some(state_name) = state_name.filter(|name| !name.is_empty()) {
             body.push_str(&format!(" · {state_name}"));
         }
@@ -629,7 +630,7 @@ impl Api {
             },
             Box::new(PendingCard {
                 id: format!("plane:{reference}"),
-                title: str_field(issue, "name").to_owned(),
+                title: reference.clone(),
                 body,
                 source: "plane".to_owned(),
                 url: Some(format!(

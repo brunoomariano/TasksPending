@@ -201,9 +201,10 @@ async fn open_items_assigned_to_me_become_cards_by_state() {
         ]
     );
     let card = &batch.items[0].card;
-    assert_eq!(card.title, "Fix login");
+    // The reference is the title; the issue name leads the details.
+    assert_eq!(card.title, "API-1");
+    assert!(card.body.starts_with("Fix login · "), "{}", card.body);
     assert_eq!(card.source, "plane");
-    assert!(card.body.contains("API-1"), "{}", card.body);
     assert!(card.body.contains("Backend"), "{}", card.body);
     assert!(
         card.url

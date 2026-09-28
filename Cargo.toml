@@ -17,6 +17,7 @@ homepage = "https://github.com/brunoomariano/TasksPending"
 [workspace.dependencies]
 anyhow = "1.0"
 axum = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.29"
 ratatui = "0.30"

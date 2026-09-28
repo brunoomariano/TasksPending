@@ -11,11 +11,18 @@ pub struct AppConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceConfig {
     pub name: String,
-    pub kind: String,
+    pub kind: SourceKind,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     #[serde(default)]
     pub refresh_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceKind {
+    Github,
+    Sample,
 }
 
 impl Default for AppConfig {
@@ -57,6 +64,22 @@ mod tests {
         .expect("valid source config");
 
         assert!(source.enabled);
+        assert_eq!(source.kind, SourceKind::Github);
         assert_eq!(source.refresh_seconds, None);
+    }
+
+    /// Um erro de digitação no tipo da fonte precisa falhar ao carregar a
+    /// configuração, não virar uma fonte que nunca produz cards.
+    #[test]
+    fn unknown_source_kind_is_rejected() {
+        let error = toml::from_str::<SourceConfig>(
+            r#"
+            name = "typo"
+            kind = "gihtub"
+            "#,
+        )
+        .expect_err("unknown kind");
+
+        assert!(error.to_string().contains("gihtub"), "{error}");
     }
 }

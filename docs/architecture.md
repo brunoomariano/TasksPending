@@ -14,6 +14,8 @@ The shared model starts in `pending-core`:
 - `PendingCard`: an actionable pending item.
 - `SourceStatus`: source health and refresh metadata.
 
+Sources produce `PlacedCard`s (a card plus its lane and section). `assemble` groups them into a snapshot: lanes and sections keep first-seen order, cards sort by severity then most recent update, and duplicate card ids are rejected.
+
 ## First-Cut Runtime
 
 The current runtime returns a sample snapshot. The next iteration should introduce:

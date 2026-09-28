@@ -24,6 +24,8 @@ struct Cli {
     refresh_secs: u64,
 }
 
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M UTC";
+
 struct TerminalSession;
 
 impl TerminalSession {
@@ -80,7 +82,10 @@ fn render(area: Rect, buf: &mut ratatui::buffer::Buffer, snapshot: &DashboardSna
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!("  generated {}", snapshot.generated_at)),
+        Span::raw(format!(
+            "  generated {}",
+            snapshot.generated_at.format(TIMESTAMP_FORMAT)
+        )),
         Span::styled("  press q to quit", Style::default().fg(Color::DarkGray)),
     ]);
     Paragraph::new(title)
@@ -116,7 +121,11 @@ fn render(area: Rect, buf: &mut ratatui::buffer::Buffer, snapshot: &DashboardSna
                         Span::styled(card.title.as_str(), Style::default().fg(Color::White)),
                     ]),
                     Line::from(Span::styled(
-                        format!("    {} · {}", card.source, card.updated_at),
+                        format!(
+                            "    {} · {}",
+                            card.source,
+                            card.updated_at.format(TIMESTAMP_FORMAT)
+                        ),
                         Style::default().fg(Color::DarkGray),
                     )),
                     Line::from(Span::raw(format!("    {}", card.body))),

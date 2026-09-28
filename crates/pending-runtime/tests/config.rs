@@ -257,3 +257,25 @@ fn cache_path_follows_xdg_state_home() {
     );
     assert_eq!(cache_path(&env(&[])), None);
 }
+
+/// Uma fonte `plane` na configuração vira uma fonte agendada; as credenciais
+/// vêm do ambiente, nunca do arquivo.
+#[test]
+fn plane_sources_are_scheduled() {
+    let path = scratch("plane").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "plane"
+        kind = "plane"
+        lane = "Work"
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) = load_plan_with(Some(path), &env(&[]), &|| None).expect("plane is supported");
+
+    assert_eq!(plan.specs.len(), 1);
+    assert_eq!(plan.specs[0].name, "plane");
+}

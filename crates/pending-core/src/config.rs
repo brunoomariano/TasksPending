@@ -34,6 +34,7 @@ pub struct SourceConfig {
 #[serde(rename_all = "lowercase")]
 pub enum SourceKind {
     Github,
+    Plane,
     Sample,
 }
 

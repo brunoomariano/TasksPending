@@ -5,6 +5,7 @@ TasksPending is organized around one shared model and several delivery surfaces.
 ## Layers
 
 - `pending-core`: domain objects, config, refresh/source contracts, and testable invariants.
+- `pending-plane`: Plane source adapter.
 - `pending-github`: GitHub source adapter; provider details stay here.
 - `pending-runtime`: refresh scheduling and the in-memory state of every source.
 - `pending-api`: HTTP routes, process startup, logging, and future static frontend serving.

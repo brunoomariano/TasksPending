@@ -46,6 +46,7 @@ The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME
 ## Sources Available
 
 - `sample` (`pending-core`): fixed cards.
+- `plane` (`pending-plane`): open work items assigned to the API key's owner, per project, filtered locally; request shapes follow PlaneCockpit.
 - `github` (`pending-github`): search API for review requests, authored pull requests and assigned issues; token precedence and error handling follow `ghpending`. See `docs/operations.md`.
 
 ## Reference Repositories

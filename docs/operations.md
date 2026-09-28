@@ -12,6 +12,16 @@
 
 After every successful refresh, each source's cards are saved to `$XDG_STATE_HOME/tasks-pending/cache.json` (default `~/.local/state/tasks-pending/cache.json`). A restart shows them immediately, marked as data from the previous run, while sources refresh. Delete the file to start empty; a corrupt file is ignored and rewritten.
 
+## Plane Source
+
+`kind = "plane"` lists open work items assigned to the owner of the API key, across every project of one workspace. Settings come only from the environment:
+
+- `PLANE_BASE_URL`: instance URL (self-hosted, or `https://api.plane.so` for Plane Cloud);
+- `PLANE_WORKSPACE_SLUG`;
+- `PLANE_API_KEY`: sent as `x-api-key`, never logged or shown.
+
+Missing variables make the source fail with their names. Sections follow the state group: "In progress" (started), "To do" (unstarted), "Backlog"; completed and cancelled items are left out. Assignee and state filters run locally, because some Plane deployments ignore them server-side. Urgent priority and a past target date make a card critical; high priority makes it a warning. A failing project becomes a warning naming its identifier; the other projects still show.
+
 ## TUI
 
 `pending-tui` runs the same aggregator as the API in-process, so it works without the API running. It reads the same config (`--config` or the default locations) and redraws every 250 ms.

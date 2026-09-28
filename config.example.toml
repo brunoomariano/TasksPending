@@ -21,3 +21,10 @@ enabled = true
 # name = "github"
 # kind = "github"
 # lane = "Work"
+
+# Plane: open work items assigned to you, across the workspace's projects.
+# Needs PLANE_BASE_URL, PLANE_WORKSPACE_SLUG and PLANE_API_KEY in the environment.
+# [[sources]]
+# name = "plane"
+# kind = "plane"
+# lane = "Work"

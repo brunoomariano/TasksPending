@@ -91,8 +91,10 @@ fn default_refresh_seconds() -> u64 {
     300
 }
 
+/// Room for the slowest source: Plane reads the user, the project list and
+/// then each project (up to 20 s each) before a refresh completes.
 fn default_timeout_seconds() -> u64 {
-    30
+    60
 }
 
 pub const DEFAULT_LANE: &str = "Inbox";
@@ -210,7 +212,7 @@ mod tests {
     }
 
     /// Cada fonte usa o próprio intervalo quando definido, senão o global; o
-    /// timeout de refresh tem padrão de 30 segundos.
+    /// timeout de refresh tem padrão de 60 segundos.
     #[test]
     fn source_interval_falls_back_to_the_global_refresh() {
         let config = parse(
@@ -231,7 +233,7 @@ mod tests {
         config.validate().expect("valid config");
         assert_eq!(config.refresh_seconds_for(&config.sources[0]), 30);
         assert_eq!(config.refresh_seconds_for(&config.sources[1]), 120);
-        assert_eq!(config.timeout_seconds, 30);
+        assert_eq!(config.timeout_seconds, 60);
     }
 
     /// Um erro de digitação numa chave global é recusado em vez de ignorado.

@@ -4,21 +4,28 @@
 //! Filters are applied locally: some Plane deployments ignore the `assignees`
 //! and `state_group` query parameters (observed by PlaneCockpit).
 
+use std::collections::HashMap;
 use std::time::Duration;
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use pending_core::{
     BoxFuture, CardSeverity, PendingCard, PendingSource, SourceBatch, SourceError, SourceItem,
 };
 use reqwest::Client;
+use reqwest::redirect::Policy;
 use serde_json::Value;
 use tokio::task::JoinSet;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// Time one project may take (all its pages); past it the project becomes a
+/// warning instead of failing the whole refresh.
+const DEFAULT_PROJECT_BUDGET: Duration = Duration::from_secs(20);
 const PAGE_SIZE: &str = "100";
-/// Pages read per project before giving up with a warning.
+/// Pages read per list before giving up with a warning.
 const MAX_PAGES: usize = 20;
+const CLOUD_API_HOST: &str = "https://api.plane.so";
+const CLOUD_WEB_URL: &str = "https://app.plane.so";
 
 /// Sections in display order, by Plane state group.
 const SECTIONS: [(&str, &str); 3] = [
@@ -26,22 +33,39 @@ const SECTIONS: [(&str, &str); 3] = [
     ("unstarted", "To do"),
     ("backlog", "Backlog"),
 ];
+/// State groups that are never pending.
+const CLOSED_GROUPS: [&str; 2] = ["completed", "cancelled"];
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PlaneSettings {
-    /// Instance URL, e.g. `https://plane.example.com` (cloud: `https://api.plane.so`).
+    /// API origin, e.g. `https://plane.example.com` or `https://api.plane.so`.
     pub base_url: String,
+    /// Web app origin used in card links (differs from the API on Plane Cloud).
+    pub web_url: String,
     pub workspace_slug: String,
     pub api_key: String,
 }
 
+impl std::fmt::Debug for PlaneSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlaneSettings")
+            .field("base_url", &self.base_url)
+            .field("web_url", &self.web_url)
+            .field("workspace_slug", &self.workspace_slug)
+            .field("api_key", &"<redacted>")
+            .finish()
+    }
+}
+
 impl PlaneSettings {
-    /// Reads `PLANE_BASE_URL`, `PLANE_WORKSPACE_SLUG` and `PLANE_API_KEY`.
-    /// The error names the missing variables.
+    /// Reads `PLANE_BASE_URL`, `PLANE_WORKSPACE_SLUG`, `PLANE_API_KEY` and the
+    /// optional `PLANE_WEB_URL` (defaults to the API origin, or
+    /// `https://app.plane.so` for Plane Cloud). The error names the missing
+    /// variables.
     pub fn from_env(env: &dyn Fn(&str) -> Option<String>) -> Result<Self, String> {
         let read = |key: &str| {
             env(key)
-                .map(|v| v.trim().to_owned())
+                .map(|v| v.trim().trim_end_matches('/').to_owned())
                 .filter(|v| !v.is_empty())
         };
         let base_url = read("PLANE_BASE_URL");
@@ -49,11 +73,21 @@ impl PlaneSettings {
         let api_key = read("PLANE_API_KEY");
 
         match (base_url, workspace_slug, api_key) {
-            (Some(base_url), Some(workspace_slug), Some(api_key)) => Ok(Self {
-                base_url,
-                workspace_slug,
-                api_key,
-            }),
+            (Some(base_url), Some(workspace_slug), Some(api_key)) => {
+                let web_url = read("PLANE_WEB_URL").unwrap_or_else(|| {
+                    if base_url == CLOUD_API_HOST {
+                        CLOUD_WEB_URL.to_owned()
+                    } else {
+                        base_url.clone()
+                    }
+                });
+                Ok(Self {
+                    base_url,
+                    web_url,
+                    workspace_slug,
+                    api_key,
+                })
+            }
             (base_url, workspace_slug, api_key) => {
                 let missing: Vec<&str> = [
                     ("PLANE_BASE_URL", base_url.is_none()),
@@ -75,6 +109,7 @@ impl PlaneSettings {
 pub struct PlaneSource {
     client: Client,
     settings: Result<PlaneSettings, String>,
+    project_budget: Duration,
 }
 
 impl PlaneSource {
@@ -83,15 +118,25 @@ impl PlaneSource {
         let client = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
+            // The API key is a custom header, which reqwest would forward to
+            // whatever host a redirect points at.
+            .redirect(Policy::none())
             .build()
             .unwrap_or_default();
         Self {
             client,
             settings: settings.map(|mut s| {
                 s.base_url = s.base_url.trim_end_matches('/').to_owned();
+                s.web_url = s.web_url.trim_end_matches('/').to_owned();
                 s
             }),
+            project_budget: DEFAULT_PROJECT_BUDGET,
         }
+    }
+
+    pub fn with_project_budget(mut self, budget: Duration) -> Self {
+        self.project_budget = budget;
+        self
     }
 }
 
@@ -104,7 +149,9 @@ impl PendingSource for PlaneSource {
                         client: self.client.clone(),
                         settings: settings.clone(),
                     };
-                    api.refresh().await.map_err(SourceError::new)
+                    api.refresh(self.project_budget)
+                        .await
+                        .map_err(SourceError::new)
                 }
                 Err(message) => Err(SourceError::new(message.clone())),
             }
@@ -124,8 +171,17 @@ struct Project {
     name: String,
 }
 
+/// State id → (group, name), for work items returned without `expand`.
+type States = HashMap<String, (String, String)>;
+
+struct ProjectItems {
+    issues: Vec<Value>,
+    truncated: bool,
+    states: States,
+}
+
 impl Api {
-    async fn refresh(self) -> Result<SourceBatch, String> {
+    async fn refresh(self, project_budget: Duration) -> Result<SourceBatch, String> {
         let me = self.get("/users/me/", &[]).await?;
         let me = me
             .get("id")
@@ -135,48 +191,75 @@ impl Api {
             .to_owned();
 
         let workspace = format!("/workspaces/{}", self.settings.workspace_slug);
-        let projects: Vec<Project> =
-            results(self.get(&format!("{workspace}/projects/"), &[]).await?)
-                .iter()
-                .filter_map(|project| {
-                    Some(Project {
-                        id: project.get("id")?.as_str()?.to_owned(),
-                        identifier: project.get("identifier")?.as_str()?.to_owned(),
-                        name: str_field(project, "name").to_owned(),
-                    })
+        let (projects, projects_truncated) =
+            self.pages(&format!("{workspace}/projects/"), &[]).await?;
+        let projects: Vec<Project> = projects
+            .iter()
+            .filter_map(|project| {
+                Some(Project {
+                    id: project.get("id")?.as_str()?.to_owned(),
+                    identifier: project.get("identifier")?.as_str()?.to_owned(),
+                    name: str_field(project, "name").to_owned(),
                 })
-                .collect();
+            })
+            .collect();
 
         let mut tasks = JoinSet::new();
+        let mut task_index = HashMap::new();
         for (index, project) in projects.iter().enumerate() {
             let api = self.clone();
-            let path = format!("{workspace}/projects/{}/issues/", project.id);
-            tasks.spawn(async move { (index, api.issues(&path).await) });
+            let path = format!("{workspace}/projects/{}", project.id);
+            let handle = tasks.spawn(async move {
+                match tokio::time::timeout(project_budget, api.project_items(&path)).await {
+                    Ok(result) => result,
+                    Err(_) => Err(format!("timed out after {project_budget:?}")),
+                }
+            });
+            task_index.insert(handle.id(), index);
         }
-        let mut per_project = vec![None; projects.len()];
-        while let Some(joined) = tasks.join_next().await {
-            let (index, result) = joined.map_err(|error| format!("Plane task failed: {error}"))?;
-            per_project[index] = Some(result);
+        let mut per_project: Vec<Option<Result<ProjectItems, String>>> =
+            (0..projects.len()).map(|_| None).collect();
+        while let Some(joined) = tasks.join_next_with_id().await {
+            // A panicking project becomes a failure of that project only.
+            let (id, result) = match joined {
+                Ok((id, result)) => (id, result),
+                Err(error) => (error.id(), Err(format!("project task failed: {error}"))),
+            };
+            per_project[task_index[&id]] = Some(result);
         }
 
-        let today = Utc::now().date_naive();
+        let today = Local::now().date_naive();
         let mut batch = SourceBatch::default();
+        if projects_truncated {
+            batch.warnings.push(format!(
+                "more than {MAX_PAGES} pages of projects; showing the first ones"
+            ));
+        }
         let mut failures = Vec::new();
         let mut items = Vec::new();
         for (project, result) in projects.iter().zip(per_project) {
             match result.expect("every project task reports") {
-                Ok((issues, truncated)) => {
-                    if truncated {
+                Ok(found) => {
+                    if found.truncated {
                         batch.warnings.push(format!(
                             "{}: more than {MAX_PAGES} pages of work items; showing the first ones",
                             project.identifier
                         ));
                     }
-                    items.extend(
-                        issues
-                            .iter()
-                            .filter_map(|issue| self.to_item(issue, project, &me, today)),
-                    );
+                    let mut unknown_state = 0usize;
+                    for issue in &found.issues {
+                        match self.to_item(issue, project, &me, &found.states, today) {
+                            Placement::Shown(rank, item) => items.push((rank, item)),
+                            Placement::UnknownState => unknown_state += 1,
+                            Placement::Hidden => {}
+                        }
+                    }
+                    if unknown_state > 0 {
+                        batch.warnings.push(format!(
+                            "{}: {unknown_state} work items with an unknown state were skipped",
+                            project.identifier
+                        ));
+                    }
                 }
                 Err(message) => failures.push(format!("{}: {message}", project.identifier)),
             }
@@ -195,19 +278,56 @@ impl Api {
         Ok(batch)
     }
 
-    /// Every page of a project's work items; `true` when pages were left unread.
-    async fn issues(&self, path: &str) -> Result<(Vec<Value>, bool), String> {
+    /// Work items of one project, plus its states when items came back
+    /// without `expand`.
+    async fn project_items(&self, project_path: &str) -> Result<ProjectItems, String> {
+        let (issues, truncated) = self
+            .pages(
+                &format!("{project_path}/issues/"),
+                &[("expand", "state,assignees")],
+            )
+            .await?;
+
+        let mut states = States::new();
+        if issues
+            .iter()
+            .any(|issue| issue.get("state").is_some_and(Value::is_string))
+        {
+            let (list, _) = self.pages(&format!("{project_path}/states/"), &[]).await?;
+            for state in list {
+                if let (Some(id), Some(group)) = (
+                    state.get("id").and_then(Value::as_str),
+                    state.get("group").and_then(Value::as_str),
+                ) {
+                    states.insert(
+                        id.to_owned(),
+                        (group.to_owned(), str_field(&state, "name").to_owned()),
+                    );
+                }
+            }
+        }
+        Ok(ProjectItems {
+            issues,
+            truncated,
+            states,
+        })
+    }
+
+    /// Every page of a list endpoint; `true` when pages were left unread.
+    async fn pages(
+        &self,
+        path: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<(Vec<Value>, bool), String> {
         let mut all = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..MAX_PAGES {
-            let mut query = vec![("per_page", PAGE_SIZE), ("expand", "state,assignees")];
+            let mut query = vec![("per_page", PAGE_SIZE)];
+            query.extend_from_slice(extra);
             if let Some(cursor) = &cursor {
                 query.push(("cursor", cursor.as_str()));
             }
             let page = self.get(path, &query).await?;
-            let items = results(page.clone());
-            let empty = items.is_empty();
-            all.extend(items);
 
             let more = page.get("next_page_results").and_then(Value::as_bool) != Some(false)
                 && page.get("total_pages").and_then(Value::as_u64) != Some(1);
@@ -216,8 +336,15 @@ impl Api {
                 .and_then(Value::as_str)
                 .filter(|next| !next.is_empty())
                 .map(str::to_owned);
+            let items = results(page);
+            let empty = items.is_empty();
+            all.extend(items);
+
             match next {
-                Some(next) if more && !empty => cursor = Some(next),
+                // A repeated cursor would loop over the same page.
+                Some(next) if more && !empty && cursor.as_ref() != Some(&next) => {
+                    cursor = Some(next);
+                }
                 _ => return Ok((all, false)),
             }
         }
@@ -229,8 +356,9 @@ impl Api {
         issue: &Value,
         project: &Project,
         me: &str,
+        states: &States,
         today: NaiveDate,
-    ) -> Option<(usize, SourceItem)> {
+    ) -> Placement {
         let assigned = issue
             .get("assignees")
             .and_then(Value::as_array)
@@ -240,27 +368,43 @@ impl Api {
                     .any(|a| a.as_str().or_else(|| a.get("id").and_then(Value::as_str)) == Some(me))
             });
         if !assigned {
-            return None;
+            return Placement::Hidden;
         }
 
-        // Without `expand`, `state` is an id; treat an unknown group as backlog.
-        let state = issue.get("state");
-        let group = state
-            .and_then(|s| s.get("group"))
-            .and_then(Value::as_str)
-            .unwrap_or("backlog");
-        let (rank, section) = SECTIONS
+        // Expanded state object, or a state id looked up in the project's states.
+        let (group, state_name) = match issue.get("state") {
+            Some(state @ Value::Object(_)) => (
+                state.get("group").and_then(Value::as_str),
+                state.get("name").and_then(Value::as_str),
+            ),
+            Some(Value::String(id)) => match states.get(id) {
+                Some((group, name)) => (Some(group.as_str()), Some(name.as_str())),
+                None => (None, None),
+            },
+            _ => (None, None),
+        };
+        let Some(group) = group else {
+            return Placement::UnknownState;
+        };
+        if CLOSED_GROUPS.contains(&group) {
+            return Placement::Hidden;
+        }
+        let Some((rank, section)) = SECTIONS
             .iter()
             .enumerate()
             .find(|(_, (g, _))| *g == group)
-            .map(|(rank, (_, section))| (rank, *section))?;
+            .map(|(rank, (_, section))| (rank, *section))
+        else {
+            return Placement::UnknownState;
+        };
 
-        let id = issue.get("id")?.as_str()?;
-        let reference = format!(
-            "{}-{}",
-            project.identifier,
-            issue.get("sequence_id")?.as_u64()?
-        );
+        let (Some(id), Some(sequence)) = (
+            issue.get("id").and_then(Value::as_str),
+            issue.get("sequence_id").and_then(Value::as_u64),
+        ) else {
+            return Placement::Hidden;
+        };
+        let reference = format!("{}-{sequence}", project.identifier);
         let due = issue
             .get("target_date")
             .and_then(Value::as_str)
@@ -275,7 +419,7 @@ impl Api {
         };
 
         let mut body = format!("{reference} · {}", project.name);
-        if let Some(state_name) = state.and_then(|s| s.get("name")).and_then(Value::as_str) {
+        if let Some(state_name) = state_name.filter(|name| !name.is_empty()) {
             body.push_str(&format!(" · {state_name}"));
         }
         if let Some(due) = due {
@@ -285,8 +429,15 @@ impl Api {
             ));
         }
 
+        let timestamp = |key: &str| {
+            issue
+                .get(key)
+                .and_then(Value::as_str)
+                .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
+                .map(|at| at.with_timezone(&Utc))
+        };
         let settings = &self.settings;
-        Some((
+        Placement::Shown(
             rank,
             SourceItem {
                 section: section.to_owned(),
@@ -297,20 +448,18 @@ impl Api {
                     source: "plane".to_owned(),
                     url: Some(format!(
                         "{}/{}/projects/{}/issues/{id}",
-                        settings.base_url, settings.workspace_slug, project.id
+                        settings.web_url, settings.workspace_slug, project.id
                     )),
-                    severity,
                     due_at: due
                         .and_then(|due| due.and_hms_opt(0, 0, 0))
                         .map(|due| due.and_utc()),
-                    updated_at: issue
-                        .get("updated_at")
-                        .and_then(Value::as_str)
-                        .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-                        .map_or_else(Utc::now, |at| at.with_timezone(&Utc)),
+                    severity,
+                    updated_at: timestamp("updated_at")
+                        .or_else(|| timestamp("created_at"))
+                        .unwrap_or(DateTime::UNIX_EPOCH),
                 },
             },
-        ))
+        )
     }
 
     /// GET `/api/v1{path}`. Errors never contain the API key or the URL.
@@ -326,6 +475,11 @@ impl Api {
             .map_err(describe)?;
 
         let status = response.status();
+        if status.is_redirection() {
+            return Err(format!(
+                "Plane API returned {status}; redirects are not followed, check PLANE_BASE_URL"
+            ));
+        }
         if status.is_success() {
             return response
                 .json::<Value>()
@@ -341,6 +495,14 @@ impl Api {
             .trim_end_matches([':', ' '])
             .to_owned())
     }
+}
+
+enum Placement {
+    Shown(usize, SourceItem),
+    /// Not assigned to me, closed, or malformed.
+    Hidden,
+    /// Its state group could not be determined.
+    UnknownState,
 }
 
 /// A list response: a bare array or `{ "results": [...] }`.

@@ -18,9 +18,10 @@ After every successful refresh, each source's cards are saved to `$XDG_STATE_HOM
 
 - `PLANE_BASE_URL`: instance URL (self-hosted, or `https://api.plane.so` for Plane Cloud);
 - `PLANE_WORKSPACE_SLUG`;
-- `PLANE_API_KEY`: sent as `x-api-key`, never logged or shown.
+- `PLANE_API_KEY`: sent as `x-api-key`, never logged or shown; redirects are not followed, so the key never reaches another host;
+- `PLANE_WEB_URL` (optional): web app origin for card links; defaults to `PLANE_BASE_URL`, or `https://app.plane.so` when the API is Plane Cloud's.
 
-Missing variables make the source fail with their names. Sections follow the state group: "In progress" (started), "To do" (unstarted), "Backlog"; completed and cancelled items are left out. Assignee and state filters run locally, because some Plane deployments ignore them server-side. Urgent priority and a past target date make a card critical; high priority makes it a warning. A failing project becomes a warning naming its identifier; the other projects still show.
+Missing variables make the source fail with their names. Sections follow the state group: "In progress" (started), "To do" (unstarted), "Backlog"; completed and cancelled items are left out. Assignee and state filters run locally, because some Plane deployments ignore them server-side; when items come back without their state expanded, the project's states are fetched to find each group, and items whose state is still unknown are skipped with a warning. Urgent priority and a past target date make a card critical; high priority makes it a warning. "Overdue" uses the machine's local date. Projects and their work items are read page by page. Each project has 20 s; a failing or slow project becomes a warning naming its identifier, and the other projects still show.
 
 ## Calendar Source
 
@@ -64,7 +65,7 @@ Tokens are read from the environment by each source, never from the config file.
 `kind = "github"` searches the authenticated user's open work: review requests (section "Review requested", warning severity), open pull requests ("My pull requests") and assigned issues ("Assigned issues"). An item found by two searches shows once, in the first section.
 
 - Token: `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token` (given up after 5 s; the API logs before running it, the TUI starts silently until then), resolved once at startup for all GitHub sources. Without a token the source shows as failed with a setup hint; restart after logging in.
-- The three searches run in parallel, each limited to 10 s, so a hanging search becomes a warning for its section instead of failing the refresh. Keep `timeout_seconds` above 10, or the aggregator timeout fails the whole refresh first.
+- The three searches run in parallel, each limited to 10 s, so a hanging search becomes a warning for its section instead of failing the refresh. Keep `timeout_seconds` (default 60) above 10, or the aggregator timeout fails the whole refresh first.
 - One failed search keeps the other sections and makes the source degraded; all searches failing makes it failed. Rate limiting reports the reset time, and scheduled refreshes wait for it (up to an hour); a manual refresh (`r` in the TUI) still queries right away.
 - Each search loads up to 50 items; more than that, or GitHub reporting incomplete results, shows as a warning. Draft pull requests are marked in the card.
 - Error messages never include the token or request URLs.

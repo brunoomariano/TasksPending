@@ -5,7 +5,7 @@
 # Default wait between refreshes of a source, in seconds.
 refresh_seconds = 300
 # A refresh slower than this counts as a failure.
-timeout_seconds = 30
+timeout_seconds = 60
 
 # Sources appear on the dashboard in this order.
 [[sources]]

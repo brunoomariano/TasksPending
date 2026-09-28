@@ -518,9 +518,14 @@ fn parse_time(prop: &Prop, zone: Tz) -> Option<(DateTime<Utc>, bool)> {
 /// The first instant of `date` in `zone`. On days whose midnight does not
 /// exist (clocks jump forward at 00:00), the first minute that does.
 fn local_midnight(date: NaiveDate, zone: Tz) -> Option<DateTime<Utc>> {
+    first_valid(date.and_hms_opt(0, 0, 0)?, zone)
+}
+
+/// `local` in `zone`, or the first minute after it that exists when clocks
+/// jump forward over it.
+fn first_valid(local: NaiveDateTime, zone: Tz) -> Option<DateTime<Utc>> {
     (0..=120).find_map(|minute| {
-        let time = date.and_hms_opt(0, 0, 0)? + chrono::Duration::minutes(minute);
-        zone.from_local_datetime(&time)
+        zone.from_local_datetime(&(local + chrono::Duration::minutes(minute)))
             .earliest()
             .map(|at| at.with_timezone(&Utc))
     })
@@ -611,16 +616,17 @@ fn expand(
 fn utc_until(rule: &str, zone: Tz) -> Option<String> {
     rule.split(';')
         .map(|part| match part.split_once('=') {
-            Some((key, value)) if key.eq_ignore_ascii_case("UNTIL") && !value.ends_with('Z') => {
+            Some((key, value)) if key.eq_ignore_ascii_case("UNTIL") => {
+                if let Some(utc) = value.strip_suffix(['Z', 'z']) {
+                    return Some(format!("UNTIL={utc}Z"));
+                }
                 let until = if value.len() == 8 {
                     let day = NaiveDate::parse_from_str(value, "%Y%m%d").ok()?;
                     local_midnight(day.checked_add_days(Days::new(1))?, zone)?
                         - chrono::Duration::seconds(1)
                 } else {
                     let naive = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
-                    zone.from_local_datetime(&naive)
-                        .earliest()?
-                        .with_timezone(&Utc)
+                    first_valid(naive, zone)?
                 };
                 Some(format!("UNTIL={}", until.format("%Y%m%dT%H%M%SZ")))
             }

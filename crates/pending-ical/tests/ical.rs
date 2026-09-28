@@ -385,3 +385,47 @@ fn events_without_an_end_show_only_the_start() {
         items[0].card.body
     );
 }
+
+/// O fim da série (UNTIL) é lido no fuso dela: UNTIL em data num fuso com
+/// deslocamento inclui o último dia, e UNTIL sem fuso com início em outro fuso
+/// usa o fuso do início; UNTIL numa hora que não existe (mudança de horário)
+/// não descarta a série.
+#[test]
+fn until_is_read_in_the_series_zone() {
+    let sp = chrono_tz::America::Sao_Paulo;
+    let ics = calendar(
+        &[
+            event(
+                "date-until",
+                "SUMMARY:Gym\r\nDTSTART;VALUE=DATE:20260929\r\nDTEND;VALUE=DATE:20260930\r\n\
+RRULE:until=20261013;freq=weekly\r\n",
+            ),
+            event(
+                "ny",
+                "SUMMARY:NY call\r\nDTSTART;TZID=America/New_York:20260930T090000\r\n\
+DTEND;TZID=America/New_York:20260930T093000\r\nRRULE:FREQ=WEEKLY;UNTIL=20261014T090000\r\n",
+            ),
+            event(
+                "gap",
+                "SUMMARY:Gap\r\nDTSTART;TZID=America/New_York:20260930T020000\r\n\
+DTEND;TZID=America/New_York:20260930T030000\r\nRRULE:FREQ=WEEKLY;UNTIL=20270314T023000\r\n",
+            ),
+        ]
+        .concat(),
+    );
+
+    let batch = occurrences(&ics, now(), Window::default(), sp, None).unwrap();
+    let count = |title: &str| batch.items.iter().filter(|i| i.card.title == title).count();
+
+    assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
+    assert_eq!(count("Gym"), 3, "29/09, 06/10 and the UNTIL day 13/10");
+    assert_eq!(
+        count("NY call"),
+        3,
+        "30/09, 07/10 and 14/10 at 09:00 New York"
+    );
+    assert!(
+        count("Gap") > 0,
+        "a non-existent UNTIL time keeps the series"
+    );
+}

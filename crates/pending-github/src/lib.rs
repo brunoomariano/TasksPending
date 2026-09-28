@@ -268,6 +268,7 @@ pub fn gh_cli_token() -> Option<String> {
 }
 
 /// [`gh_cli_token`] with the program and time limit given, for tests.
+#[doc(hidden)]
 pub fn gh_cli_token_with(program: &str, limit: Duration) -> Option<String> {
     let mut child = std::process::Command::new(program)
         .args(["auth", "token"])

@@ -315,3 +315,37 @@ fn stale_source_keeps_last_known_cards_and_explains_the_failure() {
     assert!(message.contains("stale"), "{message}");
     assert!(message.contains("o/private: 403"), "{message}");
 }
+
+/// Na subida, uma fonte com dados de uma execução anterior mostra esses cards
+/// enquanto a primeira consulta não termina: fica como atualizando, diz que o
+/// dado veio da execução anterior e mostra o horário dele.
+#[test]
+fn cached_source_shows_previous_cards_while_refreshing() {
+    let snapshot = build_snapshot(
+        at(12),
+        vec![SourceReport {
+            name: "github".to_owned(),
+            lane: "Work".to_owned(),
+            outcome: SourceOutcome::Cached {
+                batch: SourceBatch {
+                    items: vec![item("Review", "a", CardSeverity::Info, 1)],
+                    warnings: Vec::new(),
+                },
+                refreshed_at: at(8),
+            },
+        }],
+    );
+
+    assert_eq!(layout(&snapshot), vec!["Work/Review: a"]);
+    let github = health(&snapshot, "github");
+    assert_eq!(github.status, SourceStatus::Refreshing);
+    assert_eq!(github.last_refresh_at, Some(at(8)));
+    assert!(
+        github
+            .message
+            .as_deref()
+            .unwrap_or("")
+            .contains("previous run"),
+        "{github:?}"
+    );
+}

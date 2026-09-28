@@ -17,7 +17,10 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tracing::{info, warn};
 
+pub mod cache;
 pub mod config;
+
+use crate::cache::Cache;
 
 /// A source plus how the dashboard names, schedules and places it.
 pub struct SourceSpec {
@@ -44,9 +47,57 @@ impl std::fmt::Debug for SourceSpec {
 /// last handle is dropped.
 #[derive(Clone)]
 pub struct Aggregator {
-    reports: Arc<RwLock<Vec<SourceReport>>>,
-    wake: Arc<Notify>,
+    shared: Arc<Shared>,
     _tasks: Arc<Tasks>,
+}
+
+/// State the refresh loops and the handles share.
+struct Shared {
+    reports: RwLock<Vec<SourceReport>>,
+    wake: Notify,
+    cache: Option<Cache>,
+}
+
+impl Shared {
+    fn reports(&self) -> Vec<SourceReport> {
+        // Writers never panic while holding the lock, but a poisoned lock must
+        // not take every snapshot request down with it.
+        self.reports
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Writes every source's last good batch. Failures only log: the cache is
+    /// a convenience, never a reason to stop refreshing.
+    fn save_cache(&self) {
+        let Some(cache) = &self.cache else {
+            return;
+        };
+        let entries: Vec<_> = self
+            .reports()
+            .into_iter()
+            .filter_map(|report| match report.outcome {
+                SourceOutcome::Fresh {
+                    batch,
+                    refreshed_at,
+                }
+                | SourceOutcome::Stale {
+                    batch,
+                    refreshed_at,
+                    ..
+                }
+                | SourceOutcome::Cached {
+                    batch,
+                    refreshed_at,
+                } => Some((report.name, refreshed_at, batch)),
+                SourceOutcome::Pending | SourceOutcome::Failed(_) => None,
+            })
+            .collect();
+        if let Err(error) = cache.save(&entries) {
+            warn!(%error, "could not write the source cache");
+        }
+    }
 }
 
 struct Tasks(Vec<JoinHandle<()>>);
@@ -63,35 +114,45 @@ impl Aggregator {
     /// Starts one refresh loop per source. Must be called inside a Tokio
     /// runtime. A refresh slower than `timeout` counts as a failure.
     pub fn start(specs: Vec<SourceSpec>, timeout: Duration) -> Self {
-        let reports = Arc::new(RwLock::new(
-            specs
-                .iter()
-                .map(|spec| SourceReport {
-                    name: spec.name.clone(),
-                    lane: spec.lane.clone(),
-                    outcome: SourceOutcome::Pending,
-                })
-                .collect(),
-        ));
+        Self::start_with_cache(specs, timeout, None)
+    }
 
-        let wake = Arc::new(Notify::new());
+    /// Like [`Aggregator::start`], but sources begin with their last good
+    /// batch from `cache`, and every successful refresh is written back.
+    pub fn start_with_cache(
+        specs: Vec<SourceSpec>,
+        timeout: Duration,
+        cache: Option<Cache>,
+    ) -> Self {
+        let mut cached = cache.as_ref().map(Cache::load).unwrap_or_default();
+        let reports = specs
+            .iter()
+            .map(|spec| SourceReport {
+                name: spec.name.clone(),
+                lane: spec.lane.clone(),
+                outcome: match cached.remove(&spec.name) {
+                    Some((refreshed_at, batch)) => SourceOutcome::Cached {
+                        batch,
+                        refreshed_at,
+                    },
+                    None => SourceOutcome::Pending,
+                },
+            })
+            .collect();
+        let shared = Arc::new(Shared {
+            reports: RwLock::new(reports),
+            wake: Notify::new(),
+            cache,
+        });
+
         let tasks = specs
             .into_iter()
             .enumerate()
-            .map(|(index, spec)| {
-                tokio::spawn(refresh_loop(
-                    index,
-                    spec,
-                    timeout,
-                    reports.clone(),
-                    wake.clone(),
-                ))
-            })
+            .map(|(index, spec)| tokio::spawn(refresh_loop(index, spec, timeout, shared.clone())))
             .collect();
 
         Self {
-            reports,
-            wake,
+            shared,
             _tasks: Arc::new(Tasks(tasks)),
         }
     }
@@ -99,28 +160,15 @@ impl Aggregator {
     /// Wakes every source that is waiting for its next interval. A source in
     /// the middle of a refresh finishes that one and is not refreshed twice.
     pub fn refresh_now(&self) {
-        self.wake.notify_waiters();
+        self.shared.wake.notify_waiters();
     }
 
     pub fn snapshot(&self) -> DashboardSnapshot {
-        // Writers never panic while holding the lock, but a poisoned lock must
-        // not take every snapshot request down with it.
-        let reports = self
-            .reports
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        build_snapshot(Utc::now(), reports)
+        build_snapshot(Utc::now(), self.shared.reports())
     }
 }
 
-async fn refresh_loop(
-    index: usize,
-    spec: SourceSpec,
-    timeout: Duration,
-    reports: Arc<RwLock<Vec<SourceReport>>>,
-    wake: Arc<Notify>,
-) {
+async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared: Arc<Shared>) {
     let name = spec.name.clone();
     loop {
         let started = Instant::now();
@@ -138,16 +186,23 @@ async fn refresh_loop(
             Err(error) => warn!(source = %name, elapsed_ms, %error, "source refresh failed"),
         }
 
+        let succeeded = result.is_ok();
         {
-            let mut reports = reports.write().unwrap_or_else(PoisonError::into_inner);
+            let mut reports = shared
+                .reports
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
             let report = &mut reports[index];
             let previous = std::mem::replace(&mut report.outcome, SourceOutcome::Pending);
             report.outcome = next_outcome(previous, result);
         }
+        if succeeded {
+            shared.save_cache();
+        }
 
         tokio::select! {
             () = tokio::time::sleep(spec.interval) => {}
-            () = wake.notified() => {}
+            () = shared.wake.notified() => {}
         }
     }
 }
@@ -208,6 +263,10 @@ fn next_outcome(
                 batch,
                 refreshed_at,
                 ..
+            }
+            | SourceOutcome::Cached {
+                batch,
+                refreshed_at,
             },
         ) => SourceOutcome::Stale {
             batch,

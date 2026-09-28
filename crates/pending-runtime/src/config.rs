@@ -88,6 +88,21 @@ pub fn locate(
     })
 }
 
+/// Where the source cache lives: `$XDG_STATE_HOME/tasks-pending/cache.json`,
+/// else `$HOME/.local/state/tasks-pending/cache.json`. Relative values are
+/// ignored, per the XDG spec.
+pub fn cache_path(env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let absolute = |key: &str| {
+        env(key)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    let base = absolute("XDG_STATE_HOME")
+        .or_else(|| absolute("HOME").map(|home| home.join(".local").join("state")))?;
+    Some(base.join("tasks-pending").join("cache.json"))
+}
+
 /// Locates and loads the config, falling back to the sample source only when
 /// no file exists at the default location.
 pub fn load_plan(

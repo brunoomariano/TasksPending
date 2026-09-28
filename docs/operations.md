@@ -8,6 +8,10 @@
 - Frontend: `make frontend-dev`
 - Verification: `make ci-check`
 
+## Source Cache
+
+After every successful refresh, each source's cards are saved to `$XDG_STATE_HOME/tasks-pending/cache.json` (default `~/.local/state/tasks-pending/cache.json`). A restart shows them immediately, marked as data from the previous run, while sources refresh. Delete the file to start empty; a corrupt file is ignored and rewritten.
+
 ## TUI
 
 `pending-tui` runs the same aggregator as the API in-process, so it works without the API running. It reads the same config (`--config` or the default locations) and redraws every 250 ms.

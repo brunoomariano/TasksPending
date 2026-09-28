@@ -3,6 +3,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::model::PendingCard;
@@ -19,7 +20,7 @@ pub trait PendingSource: Send + Sync {
 }
 
 /// One card and the section it belongs to inside the source's lane.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceItem {
     pub section: String,
     pub card: PendingCard,
@@ -27,7 +28,7 @@ pub struct SourceItem {
 
 /// What a refresh produced. Non-empty `warnings` mean the data is partial and
 /// the source shows as degraded.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceBatch {
     pub items: Vec<SourceItem>,
     pub warnings: Vec<String>,

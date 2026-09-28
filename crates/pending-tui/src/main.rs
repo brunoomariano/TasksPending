@@ -14,7 +14,8 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use pending_runtime::Aggregator;
-use pending_runtime::config::{Origin, load_plan};
+use pending_runtime::cache::Cache;
+use pending_runtime::config::{Origin, cache_path, load_plan};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
@@ -96,7 +97,8 @@ fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("starting async runtime")?;
     let result = {
         let _guard = runtime.enter();
-        let aggregator = Aggregator::start(plan.specs, plan.timeout);
+        let cache = cache_path(&|key| std::env::var_os(key)).map(Cache::new);
+        let aggregator = Aggregator::start_with_cache(plan.specs, plan.timeout, cache);
         run(&aggregator, &header)
     };
     // Quit right away: an in-flight DNS lookup on a blocking thread must not

@@ -11,6 +11,8 @@ homepage.workspace = true
 chrono.workspace = true
 pending-core = { path = "../pending-core" }
 pending-github = { path = "../pending-github" }
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 toml.workspace = true

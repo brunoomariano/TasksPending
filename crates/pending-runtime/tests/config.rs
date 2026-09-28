@@ -238,3 +238,22 @@ fn gh_cli_is_asked_for_a_token_once_for_all_github_sources() {
     assert_eq!(plan.specs.len(), 2);
     assert_eq!(calls.get(), 1);
 }
+
+/// O cache fica em `$XDG_STATE_HOME/tasks-pending/cache.json`, ou em
+/// `~/.local/state/...`; caminhos relativos são ignorados.
+#[test]
+fn cache_path_follows_xdg_state_home() {
+    use pending_runtime::config::cache_path;
+
+    assert_eq!(
+        cache_path(&env(&[("XDG_STATE_HOME", "/state"), ("HOME", "/home/me")])),
+        Some(PathBuf::from("/state/tasks-pending/cache.json"))
+    );
+    assert_eq!(
+        cache_path(&env(&[("XDG_STATE_HOME", "rel"), ("HOME", "/home/me")])),
+        Some(PathBuf::from(
+            "/home/me/.local/state/tasks-pending/cache.json"
+        ))
+    );
+    assert_eq!(cache_path(&env(&[])), None);
+}

@@ -31,6 +31,12 @@ pub enum SourceOutcome {
         refreshed_at: DateTime<Utc>,
         error: SourceError,
     },
+    /// Nothing refreshed yet in this run; `batch` is the last success of a
+    /// previous run, from `refreshed_at`.
+    Cached {
+        batch: SourceBatch,
+        refreshed_at: DateTime<Utc>,
+    },
 }
 
 /// Builds the dashboard from every source's report. A bad source never takes
@@ -40,6 +46,8 @@ pub enum SourceOutcome {
 /// - A failed source shows as `Failed` with its error, and contributes no cards.
 /// - A stale source keeps its last known cards and shows as `Degraded`,
 ///   explaining the failure.
+/// - A cached source shows the previous run's cards and stays `Refreshing`
+///   until its first refresh in this run.
 /// - Cards with a non-http(s) url, or an id already used by an earlier card,
 ///   are dropped; their source shows as `Degraded` and names them.
 /// - Source warnings also make the source `Degraded`.
@@ -54,6 +62,7 @@ pub fn build_snapshot(
     let mut sources = Vec::with_capacity(reports.len());
 
     for report in reports {
+        let mut refreshing = false;
         let (batch, refreshed_at, mut problems) = match report.outcome {
             SourceOutcome::Pending => {
                 sources.push(SourceHealth {
@@ -86,6 +95,17 @@ pub fn build_snapshot(
                 refreshed_at,
                 vec![format!("refresh failed: {error}; showing stale data")],
             ),
+            SourceOutcome::Cached {
+                batch,
+                refreshed_at,
+            } => {
+                refreshing = true;
+                (
+                    batch,
+                    refreshed_at,
+                    vec!["showing data from the previous run".to_owned()],
+                )
+            }
         };
 
         problems.extend(batch.warnings);
@@ -111,7 +131,9 @@ pub fn build_snapshot(
 
         sources.push(SourceHealth {
             name: report.name,
-            status: if problems.is_empty() {
+            status: if refreshing {
+                SourceStatus::Refreshing
+            } else if problems.is_empty() {
                 SourceStatus::Ready
             } else {
                 SourceStatus::Degraded

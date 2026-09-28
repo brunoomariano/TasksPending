@@ -7,7 +7,8 @@ use axum::{Json, Router, routing::get};
 use clap::Parser;
 use pending_core::DashboardSnapshot;
 use pending_runtime::Aggregator;
-use pending_runtime::config::{Origin, load_plan};
+use pending_runtime::cache::Cache;
+use pending_runtime::config::{Origin, cache_path, load_plan};
 use serde::Serialize;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
@@ -54,7 +55,12 @@ async fn main() -> anyhow::Result<()> {
             "no config file found; serving the built-in sample source"
         ),
     }
-    let aggregator = Aggregator::start(plan.specs, plan.timeout);
+    let cache = cache_path(&|key| std::env::var_os(key)).map(Cache::new);
+    match &cache {
+        Some(cache) => info!(cache = ?cache, "source cache enabled"),
+        None => warn!("no XDG_STATE_HOME or HOME; the source cache is disabled"),
+    }
+    let aggregator = Aggregator::start_with_cache(plan.specs, plan.timeout, cache);
 
     let static_dir = resolve_static_dir(cli.static_dir);
     match &static_dir {

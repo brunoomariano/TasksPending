@@ -37,7 +37,7 @@ The frontend types in `frontend/src/contract.gen.ts` are generated from these Ru
 
 `Aggregator::refresh_now` wakes every source waiting for its interval (the TUI's `r` key).
 
-There is no persistence yet: a restart starts every source as `pending` again.
+The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME/tasks-pending/cache.json`, else `~/.local/state/...`) after each successful refresh, atomically (temp file + rename), since the API and the TUI may run at the same time. On start, a cached source shows those cards as `cached` (dashboard status `refreshing`, "showing data from the previous run") until its first refresh; a failure then keeps them as `stale`. A missing, corrupt or older-format cache is ignored and rewritten.
 
 `pending_runtime::config` locates and loads the config file, validates it with `AppConfig::validate`, and turns each enabled source into a `SourceSpec`. The source's configured `name` is what source health shows.
 

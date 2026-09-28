@@ -409,7 +409,7 @@ fn github_columns_need_a_query_or_notifications() {
     let dir = scratch("gh-columns");
     for (name, body) in [
         ("neither.toml", ""),
-        ("both.toml", "query = \"is:pr\"\nnotifications = \"inbox\""),
+        ("both.toml", "query = \"is:pr\"\nnotifications = \"all\""),
         ("bad-mode.toml", "notifications = \"done\""),
     ] {
         let path = dir.join(name);

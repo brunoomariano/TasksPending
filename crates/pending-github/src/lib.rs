@@ -33,7 +33,7 @@ pub struct GithubColumn {
     /// A search query (github.com search syntax). Set this or `notifications`.
     #[serde(default)]
     pub query: Option<String>,
-    /// The notifications inbox instead of a search.
+    /// Notifications instead of a search.
     #[serde(default)]
     pub notifications: Option<Notifications>,
     /// Severity of the cards in this column (default `info`; unread
@@ -46,9 +46,11 @@ pub struct GithubColumn {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Notifications {
-    /// Everything not marked as done, read or unread.
-    Inbox,
-    /// Unread only.
+    /// Read and unread. The REST API cannot tell which ones were marked as
+    /// done on github.com, so those show too. `inbox` is the old name.
+    #[serde(alias = "inbox")]
+    All,
+    /// Unread only; matches the "Unread" tab of github.com.
     Unread,
 }
 
@@ -183,7 +185,7 @@ impl GithubSource {
     ) -> Result<(Vec<PendingCard>, Vec<String>), SearchFailure> {
         if let Some(mode) = column.notifications {
             let all = match mode {
-                Notifications::Inbox => "true",
+                Notifications::All => "true",
                 Notifications::Unread => "false",
             };
             let per_page = PAGE_SIZE.to_string();
@@ -406,7 +408,7 @@ pub fn gh_cli_token_with(program: &str, limit: Duration) -> Option<String> {
     (!token.is_empty()).then_some(token)
 }
 
-/// One thread of the notifications inbox.
+/// One notification thread.
 #[derive(Deserialize)]
 struct Notification {
     id: String,

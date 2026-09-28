@@ -565,9 +565,9 @@ fn notification(id: &str, kind: &str, api_url: Option<&str>, unread: bool) -> Va
     })
 }
 
-/// Uma coluna de notificações mostra a caixa de entrada do GitHub (tudo que
-/// ainda não foi marcado como feito); cada card aponta para o PR, a issue ou,
-/// nos outros tipos, o repositório, e as não lidas aparecem como aviso.
+/// Uma coluna `all` mostra notificações lidas e não lidas; cada card aponta
+/// para o PR, a issue ou, nos outros tipos, o repositório, e as não lidas
+/// aparecem como aviso.
 #[tokio::test]
 async fn notification_columns_show_the_inbox() {
     use pending_github::{GithubColumn, Notifications};
@@ -593,7 +593,7 @@ async fn notification_columns_show_the_inbox() {
     let source = GithubSource::new(base, Some(TOKEN.to_owned())).with_columns(vec![GithubColumn {
         name: "Notificações".to_owned(),
         query: None,
-        notifications: Some(Notifications::Inbox),
+        notifications: Some(Notifications::All),
         severity: None,
     }]);
 

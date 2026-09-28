@@ -33,7 +33,7 @@ enabled = true
 #
 #   [[sources.columns]]
 #   name = "Notifications"
-#   notifications = "inbox"       # not done; "unread" for unread only
+#   notifications = "unread"      # "all" adds read ones (incl. marked done)
 #
 #   [[sources.columns]]
 #   name = "My pull requests"

@@ -14,7 +14,7 @@ The dashboard is a kanban: each board (`board` in a source, formerly `lane`) is 
 
 | kind | column keys | default columns |
 |---|---|---|
-| `github` | `query` (search syntax) or `notifications` (`inbox`/`unread`), `severity` | Review requested, My pull requests, Assigned issues |
+| `github` | `query` (search syntax) or `notifications` (`unread`/`all`), `severity` | Review requested, My pull requests, Assigned issues |
 | `plane` | `assignee` (me/none/others/any), `state_group`, `state`, `project`, `priority` | In progress, To do, Backlog (yours) |
 | `google` | `when` (now/today/tomorrow/later), `calendar` (names) | Now, Today, Tomorrow, Next 30 days |
 | `ical` | `when` (now/today/tomorrow/later) | Now, Today, Tomorrow, Next 30 days |
@@ -96,7 +96,7 @@ Tokens are read from the environment by each source, never from the config file.
 
 ## GitHub Source
 
-`kind = "github"` runs one search per column (`query`, github.com search syntax; optional `severity`), or reads the notifications inbox (`notifications = "inbox"` for everything not marked as done, `"unread"` for unread only; unread ones are warnings, cards link to the pull request or issue, or to the repository for other kinds). A column sets exactly one of the two. The notifications API needs a classic token with the `repo` or `notifications` scope, as `gh auth token` provides; fine-grained tokens cannot read it. By default: review requests (warning), your open pull requests and your assigned issues. An item found by several searches shows in each of those columns.
+`kind = "github"` runs one search per column (`query`, github.com search syntax; optional `severity`), or reads notifications (`notifications = "unread"`, matching github.com's Unread tab, or `"all"` for read and unread — the REST API cannot tell which ones you marked as done on github.com, so those show too; `inbox` is accepted as the old name of `all`; unread ones are warnings, cards link to the pull request or issue, or to the repository for other kinds). A column sets exactly one of the two. The notifications API needs a classic token with the `repo` or `notifications` scope, as `gh auth token` provides; fine-grained tokens cannot read it. By default: review requests (warning), your open pull requests and your assigned issues. An item found by several searches shows in each of those columns.
 
 - Token: `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token` (given up after 5 s; the API logs before running it, the TUI starts silently until then), resolved once at startup for all GitHub sources. Without a token the source shows as failed with a setup hint; restart after logging in.
 - Each column is one search; they run three at a time (GitHub discourages concurrent searches, and the search API allows 30 requests per minute per user, so keep the number of GitHub columns modest). Each search is limited to 10 s, so a hanging search becomes a warning for its column instead of failing the refresh. Keep `timeout_seconds` (default 60) above 10, or the aggregator timeout fails the whole refresh first.

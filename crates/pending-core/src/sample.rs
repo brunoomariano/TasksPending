@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 
 use crate::config::DEFAULT_LANE;
 use crate::model::{CardSeverity, DashboardSnapshot, PendingCard};
-use crate::snapshot::{SourceReport, build_snapshot};
+use crate::snapshot::{SourceOutcome, SourceReport, build_snapshot};
 use crate::source::{BoxFuture, PendingSource, SourceBatch, SourceError, SourceItem};
 
 pub struct SampleSource;
@@ -71,8 +71,10 @@ pub fn sample_snapshot() -> DashboardSnapshot {
         vec![SourceReport {
             name: SampleSource::NAME.to_owned(),
             lane: DEFAULT_LANE.to_owned(),
-            refreshed_at: at,
-            outcome: Ok(SampleSource::batch(at)),
+            outcome: SourceOutcome::Fresh {
+                batch: SampleSource::batch(at),
+                refreshed_at: at,
+            },
         }],
     )
 }

@@ -2,8 +2,8 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 use pending_core::{
-    CardSeverity, PendingCard, SourceBatch, SourceError, SourceItem, SourceReport, SourceStatus,
-    build_snapshot,
+    CardSeverity, PendingCard, SourceBatch, SourceError, SourceItem, SourceOutcome, SourceReport,
+    SourceStatus, build_snapshot,
 };
 
 fn at(hour: u32) -> DateTime<Utc> {
@@ -34,11 +34,13 @@ fn ok(name: &str, lane: &str, items: Vec<SourceItem>) -> SourceReport {
     SourceReport {
         name: name.to_owned(),
         lane: lane.to_owned(),
-        refreshed_at: at(11),
-        outcome: Ok(SourceBatch {
-            items,
-            warnings: Vec::new(),
-        }),
+        outcome: SourceOutcome::Fresh {
+            batch: SourceBatch {
+                items,
+                warnings: Vec::new(),
+            },
+            refreshed_at: at(11),
+        },
     }
 }
 
@@ -155,8 +157,7 @@ fn failed_source_is_reported_without_hiding_other_sources() {
             SourceReport {
                 name: "github".to_owned(),
                 lane: "Work".to_owned(),
-                refreshed_at: at(11),
-                outcome: Err(SourceError::new("401 bad credentials")),
+                outcome: SourceOutcome::Failed(SourceError::new("401 bad credentials")),
             },
             ok(
                 "todo",
@@ -183,7 +184,7 @@ fn source_warnings_degrade_the_source_but_keep_its_cards() {
         "Work",
         vec![item("Review", "a", CardSeverity::Info, 1)],
     );
-    if let Ok(batch) = &mut report.outcome {
+    if let SourceOutcome::Fresh { batch, .. } = &mut report.outcome {
         batch.warnings.push("o/private: 403".to_owned());
     }
 
@@ -263,4 +264,54 @@ fn cards_with_non_http_urls_are_dropped_and_degrade_the_source() {
         github.message.as_deref().unwrap_or("").contains("bad-link"),
         "{github:?}"
     );
+}
+
+/// Enquanto a primeira consulta de uma fonte não termina, ela aparece como
+/// atualizando, sem cards e sem horário de refresh.
+#[test]
+fn pending_source_shows_as_refreshing() {
+    let snapshot = build_snapshot(
+        at(12),
+        vec![SourceReport {
+            name: "github".to_owned(),
+            lane: "Work".to_owned(),
+            outcome: SourceOutcome::Pending,
+        }],
+    );
+
+    assert!(snapshot.lanes.is_empty());
+    let github = health(&snapshot, "github");
+    assert_eq!(github.status, SourceStatus::Refreshing);
+    assert_eq!(github.last_refresh_at, None);
+}
+
+/// Quando um refresh falha depois de um sucesso, o dashboard continua mostrando
+/// os últimos cards conhecidos; a fonte fica degradada, diz que o dado é antigo
+/// e por quê, e o horário é o do último sucesso.
+#[test]
+fn stale_source_keeps_last_known_cards_and_explains_the_failure() {
+    let snapshot = build_snapshot(
+        at(12),
+        vec![SourceReport {
+            name: "github".to_owned(),
+            lane: "Work".to_owned(),
+            outcome: SourceOutcome::Stale {
+                batch: SourceBatch {
+                    items: vec![item("Review", "a", CardSeverity::Info, 1)],
+                    warnings: vec!["o/private: 403".to_owned()],
+                },
+                refreshed_at: at(9),
+                error: SourceError::new("timed out"),
+            },
+        }],
+    );
+
+    assert_eq!(layout(&snapshot), vec!["Work/Review: a"]);
+    let github = health(&snapshot, "github");
+    assert_eq!(github.status, SourceStatus::Degraded);
+    assert_eq!(github.last_refresh_at, Some(at(9)));
+    let message = github.message.as_deref().unwrap_or("");
+    assert!(message.contains("timed out"), "{message}");
+    assert!(message.contains("stale"), "{message}");
+    assert!(message.contains("o/private: 403"), "{message}");
 }

@@ -5,20 +5,41 @@ use chrono::{DateTime, Utc};
 use crate::model::{DashboardSnapshot, Lane, PendingCard, Section, SourceHealth, SourceStatus};
 use crate::source::{SourceBatch, SourceError};
 
-/// The result of refreshing one configured source.
+/// The current state of one configured source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceReport {
     pub name: String,
     /// Lane from the source's configuration.
     pub lane: String,
-    pub refreshed_at: DateTime<Utc>,
-    pub outcome: Result<SourceBatch, SourceError>,
+    pub outcome: SourceOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceOutcome {
+    /// The first refresh has not finished yet.
+    Pending,
+    /// The latest refresh succeeded.
+    Fresh {
+        batch: SourceBatch,
+        refreshed_at: DateTime<Utc>,
+    },
+    /// The latest refresh failed and there is no earlier success to show.
+    Failed(SourceError),
+    /// The latest refresh failed; `batch` is the last success, from `refreshed_at`.
+    Stale {
+        batch: SourceBatch,
+        refreshed_at: DateTime<Utc>,
+        error: SourceError,
+    },
 }
 
 /// Builds the dashboard from every source's report. A bad source never takes
 /// the dashboard down.
 ///
+/// - A pending source shows as `Refreshing` and contributes no cards.
 /// - A failed source shows as `Failed` with its error, and contributes no cards.
+/// - A stale source keeps its last known cards and shows as `Degraded`,
+///   explaining the failure.
 /// - Cards with a non-http(s) url, or an id already used by an earlier card,
 ///   are dropped; their source shows as `Degraded` and names them.
 /// - Source warnings also make the source `Degraded`.
@@ -33,9 +54,17 @@ pub fn build_snapshot(
     let mut sources = Vec::with_capacity(reports.len());
 
     for report in reports {
-        let batch = match report.outcome {
-            Ok(batch) => batch,
-            Err(error) => {
+        let (batch, refreshed_at, mut problems) = match report.outcome {
+            SourceOutcome::Pending => {
+                sources.push(SourceHealth {
+                    name: report.name,
+                    status: SourceStatus::Refreshing,
+                    last_refresh_at: None,
+                    message: None,
+                });
+                continue;
+            }
+            SourceOutcome::Failed(error) => {
                 sources.push(SourceHealth {
                     name: report.name,
                     status: SourceStatus::Failed,
@@ -44,9 +73,22 @@ pub fn build_snapshot(
                 });
                 continue;
             }
+            SourceOutcome::Fresh {
+                batch,
+                refreshed_at,
+            } => (batch, refreshed_at, Vec::new()),
+            SourceOutcome::Stale {
+                batch,
+                refreshed_at,
+                error,
+            } => (
+                batch,
+                refreshed_at,
+                vec![format!("refresh failed: {error}; showing stale data")],
+            ),
         };
 
-        let mut problems = batch.warnings;
+        problems.extend(batch.warnings);
         for item in batch.items {
             if item
                 .card
@@ -74,7 +116,7 @@ pub fn build_snapshot(
             } else {
                 SourceStatus::Degraded
             },
-            last_refresh_at: Some(report.refreshed_at),
+            last_refresh_at: Some(refreshed_at),
             message: (!problems.is_empty()).then(|| problems.join("; ")),
         });
     }

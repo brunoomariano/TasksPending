@@ -146,6 +146,21 @@ body {
   color: #c7d1da;
 }
 
+.refresh {
+  padding: 6px 14px;
+  border: 1px solid #54a7ff;
+  border-radius: 6px;
+  background: transparent;
+  color: #e8edf2;
+  font: inherit;
+  cursor: pointer;
+}
+
+.refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .sources {
   display: flex;
   flex-wrap: wrap;

@@ -37,7 +37,7 @@ Keys: `j`/`k` or arrows move the selection (lanes scroll to keep it visible), `E
 
 ## Web Dashboard
 
-The frontend polls `/api/v1/snapshot` every 15 seconds while the tab is visible and redraws only when cards or source health change. It shows each source's status and failure reason. If the API stops answering after a successful load, the last cards stay on screen under a warning with the time of the last good response.
+The frontend polls `/api/v1/snapshot` every 15 seconds while the tab is visible and redraws only when cards or source health change. It shows each source's status and failure reason, and a Refresh button that calls `POST /api/v1/refresh` and reads the result a couple of seconds later. If the API stops answering after a successful load, the last cards stay on screen under a warning with the time of the last good response.
 
 `pending-api` serves the built frontend at `/` from `--static-dir <dir>`, or from `../frontend` next to the binary when it has an `index.html` (release bundle layout). Without either it serves only the API. An explicit `--static-dir` without `index.html` fails at startup.
 
@@ -45,6 +45,7 @@ The frontend polls `/api/v1/snapshot` every 15 seconds while the tab is visible 
 
 - `GET /healthz`: process health and version.
 - `GET /api/v1/snapshot`: dashboard snapshot.
+- `POST /api/v1/refresh`: refresh every source now. Requires the header `x-requested-with: tasks-pending` (403 without it, so other sites open in the browser cannot trigger it) and answers 429 with `retry_after_secs` when called again within 10 s.
 - `GET /*`: built frontend, when a static directory is available.
 
 ## Configuration

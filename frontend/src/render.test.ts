@@ -176,4 +176,19 @@ describe("renderApp", () => {
   test("loading state", () => {
     expect(renderApp({ kind: "loading" })).toContain("Loading");
   });
+
+  /** Com dados na tela, há um botão para atualizar todas as fontes agora. */
+  test("offers a refresh button", () => {
+    const html = renderApp({
+      kind: "ready",
+      fetchedAt: new Date("2026-09-28T10:00:00Z"),
+      snapshot: {
+        generated_at: "2026-09-28T10:00:00Z",
+        lanes: [],
+        sources: [],
+      },
+    });
+
+    expect(html).toContain('data-action="refresh"');
+  });
 });

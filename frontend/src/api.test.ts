@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { loadSnapshot } from "./api";
+import { loadSnapshot, requestRefresh } from "./api";
 
 describe("loadSnapshot", () => {
   /**
@@ -63,5 +63,33 @@ describe("loadSnapshot", () => {
     const result = await loadSnapshot(hanging, 20);
 
     expect(result).toEqual({ ok: false, error: "request timed out" });
+  });
+});
+
+describe("requestRefresh", () => {
+  /** O pedido vai com o cabeçalho que a API exige do dashboard. */
+  test("asks the API to refresh every source", async () => {
+    let sent: RequestInit | undefined;
+    const accepted = async (_input: string, init?: RequestInit) => {
+      sent = init;
+      return new Response(JSON.stringify({ accepted: true }), { status: 202 });
+    };
+
+    expect(await requestRefresh(accepted)).toEqual({ ok: true });
+    expect(sent?.method).toBe("POST");
+    expect(new Headers(sent?.headers).get("x-requested-with")).toBe(
+      "tasks-pending",
+    );
+  });
+
+  /** Pedido repetido cedo demais diz quanto falta esperar. */
+  test("reports the cooldown", async () => {
+    const tooSoon = async () =>
+      new Response(JSON.stringify({ retry_after_secs: 7 }), { status: 429 });
+
+    expect(await requestRefresh(tooSoon)).toEqual({
+      ok: false,
+      error: "wait 7s",
+    });
   });
 });

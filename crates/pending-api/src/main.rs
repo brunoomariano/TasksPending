@@ -1,15 +1,21 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use anyhow::Context;
 use axum::extract::State;
-use axum::{Json, Router, routing::get};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use clap::Parser;
 use pending_core::DashboardSnapshot;
 use pending_runtime::Aggregator;
 use pending_runtime::cache::Cache;
 use pending_runtime::config::{Origin, cache_path, load_plan};
 use serde::Serialize;
+use tokio::time::Instant;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
@@ -85,18 +91,35 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Minimum wait between refreshes requested over HTTP; each one queries every
+/// source, and provider APIs rate-limit.
+const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
+
+/// Header the dashboard sends with state-changing requests. Another site open
+/// in the browser cannot add it without a CORS preflight, which is refused.
+const DASHBOARD_HEADER: (&str, &str) = ("x-requested-with", "tasks-pending");
+
+#[derive(Clone)]
+struct AppState {
+    aggregator: Aggregator,
+    last_refresh: Arc<Mutex<Option<Instant>>>,
+}
+
 /// API routes, plus the built frontend from `static_dir` for any other path.
 fn app(aggregator: Aggregator, static_dir: Option<&Path>) -> Router {
+    let state = AppState {
+        aggregator,
+        last_refresh: Arc::new(Mutex::new(None)),
+    };
     let router = Router::new()
         .route("/healthz", get(healthz))
-        .route("/api/v1/snapshot", get(snapshot));
+        .route("/api/v1/snapshot", get(snapshot))
+        .route("/api/v1/refresh", post(refresh));
     let router = match static_dir {
         Some(dir) => router.fallback_service(ServeDir::new(dir)),
         None => router,
     };
-    router
-        .layer(TraceLayer::new_for_http())
-        .with_state(aggregator)
+    router.layer(TraceLayer::new_for_http()).with_state(state)
 }
 
 /// `--static-dir`, else `frontend/` next to the binary's `bin/` directory (the
@@ -120,8 +143,52 @@ async fn healthz() -> Json<Health> {
     })
 }
 
-async fn snapshot(State(aggregator): State<Aggregator>) -> Json<DashboardSnapshot> {
-    Json(aggregator.snapshot())
+async fn snapshot(State(state): State<AppState>) -> Json<DashboardSnapshot> {
+    Json(state.aggregator.snapshot())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum RefreshReply {
+    Accepted { accepted: bool },
+    Wait { retry_after_secs: u64 },
+    Forbidden { error: &'static str },
+}
+
+/// Refreshes every source now, at most once per [`REFRESH_COOLDOWN`].
+async fn refresh(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    let (name, value) = DASHBOARD_HEADER;
+    if headers.get(name).and_then(|v| v.to_str().ok()) != Some(value) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(RefreshReply::Forbidden {
+                error: "missing dashboard header",
+            }),
+        );
+    }
+
+    let now = Instant::now();
+    let mut last = state
+        .last_refresh
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some(elapsed) = last.map(|at| now.saturating_duration_since(at))
+        && elapsed < REFRESH_COOLDOWN
+    {
+        let wait = (REFRESH_COOLDOWN - elapsed).as_secs().max(1);
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(RefreshReply::Wait {
+                retry_after_secs: wait,
+            }),
+        );
+    }
+    *last = Some(now);
+    state.aggregator.refresh_now();
+    (
+        StatusCode::ACCEPTED,
+        Json(RefreshReply::Accepted { accepted: true }),
+    )
 }
 
 fn init_tracing() {
@@ -219,5 +286,74 @@ mod tests {
 
         assert_eq!(get(app.clone(), "/").await.0, StatusCode::NOT_FOUND);
         assert_eq!(get(app, "/healthz").await.0, StatusCode::OK);
+    }
+
+    struct Counting(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl pending_core::PendingSource for Counting {
+        fn refresh(
+            &self,
+        ) -> pending_core::BoxFuture<'_, Result<pending_core::SourceBatch, pending_core::SourceError>>
+        {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { Ok(pending_core::SourceBatch::default()) })
+        }
+    }
+
+    async fn post(app: Router, path: &str, marked: bool) -> (StatusCode, String) {
+        let mut request = Request::post(path);
+        if marked {
+            request = request.header("x-requested-with", "tasks-pending");
+        }
+        let response = app
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// O botão de atualizar da web pede um refresh imediato de todas as
+    /// fontes; um segundo pedido logo em seguida é recusado com o tempo de
+    /// espera, para não estourar limites de taxa das APIs.
+    #[tokio::test(start_paused = true)]
+    async fn refresh_endpoint_wakes_sources_with_a_cooldown() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let aggregator = Aggregator::start(
+            vec![SourceSpec {
+                name: "counting".to_owned(),
+                source: Arc::new(Counting(calls.clone())),
+                lane: "Inbox".to_owned(),
+                interval: Duration::from_secs(300),
+            }],
+            Duration::from_secs(30),
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let app = app(aggregator, None);
+
+        let (status, _) = post(app.clone(), "/api/v1/refresh", true).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        let (status, body) = post(app.clone(), "/api/v1/refresh", true).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(body.contains("retry_after_secs"), "{body}");
+
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        let (status, _) = post(app, "/api/v1/refresh", true).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+    }
+
+    /// Outro site aberto no navegador não consegue disparar o refresh: sem o
+    /// cabeçalho que só o dashboard envia, o pedido é recusado.
+    #[tokio::test]
+    async fn refresh_requires_the_dashboard_header() {
+        let (status, _) = post(app(idle_aggregator(), None), "/api/v1/refresh", false).await;
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 }

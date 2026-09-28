@@ -59,6 +59,7 @@ function renderSnapshot(snapshot: DashboardSnapshot, banner: string): string {
         <h1>TasksPending</h1>
         <p>${snapshot.lanes.length} lanes · ${snapshot.sources.length} sources · ${escapeHtml(snapshot.generated_at)}</p>
       </div>
+      <button type="button" class="refresh" data-action="refresh">Refresh</button>
     </header>
     ${banner}
     <ul class="sources">

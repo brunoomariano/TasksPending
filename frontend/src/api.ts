@@ -45,3 +45,34 @@ function isSnapshot(value: unknown): value is DashboardSnapshot {
     Array.isArray(candidate.sources)
   );
 }
+
+export type RefreshResult = { ok: true } | { ok: false; error: string };
+
+/** Asks the API to refresh every source now (rate-limited server-side). */
+export async function requestRefresh(
+  fetchFn: Fetch = (input, init) => fetch(input, init),
+): Promise<RefreshResult> {
+  try {
+    const response = await fetchFn("/api/v1/refresh", {
+      method: "POST",
+      headers: { "x-requested-with": "tasks-pending" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (response.ok) {
+      return { ok: true };
+    }
+    const body: unknown = await response.json().catch(() => null);
+    const wait =
+      typeof body === "object" && body !== null
+        ? (body as Record<string, unknown>).retry_after_secs
+        : undefined;
+    return typeof wait === "number"
+      ? { ok: false, error: `wait ${wait}s` }
+      : { ok: false, error: `HTTP ${response.status}` };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}

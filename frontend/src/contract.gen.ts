@@ -21,7 +21,11 @@ export type Group = {
 /**
  * Configured source name; matches a `SourceHealth::name`.
  */
-source: string, columns: Array<Column>, };
+source: string, 
+/**
+ * The source's icon from the configuration.
+ */
+icon: Icon | null, columns: Array<Column>, };
 
 export type Column = { name: string, cards: Array<PendingCard>, };
 
@@ -35,5 +39,11 @@ due_at: string | null, severity: CardSeverity, updated_at: string, };
 export type CardSeverity = "info" | "warning" | "critical";
 
 export type SourceHealth = { name: string, status: SourceStatus, last_refresh_at: string | null, message: string | null, };
+
+export type Icon = { url: string, 
+/**
+ * Used instead of `url` on dark themes.
+ */
+dark_url: string | null, };
 
 export type SourceStatus = "ready" | "refreshing" | "degraded" | "failed";

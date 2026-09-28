@@ -206,24 +206,21 @@ button {
 .board {
   display: flex;
   align-items: flex-start;
-  gap: 20px;
+  gap: 36px;
   padding: 20px 28px 32px;
   overflow-x: auto;
 }
 
+/* Groups are not boxed: fewer frames, less to look at. */
 .group {
   flex: 0 0 auto;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: var(--shadow);
 }
 
 .group-header {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: 26px;
   margin: 0 2px 12px;
 }
 
@@ -274,6 +271,7 @@ button {
 
 .columns {
   display: flex;
+  align-items: flex-start;
   gap: 12px;
 }
 
@@ -281,8 +279,9 @@ button {
   flex: 0 0 290px;
   min-width: 0;
   padding: 10px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 
 .column h3 {
@@ -323,17 +322,13 @@ button {
 .card {
   min-width: 0;
   padding: 10px 12px;
-  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface);
-  transition:
-    border-color 120ms,
-    transform 120ms;
+  background: var(--surface-2);
+  transition: background 120ms;
 }
 
 .card:hover {
-  border-color: var(--border-strong);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--surface-2) 70%, var(--border-strong));
 }
 
 .card-title {
@@ -353,11 +348,17 @@ button {
   color: var(--accent);
 }
 
+/* Two lines at most; the full text is in the tooltip. */
 .card p {
+  display: -webkit-box;
   margin: 4px 0 0;
+  overflow: hidden;
   color: var(--text-2);
   font-size: 0.82rem;
   overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 /* Alerts */
@@ -523,4 +524,37 @@ button {
   .column {
     flex-basis: 250px;
   }
+}
+
+.dot {
+  color: var(--text-3);
+}
+
+/* Source logos (dashboardicons.com or any image URL). */
+.source-icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.source-icon img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.link-button {
+  display: block;
+  margin: 8px auto 0;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  background: var(--surface-2);
+  color: var(--text);
 }

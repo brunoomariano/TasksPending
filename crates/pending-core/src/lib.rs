@@ -7,7 +7,8 @@ pub mod source;
 
 pub use config::{AppConfig, ColumnConfig, ConfigError, DEFAULT_BOARD, SourceConfig, SourceKind};
 pub use model::{
-    Board, CardSeverity, Column, DashboardSnapshot, Group, PendingCard, SourceHealth, SourceStatus,
+    Board, CardSeverity, Column, DashboardSnapshot, Group, Icon, PendingCard, SourceHealth,
+    SourceStatus,
 };
 pub use sample::{SampleSource, sample_snapshot};
 pub use snapshot::{SourceOutcome, SourceReport, build_snapshot};

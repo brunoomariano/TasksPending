@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
 
-use crate::model::{Board, Column, DashboardSnapshot, Group, SourceHealth, SourceStatus};
+use crate::model::{Board, Column, DashboardSnapshot, Group, Icon, SourceHealth, SourceStatus};
 use crate::source::{SourceBatch, SourceError};
 
 /// The current state of one configured source.
@@ -14,6 +14,7 @@ pub struct SourceReport {
     pub board: String,
     /// The source's columns in display order.
     pub columns: Vec<String>,
+    pub icon: Option<Icon>,
     pub outcome: SourceOutcome,
 }
 
@@ -69,6 +70,7 @@ pub fn build_snapshot(
     for report in reports {
         let mut group = Group {
             source: report.name.clone(),
+            icon: report.icon.clone(),
             columns: report
                 .columns
                 .iter()
@@ -203,7 +205,7 @@ pub fn build_snapshot(
     }
 }
 
-fn is_http_url(url: &str) -> bool {
+pub(crate) fn is_http_url(url: &str) -> bool {
     let lower = url.trim_start().to_ascii_lowercase();
     lower.starts_with("https://") || lower.starts_with("http://")
 }

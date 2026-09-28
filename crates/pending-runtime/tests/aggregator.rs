@@ -98,6 +98,7 @@ fn named_spec(name: &str, source: Arc<dyn PendingSource>, interval_secs: u64) ->
         board: "Work".to_owned(),
         interval: Duration::from_secs(interval_secs),
         timeout: None,
+        icon: None,
     }
 }
 

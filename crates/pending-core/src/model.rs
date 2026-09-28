@@ -25,7 +25,19 @@ pub struct Board {
 pub struct Group {
     /// Configured source name; matches a `SourceHealth::name`.
     pub source: String,
+    /// The source's icon from the configuration.
+    #[serde(default)]
+    pub icon: Option<Icon>,
     pub columns: Vec<Column>,
+}
+
+/// An image shown next to a source's name, by http(s) URL.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Icon {
+    pub url: String,
+    /// Used instead of `url` on dark themes.
+    #[serde(default)]
+    pub dark_url: Option<String>,
 }
 
 /// A kanban column: the cards matching one of the source's filters.

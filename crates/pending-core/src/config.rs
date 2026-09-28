@@ -3,6 +3,9 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::model::Icon;
+use crate::snapshot::is_http_url;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
@@ -31,6 +34,13 @@ pub struct SourceConfig {
     /// Overrides the global `timeout_seconds` for this source.
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    /// Image URL shown next to the source's name, e.g. from
+    /// https://dashboardicons.com.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Variant of `icon` for dark themes.
+    #[serde(default)]
+    pub icon_dark: Option<String>,
     /// Columns (filters) of this source; empty means the source's defaults.
     /// Filter keys depend on `kind` and are checked when the source is built.
     #[serde(default)]
@@ -68,6 +78,11 @@ pub enum ConfigError {
     DuplicateColumnName { source_name: String, column: String },
     #[error("source `{0}` has a column without a name")]
     EmptyColumnName(String),
+    #[error("source `{source_name}`: {message}")]
+    Icon {
+        source_name: String,
+        message: String,
+    },
 }
 
 impl Default for AppConfig {
@@ -107,6 +122,20 @@ impl AppConfig {
                     });
                 }
             }
+            let icon_error = |message: &str| {
+                Err(ConfigError::Icon {
+                    source_name: source.name.clone(),
+                    message: message.to_owned(),
+                })
+            };
+            if source.icon_dark.is_some() && source.icon.is_none() {
+                return icon_error("`icon_dark` needs `icon`");
+            }
+            for (key, url) in [("icon", &source.icon), ("icon_dark", &source.icon_dark)] {
+                if url.as_deref().is_some_and(|url| !is_http_url(url)) {
+                    return icon_error(&format!("`{key}` must be an http(s) URL"));
+                }
+            }
             for (key, value) in [
                 ("refresh_seconds", source.refresh_seconds),
                 ("timeout_seconds", source.timeout_seconds),
@@ -124,12 +153,21 @@ impl AppConfig {
     }
 }
 
+impl SourceConfig {
+    /// The configured icon, if any.
+    pub fn icon(&self) -> Option<Icon> {
+        Some(Icon {
+            url: self.icon.clone()?,
+            dark_url: self.icon_dark.clone(),
+        })
+    }
+}
+
 fn default_refresh_seconds() -> u64 {
     300
 }
 
-/// Room for the slowest source: Plane reads the user, the project list and
-/// then each project (up to 20 s each) before a refresh completes.
+/// Room for most sources; slow ones (Plane) set their own.
 fn default_timeout_seconds() -> u64 {
     60
 }
@@ -168,6 +206,38 @@ mod tests {
         assert!(source.enabled);
         assert_eq!(source.kind, SourceKind::Github);
         assert_eq!(source.refresh_seconds, None);
+    }
+
+    /// A source may name an icon (and a variant for dark themes) by http(s)
+    /// URL; anything else is rejected, since the page loads it as an image.
+    #[test]
+    fn source_icons_are_http_urls() {
+        let config = parse(
+            r#"
+            [[sources]]
+            name = "github"
+            kind = "github"
+            icon = "https://cdn.example/github.svg"
+            icon_dark = "https://cdn.example/github-light.svg"
+            "#,
+        );
+        config.validate().expect("valid icons");
+        assert_eq!(
+            config.sources[0].icon(),
+            Some(Icon {
+                url: "https://cdn.example/github.svg".to_owned(),
+                dark_url: Some("https://cdn.example/github-light.svg".to_owned()),
+            })
+        );
+
+        for text in [
+            "[[sources]]\nname = \"s\"\nkind = \"sample\"\nicon = \"javascript:alert(1)\"",
+            "[[sources]]\nname = \"s\"\nkind = \"sample\"\nicon = \"https://x/a.svg\"\nicon_dark = \"file:///a.svg\"",
+            "[[sources]]\nname = \"s\"\nkind = \"sample\"\nicon_dark = \"https://x/a.svg\"",
+        ] {
+            let error = parse(text).validate().expect_err(text);
+            assert!(error.to_string().contains("icon"), "{error}");
+        }
     }
 
     /// A typo in the source kind must fail loading the config, not become a

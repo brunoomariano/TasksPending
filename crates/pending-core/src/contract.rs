@@ -3,7 +3,8 @@
 use ts_rs::{Config, TS};
 
 use crate::model::{
-    Board, CardSeverity, Column, DashboardSnapshot, Group, PendingCard, SourceHealth, SourceStatus,
+    Board, CardSeverity, Column, DashboardSnapshot, Group, Icon, PendingCard, SourceHealth,
+    SourceStatus,
 };
 
 /// Contract file location, relative to the `pending-core` crate.
@@ -19,6 +20,7 @@ pub fn typescript_contract() -> String {
         PendingCard::decl(&cfg),
         CardSeverity::decl(&cfg),
         SourceHealth::decl(&cfg),
+        Icon::decl(&cfg),
         SourceStatus::decl(&cfg),
     ];
 

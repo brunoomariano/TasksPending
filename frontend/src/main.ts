@@ -1,7 +1,7 @@
 import "./styles.css";
 import { loadSnapshot, requestRefresh } from "./api";
 import { startPolling } from "./poll";
-import { renderApp, type View } from "./render";
+import { DEFAULT_VIEW, renderApp, type View } from "./render";
 import type { ViewState } from "./state";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -11,20 +11,24 @@ const AFTER_REFRESH_MS = 2_000;
 const REFRESH_COOLDOWN_MS = 10_000;
 const VIEW_KEY = "tasks-pending.view";
 
-/** Filter and expanded groups, remembered per browser; fine to lose. */
+/** Filter and opened sections, remembered per browser; fine to lose. */
 function savedView(): View {
   try {
     const saved = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "{}") as {
       board?: string | null;
       expanded?: string[];
+      openColumns?: string[];
     };
+    const set = (list: unknown) =>
+      new Set(Array.isArray(list) ? list.map(String) : []);
     return {
+      ...DEFAULT_VIEW,
       board: typeof saved.board === "string" ? saved.board : null,
-      expanded: new Set(Array.isArray(saved.expanded) ? saved.expanded : []),
-      sourcesOpen: false,
+      expanded: set(saved.expanded),
+      openColumns: set(saved.openColumns),
     };
   } catch {
-    return { board: null, expanded: new Set(), sourcesOpen: false };
+    return DEFAULT_VIEW;
   }
 }
 
@@ -32,7 +36,11 @@ function saveView(view: View): void {
   try {
     localStorage.setItem(
       VIEW_KEY,
-      JSON.stringify({ board: view.board, expanded: [...view.expanded] }),
+      JSON.stringify({
+        board: view.board,
+        expanded: [...view.expanded],
+        openColumns: [...view.openColumns],
+      }),
     );
   } catch {
     // Storage unavailable (private mode): the view just isn't remembered.
@@ -47,6 +55,15 @@ function setLabel(button: HTMLElement, text: string): void {
   } else {
     button.textContent = text;
   }
+}
+
+/** A copy of `set` with `key` added, or removed if it was there. */
+function flip(set: ReadonlySet<string>, key: string): Set<string> {
+  const next = new Set(set);
+  if (!next.delete(key)) {
+    next.add(key);
+  }
+  return next;
 }
 
 const app = document.querySelector<HTMLElement>("#app");
@@ -102,12 +119,16 @@ if (app) {
     }
     const toggle = target.closest<HTMLElement>("[data-toggle-empty]");
     if (toggle) {
-      const key = toggle.dataset.toggleEmpty ?? "";
-      const expanded = new Set(view.expanded);
-      if (!expanded.delete(key)) {
-        expanded.add(key);
-      }
-      change({ expanded });
+      change({
+        expanded: flip(view.expanded, toggle.dataset.toggleEmpty ?? ""),
+      });
+      return;
+    }
+    const more = target.closest<HTMLElement>("[data-more-column]");
+    if (more) {
+      change({
+        openColumns: flip(view.openColumns, more.dataset.moreColumn ?? ""),
+      });
       return;
     }
     if (target.closest('[data-action="sources"]')) {

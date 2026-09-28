@@ -17,6 +17,10 @@ board = "Inbox"      # tab that shows this source (default "Inbox")
 enabled = true
 # refresh_seconds = 60   # overrides the default above
 # timeout_seconds = 120  # overrides the default timeout above
+# Logo next to the source's name on the web; icon_dark for dark themes.
+# Dashboard Icons: https://dashboardicons.com
+# icon = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github.svg"
+# icon_dark = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github-light.svg"
 
 # --- Examples (uncomment and adapt) ---------------------------------------
 

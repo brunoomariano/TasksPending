@@ -251,6 +251,7 @@ fn plan(
             board: source.board.clone(),
             interval: Duration::from_secs(config.refresh_seconds_for(source)),
             timeout: source.timeout_seconds.map(Duration::from_secs),
+            icon: source.icon(),
         });
     }
 
@@ -301,6 +302,7 @@ fn sample_plan() -> Plan {
             board: DEFAULT_BOARD.to_owned(),
             interval: Duration::from_secs(defaults.refresh_seconds),
             timeout: None,
+            icon: None,
         }],
         timeout: Duration::from_secs(defaults.timeout_seconds),
     }

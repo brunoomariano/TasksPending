@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 use pending_core::{
-    CardSeverity, DashboardSnapshot, PendingCard, SourceBatch, SourceError, SourceHealth,
+    CardSeverity, DashboardSnapshot, Icon, PendingCard, SourceBatch, SourceError, SourceHealth,
     SourceItem, SourceOutcome, SourceReport, SourceStatus, build_snapshot,
 };
 
@@ -36,8 +36,33 @@ fn report(name: &str, board: &str, columns: &[&str], outcome: SourceOutcome) -> 
         name: name.to_owned(),
         board: board.to_owned(),
         columns: columns.iter().map(|c| (*c).to_owned()).collect(),
+        icon: None,
         outcome,
     }
+}
+
+/// A configured icon travels with the source's group, whatever its state.
+#[test]
+fn groups_carry_their_source_icon() {
+    let icon = Icon {
+        url: "https://cdn.example/plane.svg".to_owned(),
+        dark_url: None,
+    };
+    let mut ready = report("plane", "Work", &["Mine"], fresh(Vec::new()));
+    ready.icon = Some(icon.clone());
+    let mut failed = report(
+        "todoist",
+        "Work",
+        &["Today"],
+        SourceOutcome::Failed(SourceError::new("401")),
+    );
+    failed.icon = Some(icon.clone());
+
+    let snapshot = build_snapshot(at(12), vec![ready, failed]);
+
+    let groups = &snapshot.boards[0].groups;
+    assert_eq!(groups[0].icon, Some(icon.clone()));
+    assert_eq!(groups[1].icon, Some(icon));
 }
 
 fn fresh(items: Vec<SourceItem>) -> SourceOutcome {

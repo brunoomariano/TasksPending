@@ -135,6 +135,7 @@ fn config_file_turns_enabled_sources_into_scheduled_specs() {
         kind = "sample"
         lane = "Work"
         refresh_seconds = 45
+        icon = "https://cdn.example/sample.svg"
 
         [[sources]]
         name = "off"
@@ -151,6 +152,10 @@ fn config_file_turns_enabled_sources_into_scheduled_specs() {
     assert_eq!(plan.specs.len(), 1);
     assert_eq!(plan.specs[0].board, "Work");
     assert_eq!(plan.specs[0].interval.as_secs(), 45);
+    assert_eq!(
+        plan.specs[0].icon.as_ref().map(|icon| icon.url.as_str()),
+        Some("https://cdn.example/sample.svg")
+    );
 }
 
 /// The example checked into the repo is a valid config; if the format

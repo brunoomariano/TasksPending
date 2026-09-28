@@ -68,9 +68,9 @@ Keys: `1`–`9` or `Tab`/`Shift+Tab` switch boards; `h`/`l` or left/right move b
 
 ## Web Dashboard
 
-The page shows the groups of every board side by side, each labelled with its board; the filter at the top (All, or one board) is optional and remembered per browser. Empty columns are hidden: a button at the right of the group header tells how many there are and shows them, with the source's last fetch time. Cards show the title (a link when the source has one) and the details the source writes, which include the due or event time; the time of the last data fetch is at the top.
+The page shows the groups of every board side by side, each labelled with its board; the filter at the top (All, or one board) is optional and remembered per browser. The top bar counts the pending cards shown. Empty columns are hidden: a button at the right of the group header tells how many there are and shows them, with the source's last fetch time. Columns show their first five cards, with a button for the rest. Cards show the title (a link when the source has one) and at most two lines of the details the source writes, which include the due or event time (the full text is in the tooltip); the time of the last data fetch is at the top. Each group shows its source's `icon`, falling back to a generic one.
 
-Source health is behind the **Sources** button, which opens a dialog with each source's board, status, last fetch and failure reason, plus a config error when the saved config was not reloaded. The button shows ⚠ when any source is degraded or failed, or the config has an error.
+Source health is behind the **Sources** button, which opens a dialog with each source's board, status, last fetch and failure reason, plus a config error when the saved config was not reloaded. The button shows a warning icon when any source is degraded or failed, or the config has an error.
 
 The page polls `/api/v1/snapshot` every 15 seconds while the tab is visible and redraws only when something changed. If the API stops answering after a successful load, the last cards stay on screen under a warning. The Refresh button calls `POST /api/v1/refresh`.
 
@@ -97,6 +97,8 @@ The API reads a TOML file (see `config.example.toml`). The path is the first of 
 An explicit path (1 or 2) that does not exist is an error. When no file exists at the default location (3 or 4), the API logs a warning and serves the built-in `sample` source. Syntax errors, unknown keys (top level or inside a source), duplicate source names and zero intervals fail at startup, naming the file. Empty variables and relative `XDG_CONFIG_HOME`/`HOME` values are ignored.
 
 Tokens are read from the environment by each source, never from the config file.
+
+Every source also takes `refresh_seconds` and `timeout_seconds` (overriding the global ones), and `icon` / `icon_dark`: image URLs (http or https) shown next to the source's name on the web, `icon_dark` on dark themes. [Dashboard Icons](https://dashboardicons.com) has logos for most tools, served as `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/<name>.svg` (`github`, `github-light`, `plane`, `todoist`, `google-calendar`, `ical`). The browser loads them from that host, so it learns your IP address and which icons you use.
 
 Edits are picked up while running: the API and the TUI check the file every 2 seconds, and a manual refresh (`r`, the web Refresh button) also reloads it first. Sources are rebuilt only when the file's text changed, with the cache keeping their cards on screen meanwhile. A file that fails to load keeps the previous config running and shows the error in the TUI's Sources panel and as a banner on the web. Environment variables are read at startup; changing them still needs a restart.
 

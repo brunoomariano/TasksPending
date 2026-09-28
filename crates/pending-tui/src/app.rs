@@ -322,6 +322,7 @@ mod tests {
             name: name.to_owned(),
             board: board.to_owned(),
             columns: columns.iter().map(|c| (*c).to_owned()).collect(),
+            icon: None,
             outcome: SourceOutcome::Fresh {
                 batch: SourceBatch {
                     items,

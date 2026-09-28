@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
 import type { DashboardSnapshot, PendingCard } from "./contract.gen";
-import { groupKey, renderApp, type View } from "./render";
+import {
+  COLUMN_LIMIT,
+  columnKey,
+  DEFAULT_VIEW,
+  groupKey,
+  renderApp,
+  type View,
+} from "./render";
 
 const card = (id: string, extra: Partial<PendingCard> = {}): PendingCard => ({
   id,
@@ -43,6 +50,7 @@ const snapshot = (): DashboardSnapshot => ({
       groups: [
         {
           source: "plane",
+          icon: null,
           columns: [
             {
               name: "Mine",
@@ -59,6 +67,7 @@ const snapshot = (): DashboardSnapshot => ({
         },
         {
           source: "github",
+          icon: null,
           columns: [
             { name: "Review", cards: [card("gh-1")] },
             { name: "My PRs", cards: [] },
@@ -72,6 +81,7 @@ const snapshot = (): DashboardSnapshot => ({
       groups: [
         {
           source: "todoist",
+          icon: null,
           columns: [{ name: "Today", cards: [card("todo-1")] }],
         },
       ],
@@ -80,9 +90,7 @@ const snapshot = (): DashboardSnapshot => ({
 });
 
 const view = (extra: Partial<View> = {}): View => ({
-  board: null,
-  expanded: new Set(),
-  sourcesOpen: false,
+  ...DEFAULT_VIEW,
   ...extra,
 });
 
@@ -236,10 +244,13 @@ describe("renderApp", () => {
     withDue.boards[0].groups[1].columns[0].cards[0].due_at =
       "2026-09-29T15:00:00Z";
 
-    const html = ready(view(), withDue);
+    const cards = (
+      ready(view(), withDue).match(/<article[\s\S]*?<\/article>/g) ?? []
+    ).join("");
 
-    expect(html).not.toContain("due ");
-    expect(html).not.toMatch(/class="card[\s\S]*updated/);
+    expect(cards).toContain("gh-1");
+    expect(cards).not.toContain("due ");
+    expect(cards).not.toContain("updated");
   });
 
   /**
@@ -260,6 +271,49 @@ describe("renderApp", () => {
     expect(html).toContain("alert(1)");
     expect(html).toContain('class="stale"');
     expect(html).toContain("HTTP 502");
+  });
+
+  /** Long columns show their first cards and a button for the rest. */
+  test("long columns show the first cards and a show-more button", () => {
+    const data = snapshot();
+    const cards = data.boards[1].groups[0].columns[0].cards;
+    for (let i = 2; i <= COLUMN_LIMIT + 2; i++) {
+      cards.push(card(`todo-${i}`));
+    }
+    const key = columnKey("Personal", "todoist", "Today");
+
+    const closed = ready(view(), data);
+    expect(closed).toContain(`todo-${COLUMN_LIMIT}`);
+    expect(closed).not.toContain(`todo-${COLUMN_LIMIT + 1}`);
+    expect(closed).toMatch(new RegExp(`data-more-column="${key}">Show 2 more`));
+
+    const open = ready(view({ openColumns: new Set([key]) }), data);
+    expect(open).toContain(`todo-${COLUMN_LIMIT + 2}`);
+    expect(open).toContain("Show less");
+  });
+
+  /**
+   * A configured icon shows next to the source's name, with its dark
+   * variant for dark themes; a non-http URL falls back to the generic icon.
+   */
+  test("groups show their configured icon", () => {
+    const data = snapshot();
+    data.boards[0].groups[1].icon = {
+      url: "https://cdn.example/github.svg",
+      dark_url: "https://cdn.example/github-light.svg",
+    };
+    data.boards[0].groups[0].icon = {
+      url: "javascript:alert(1)",
+      dark_url: null,
+    };
+
+    const html = ready(view(), data);
+
+    expect(html).toContain(
+      '<source srcset="https://cdn.example/github-light.svg" media="(prefers-color-scheme: dark)">',
+    );
+    expect(html).toContain('<img src="https://cdn.example/github.svg"');
+    expect(html).not.toContain("javascript:");
   });
 
   /** Before the first response, the page says it is loading. */

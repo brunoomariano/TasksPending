@@ -14,6 +14,7 @@ const snapshot = (generatedAt: string, title = "a"): DashboardSnapshot => ({
       groups: [
         {
           source: "github",
+          icon: null,
           columns: [
             {
               name: "Review",

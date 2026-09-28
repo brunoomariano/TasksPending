@@ -254,6 +254,7 @@ mod tests {
                 board: "Inbox".to_owned(),
                 interval: Duration::from_secs(300),
                 timeout: None,
+                icon: None,
             }],
             Duration::from_secs(30),
         );
@@ -367,6 +368,7 @@ mod tests {
                 board: "Inbox".to_owned(),
                 interval: Duration::from_secs(300),
                 timeout: None,
+                icon: None,
             }],
             Duration::from_secs(30),
         );

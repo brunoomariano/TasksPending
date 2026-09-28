@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use pending_core::{
-    DashboardSnapshot, PendingSource, SourceBatch, SourceError, SourceOutcome, SourceReport,
+    DashboardSnapshot, Icon, PendingSource, SourceBatch, SourceError, SourceOutcome, SourceReport,
     build_snapshot,
 };
 use tokio::sync::Notify;
@@ -62,6 +62,7 @@ pub struct SourceSpec {
     pub interval: Duration,
     /// Replaces the aggregator's timeout for this source.
     pub timeout: Option<Duration>,
+    pub icon: Option<Icon>,
 }
 
 impl std::fmt::Debug for SourceSpec {
@@ -162,6 +163,7 @@ impl Aggregator {
                 name: spec.name.clone(),
                 board: spec.board.clone(),
                 columns: spec.source.columns(),
+                icon: spec.icon.clone(),
                 outcome: match cached.remove(&spec.name) {
                     Some((refreshed_at, batch)) => SourceOutcome::Cached {
                         batch,

@@ -61,6 +61,7 @@ fn spec(result: Result<SourceBatch, SourceError>, delay_secs: u64) -> SourceSpec
         board: "Work".to_owned(),
         interval: Duration::from_secs(300),
         timeout: None,
+        icon: None,
     }
 }
 

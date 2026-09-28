@@ -14,6 +14,7 @@ const snapshot = (id: string): DashboardSnapshot => ({
       groups: [
         {
           source: "github",
+          icon: null,
           columns: [
             {
               name: "Review",

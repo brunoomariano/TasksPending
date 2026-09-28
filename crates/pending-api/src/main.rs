@@ -119,7 +119,36 @@ fn app(aggregator: Aggregator, static_dir: Option<&Path>) -> Router {
         Some(dir) => router.fallback_service(ServeDir::new(dir)),
         None => router,
     };
-    router.layer(TraceLayer::new_for_http()).with_state(state)
+    router
+        .layer(axum::middleware::from_fn(local_hosts_only))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+/// Serves only requests addressed to a local name. The API has no
+/// authentication; without this, a web page could point its own domain at
+/// 127.0.0.1 (DNS rebinding) and read the dashboard as same-origin. Requests
+/// without a Host header (non-browser clients) pass.
+async fn local_hosts_only(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let host = request
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok());
+    let local = host.is_none_or(|host| {
+        let name = match host.strip_prefix('[') {
+            Some(rest) => rest.split(']').next().unwrap_or_default(),
+            None => host.split(':').next().unwrap_or_default(),
+        };
+        matches!(name, "localhost" | "127.0.0.1" | "::1")
+    });
+    if local {
+        next.run(request).await
+    } else {
+        (StatusCode::MISDIRECTED_REQUEST, "unknown host").into_response()
+    }
 }
 
 /// `--static-dir`, else `frontend/` next to the binary's `bin/` directory (the
@@ -174,7 +203,8 @@ async fn refresh(State(state): State<AppState>, headers: HeaderMap) -> impl Into
     if let Some(elapsed) = last.map(|at| now.saturating_duration_since(at))
         && elapsed < REFRESH_COOLDOWN
     {
-        let wait = (REFRESH_COOLDOWN - elapsed).as_secs().max(1);
+        // Rounded up, so waiting exactly that long is enough.
+        let wait = (REFRESH_COOLDOWN - elapsed).as_secs_f64().ceil() as u64;
         return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(RefreshReply::Wait {
@@ -373,5 +403,41 @@ mod tests {
         let flag = PathBuf::from("/explicit/dist");
         assert_eq!(resolve_static_dir(Some(flag.clone())), Some(flag));
         let _ = std::fs::remove_dir_all(&bundle);
+    }
+
+    async fn get_with_host(app: Router, path: &str, host: &str) -> StatusCode {
+        app.oneshot(
+            Request::get(path)
+                .header("host", host)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+    }
+
+    /// Só nomes locais chegam à API: um site que aponta o próprio domínio para
+    /// 127.0.0.1 (DNS rebinding) não lê o snapshot nem dispara refresh.
+    #[tokio::test]
+    async fn only_local_host_names_are_served() {
+        let app = app(idle_aggregator(), None);
+
+        for host in [
+            "127.0.0.1:8080",
+            "localhost:8080",
+            "[::1]:8080",
+            "localhost",
+        ] {
+            assert_eq!(
+                get_with_host(app.clone(), "/api/v1/snapshot", host).await,
+                StatusCode::OK,
+                "{host}"
+            );
+        }
+        assert_eq!(
+            get_with_host(app, "/api/v1/snapshot", "evil.example:8080").await,
+            StatusCode::MISDIRECTED_REQUEST
+        );
     }
 }

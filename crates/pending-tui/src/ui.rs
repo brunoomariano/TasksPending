@@ -5,7 +5,9 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget, Wrap};
+use ratatui::widgets::{
+    Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
+};
 
 use crate::app::App;
 
@@ -19,7 +21,7 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(snapshot.sources.len() as u16 + 2),
+            Constraint::Length(snapshot.sources.len().max(1) as u16 + 2),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
@@ -42,10 +44,18 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
         .block(Block::default().borders(Borders::ALL))
         .render(layout[0], buf);
 
-    let sources: Vec<Line> = snapshot.sources.iter().map(source_line).collect();
+    // One line per source, clipped, so a long failure message never pushes
+    // the other sources out of the panel.
+    let sources: Vec<Line> = if snapshot.sources.is_empty() {
+        vec![Line::from(Span::styled(
+            "No sources configured: add [[sources]] to the config file.",
+            Style::default().fg(Color::Yellow),
+        ))]
+    } else {
+        snapshot.sources.iter().map(source_line).collect()
+    };
     Paragraph::new(sources)
         .block(Block::default().title("Sources").borders(Borders::ALL))
-        .wrap(Wrap { trim: true })
         .render(layout[1], buf);
 
     render_lanes(layout[2], buf, app);
@@ -97,6 +107,7 @@ fn render_lanes(area: Rect, buf: &mut Buffer, app: &App) {
 
     for (lane, area) in snapshot.lanes.iter().zip(lanes.iter()) {
         let mut items = Vec::new();
+        let mut state = ListState::default();
         for section in &lane.sections {
             items.push(ListItem::new(Line::from(Span::styled(
                 section.name.as_str(),
@@ -112,6 +123,8 @@ fn render_lanes(area: Rect, buf: &mut Buffer, app: &App) {
                     CardSeverity::Critical => Style::default().fg(Color::Red),
                 };
                 let title_style = if app.is_selected(card) {
+                    // Scrolls the lane so the selected card stays visible.
+                    state.select(Some(items.len()));
                     Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
@@ -133,13 +146,12 @@ fn render_lanes(area: Rect, buf: &mut Buffer, app: &App) {
             }
         }
 
-        List::new(items)
-            .block(
-                Block::default()
-                    .title(lane.name.as_str())
-                    .borders(Borders::ALL),
-            )
-            .render(*area, buf);
+        let list = List::new(items).block(
+            Block::default()
+                .title(lane.name.as_str())
+                .borders(Borders::ALL),
+        );
+        StatefulWidget::render(list, *area, buf, &mut state);
     }
 }
 
@@ -248,5 +260,102 @@ mod tests {
             screen.contains("could not open link: xdg-open not found"),
             "{screen}"
         );
+    }
+
+    fn screen(app: &App, width: u16, height: u16) -> String {
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, app, "");
+        (0..height)
+            .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn many_cards(count: usize) -> App {
+        let at = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let items = (0..count)
+            .map(|i| SourceItem {
+                section: "Review".to_owned(),
+                card: PendingCard {
+                    id: format!("card-{i}"),
+                    title: format!("Card number {i}"),
+                    body: String::new(),
+                    source: "github".to_owned(),
+                    url: None,
+                    severity: CardSeverity::Info,
+                    updated_at: at,
+                },
+            })
+            .collect();
+        App::new(build_snapshot(
+            at,
+            vec![SourceReport {
+                name: "github".to_owned(),
+                lane: "Work".to_owned(),
+                outcome: SourceOutcome::Fresh {
+                    batch: SourceBatch {
+                        items,
+                        warnings: Vec::new(),
+                    },
+                    refreshed_at: at,
+                },
+            }],
+        ))
+    }
+
+    /// Com mais cards do que cabem na tela, a lane rola para manter o card
+    /// selecionado visível; o Enter nunca abre algo que o usuário não vê.
+    #[test]
+    fn the_selected_card_stays_visible_in_long_lanes() {
+        let mut app = many_cards(30);
+        for _ in 0..29 {
+            app.handle_key(crossterm::event::KeyEvent::from(
+                crossterm::event::KeyCode::Char('j'),
+            ));
+        }
+
+        let screen = screen(&app, 80, 20);
+
+        assert!(screen.contains("Card number 29"), "{screen}");
+        assert!(!screen.contains("Card number 0 "), "{screen}");
+    }
+
+    /// Uma mensagem de falha longa não empurra as outras fontes para fora do
+    /// painel: cada fonte ocupa uma linha.
+    #[test]
+    fn long_source_messages_do_not_hide_other_sources() {
+        let at = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let failed = |name: &str, message: &str| SourceReport {
+            name: name.to_owned(),
+            lane: "Work".to_owned(),
+            outcome: SourceOutcome::Failed(SourceError::new(message)),
+        };
+        let app = App::new(build_snapshot(
+            at,
+            vec![
+                failed("first", &"very long failure reason ".repeat(10)),
+                failed("second", "401"),
+                failed("third", "503"),
+            ],
+        ));
+
+        let screen = screen(&app, 80, 20);
+
+        for name in ["first", "second failed: 401", "third failed: 503"] {
+            assert!(screen.contains(name), "missing {name:?} in\n{screen}");
+        }
+    }
+
+    /// Sem nenhuma fonte habilitada, a tela diz isso em vez de parecer que não
+    /// há pendências.
+    #[test]
+    fn no_sources_is_explained() {
+        let at = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let app = App::new(build_snapshot(at, Vec::new()));
+
+        let screen = screen(&app, 80, 20);
+
+        assert!(screen.contains("No sources configured"), "{screen}");
     }
 }

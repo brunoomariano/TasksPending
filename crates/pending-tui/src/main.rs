@@ -42,19 +42,32 @@ struct TerminalSession;
 impl TerminalSession {
     fn enter() -> anyhow::Result<Self> {
         enable_raw_mode().context("enabling raw mode")?;
-        io::stdout()
-            .execute(EnterAlternateScreen)
-            .context("entering alternate screen")?;
+        if let Err(error) = io::stdout().execute(EnterAlternateScreen) {
+            let _ = disable_raw_mode();
+            return Err(error).context("entering alternate screen");
+        }
+
+        // Restore the terminal before the panic message prints, so it is
+        // readable instead of lost with the alternate screen.
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            restore_terminal();
+            previous(info);
+        }));
         Ok(Self)
     }
 }
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
-        let _ = io::stdout().execute(Show);
-        let _ = disable_raw_mode();
-        let _ = io::stdout().execute(LeaveAlternateScreen);
+        restore_terminal();
     }
+}
+
+fn restore_terminal() {
+    let _ = io::stdout().execute(Show);
+    let _ = disable_raw_mode();
+    let _ = io::stdout().execute(LeaveAlternateScreen);
 }
 
 fn main() -> anyhow::Result<()> {
@@ -72,9 +85,18 @@ fn main() -> anyhow::Result<()> {
     };
 
     let runtime = tokio::runtime::Runtime::new().context("starting async runtime")?;
-    let _guard = runtime.enter();
-    let aggregator = Aggregator::start(plan.specs, plan.timeout);
+    let result = {
+        let _guard = runtime.enter();
+        let aggregator = Aggregator::start(plan.specs, plan.timeout);
+        run(&aggregator, &header)
+    };
+    // Quit right away: an in-flight DNS lookup on a blocking thread must not
+    // keep the process alive after the terminal is restored.
+    runtime.shutdown_background();
+    result
+}
 
+fn run(aggregator: &Aggregator, header: &str) -> anyhow::Result<()> {
     let _session = TerminalSession::enter()?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).context("opening terminal")?;
@@ -83,7 +105,7 @@ fn main() -> anyhow::Result<()> {
     loop {
         app.update(aggregator.snapshot());
         terminal
-            .draw(|frame| ui::render(frame.area(), frame.buffer_mut(), &app, &header))
+            .draw(|frame| ui::render(frame.area(), frame.buffer_mut(), &app, header))
             .context("drawing TUI")?;
 
         if !event::poll(TICK)? {
@@ -111,7 +133,8 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Opens a card link in the default browser without waiting for it.
+/// Opens a card link in the default browser. A background thread reaps the
+/// opener so it does not linger as a zombie.
 fn open_url(url: &str) -> io::Result<()> {
     let opener = if cfg!(target_os = "macos") {
         "open"
@@ -124,6 +147,8 @@ fn open_url(url: &str) -> io::Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map(drop)
+        .map(|mut child| {
+            std::thread::spawn(move || child.wait());
+        })
         .map_err(|error| io::Error::new(error.kind(), format!("{opener}: {error}")))
 }

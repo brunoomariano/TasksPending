@@ -1,7 +1,13 @@
 //! Dashboard state and keyboard handling, independent of the terminal.
 
+use std::time::{Duration, Instant};
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pending_core::{DashboardSnapshot, PendingCard};
+
+/// Minimum wait between manual refreshes. Each one queries every source, and
+/// provider APIs rate-limit (GitHub search: 30 requests per minute).
+pub const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -15,8 +21,9 @@ pub struct App {
     snapshot: DashboardSnapshot,
     /// Index into `cards()`; `None` when there are no cards.
     selected: Option<usize>,
-    /// Last action failure, shown until the next key press.
+    /// Last action feedback, shown until the next key press.
     notice: Option<String>,
+    last_refresh: Option<Instant>,
 }
 
 impl App {
@@ -26,6 +33,7 @@ impl App {
             snapshot,
             selected,
             notice: None,
+            last_refresh: None,
         }
     }
 
@@ -69,11 +77,15 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Action {
+        self.handle_key_at(key, Instant::now())
+    }
+
+    pub fn handle_key_at(&mut self, key: KeyEvent, now: Instant) -> Action {
         self.notice = None;
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
             KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
-            KeyCode::Char('r') => Action::RefreshNow,
+            KeyCode::Char('r') => self.request_refresh(now),
             KeyCode::Char('j') | KeyCode::Down => {
                 self.move_selection(1);
                 Action::None
@@ -88,6 +100,20 @@ impl App {
                 .map_or(Action::None, Action::Open),
             _ => Action::None,
         }
+    }
+
+    fn request_refresh(&mut self, now: Instant) -> Action {
+        if let Some(last) = self.last_refresh {
+            let elapsed = now.saturating_duration_since(last);
+            if elapsed < REFRESH_COOLDOWN {
+                let wait = (REFRESH_COOLDOWN - elapsed).as_secs().max(1);
+                self.notice = Some(format!("refresh already requested; wait {wait}s"));
+                return Action::None;
+            }
+        }
+        self.last_refresh = Some(now);
+        self.notice = Some("refreshing all sources…".to_owned());
+        Action::RefreshNow
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -246,5 +272,33 @@ mod tests {
         );
         assert_eq!(app.handle_key(key(KeyCode::Char('r'))), Action::RefreshNow);
         assert_eq!(app.handle_key(key(KeyCode::Char('c'))), Action::None);
+    }
+
+    /// r pede atualização e avisa no rodapé; apertar de novo logo em seguida
+    /// não dispara outra rodada de consultas, para não estourar limites de
+    /// taxa das APIs, e diz quanto falta esperar.
+    #[test]
+    fn refresh_is_acknowledged_and_debounced() {
+        let mut app = App::new(snapshot(Vec::new()));
+        let t0 = std::time::Instant::now();
+        let r = key(KeyCode::Char('r'));
+
+        assert_eq!(app.handle_key_at(r, t0), Action::RefreshNow);
+        assert!(
+            app.notice().unwrap_or("").contains("refreshing"),
+            "{:?}",
+            app.notice()
+        );
+
+        let soon = t0 + std::time::Duration::from_secs(3);
+        assert_eq!(app.handle_key_at(r, soon), Action::None);
+        assert!(
+            app.notice().unwrap_or("").contains("wait"),
+            "{:?}",
+            app.notice()
+        );
+
+        let later = t0 + REFRESH_COOLDOWN;
+        assert_eq!(app.handle_key_at(r, later), Action::RefreshNow);
     }
 }

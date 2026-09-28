@@ -1,16 +1,41 @@
-import type { SnapshotResult } from "./api";
 import type {
   CardSeverity,
   DashboardSnapshot,
   Lane,
   PendingCard,
   Section,
+  SourceHealth,
 } from "./contract.gen";
+import type { ViewState } from "./state";
 
-export function renderApp(result: SnapshotResult): string {
-  return result.ok
-    ? renderSnapshot(result.snapshot)
-    : renderUnavailable(result.error);
+export function renderApp(state: ViewState): string {
+  switch (state.kind) {
+    case "loading":
+      return renderMessage("Loading…");
+    case "unavailable":
+      return renderUnavailable(state.error);
+    case "ready":
+      return renderSnapshot(state.snapshot, "");
+    case "stale":
+      return renderSnapshot(
+        state.snapshot,
+        `<section class="stale" role="alert">
+          API unavailable (${escapeHtml(state.error)}); showing data from
+          ${escapeHtml(state.fetchedAt.toLocaleTimeString())}.
+        </section>`,
+      );
+  }
+}
+
+function renderMessage(message: string): string {
+  return `
+    <header class="topbar">
+      <div>
+        <h1>TasksPending</h1>
+        <p>${escapeHtml(message)}</p>
+      </div>
+    </header>
+  `;
 }
 
 function renderUnavailable(error: string): string {
@@ -27,7 +52,7 @@ function renderUnavailable(error: string): string {
   `;
 }
 
-function renderSnapshot(snapshot: DashboardSnapshot): string {
+function renderSnapshot(snapshot: DashboardSnapshot, banner: string): string {
   return `
     <header class="topbar">
       <div>
@@ -35,9 +60,22 @@ function renderSnapshot(snapshot: DashboardSnapshot): string {
         <p>${snapshot.lanes.length} lanes · ${snapshot.sources.length} sources · ${escapeHtml(snapshot.generated_at)}</p>
       </div>
     </header>
+    ${banner}
+    <ul class="sources">
+      ${snapshot.sources.map(renderSource).join("")}
+    </ul>
     <section class="lanes">
       ${snapshot.lanes.map(renderLane).join("")}
     </section>
+  `;
+}
+
+function renderSource(source: SourceHealth): string {
+  const message = source.message ? `: ${escapeHtml(source.message)}` : "";
+  return `
+    <li class="source source-${source.status}">
+      <strong>${escapeHtml(source.name)}</strong> ${source.status}${message}
+    </li>
   `;
 }
 

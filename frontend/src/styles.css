@@ -146,6 +146,49 @@ body {
   color: #c7d1da;
 }
 
+.sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 24px 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.source {
+  padding: 4px 10px;
+  border: 1px solid #28313a;
+  border-radius: 999px;
+  color: #c7d1da;
+  overflow-wrap: anywhere;
+}
+
+.source-ready {
+  border-color: #2f9e6e;
+}
+
+.source-refreshing {
+  border-color: #54a7ff;
+}
+
+.source-degraded {
+  border-color: #ffd166;
+}
+
+.source-failed {
+  border-color: #ef476f;
+}
+
+.stale {
+  margin: 16px 24px 0;
+  padding: 10px 16px;
+  border: 1px solid #ffd166;
+  border-radius: 8px;
+  background: #1f1b12;
+  color: #f1e3b8;
+}
+
 .severity-info {
   border-left-color: #54a7ff;
 }

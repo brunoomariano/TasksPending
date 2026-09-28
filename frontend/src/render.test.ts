@@ -7,7 +7,7 @@ describe("renderApp", () => {
    * mostra nenhum card, para ninguém agir sobre pendências inventadas.
    */
   test("shows the API error and no cards when unavailable", async () => {
-    const html = renderApp({ ok: false, error: "HTTP 503" });
+    const html = renderApp({ kind: "unavailable", error: "HTTP 503" });
 
     expect(html).toContain("API unavailable");
     expect(html).toContain("HTTP 503");
@@ -20,7 +20,8 @@ describe("renderApp", () => {
    */
   test("renders lanes and cards with escaped source text", async () => {
     const html = renderApp({
-      ok: true,
+      kind: "ready",
+      fetchedAt: new Date("2026-09-28T10:00:00Z"),
       snapshot: {
         generated_at: "2026-09-28T10:00:00Z",
         sources: [],
@@ -61,7 +62,8 @@ describe("renderApp", () => {
    */
   test("does not link card urls that are not http", () => {
     const html = renderApp({
-      ok: true,
+      kind: "ready",
+      fetchedAt: new Date("2026-09-28T10:00:00Z"),
       snapshot: {
         generated_at: "2026-09-28T10:00:00Z",
         sources: [],
@@ -91,5 +93,84 @@ describe("renderApp", () => {
 
     expect(html).toContain("Suspicious");
     expect(html).not.toContain("href=");
+  });
+
+  /**
+   * A saúde de cada fonte aparece na tela com o motivo das falhas, para o
+   * usuário saber que parte das pendências pode estar faltando.
+   */
+  test("shows source health with failure reasons", () => {
+    const html = renderApp({
+      kind: "ready",
+      fetchedAt: new Date("2026-09-28T10:00:00Z"),
+      snapshot: {
+        generated_at: "2026-09-28T10:00:00Z",
+        lanes: [],
+        sources: [
+          {
+            name: "github",
+            status: "ready",
+            last_refresh_at: null,
+            message: null,
+          },
+          {
+            name: "jira",
+            status: "failed",
+            last_refresh_at: null,
+            message: "401 <bad> credentials",
+          },
+        ],
+      },
+    });
+
+    expect(html).toContain('class="source source-ready"');
+    expect(html).toContain('class="source source-failed"');
+    expect(html).toContain("401 &lt;bad&gt; credentials");
+  });
+
+  /**
+   * Com a API fora do ar depois de já ter mostrado dados, os cards continuam
+   * visíveis sob um aviso de que são antigos, com o motivo.
+   */
+  test("stale state keeps the cards under a warning", () => {
+    const html = renderApp({
+      kind: "stale",
+      fetchedAt: new Date("2026-09-28T10:00:00Z"),
+      error: "HTTP 502",
+      snapshot: {
+        generated_at: "2026-09-28T10:00:00Z",
+        sources: [],
+        lanes: [
+          {
+            name: "Work",
+            sections: [
+              {
+                name: "Review",
+                cards: [
+                  {
+                    id: "a",
+                    title: "Still here",
+                    body: "",
+                    source: "github",
+                    url: null,
+                    severity: "info",
+                    updated_at: "2026-09-28T09:00:00Z",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(html).toContain("Still here");
+    expect(html).toContain('class="stale"');
+    expect(html).toContain("HTTP 502");
+  });
+
+  /** Antes da primeira resposta, a tela diz que está carregando. */
+  test("loading state", () => {
+    expect(renderApp({ kind: "loading" })).toContain("Loading");
   });
 });

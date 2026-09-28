@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::config::DEFAULT_LANE;
+use crate::config::DEFAULT_BOARD;
 use crate::model::{CardSeverity, DashboardSnapshot, PendingCard};
 use crate::snapshot::{SourceOutcome, SourceReport, build_snapshot};
 use crate::source::{BoxFuture, PendingSource, SourceBatch, SourceError, SourceItem};
@@ -13,8 +13,8 @@ impl SampleSource {
     const NAME: &str = "sample";
 
     fn batch(at: DateTime<Utc>) -> SourceBatch {
-        let item = |section: &str, id: &str, title: &str, body: &str, severity| SourceItem {
-            section: section.to_owned(),
+        let item = |column: &str, id: &str, title: &str, body: &str, severity| SourceItem {
+            column: column.to_owned(),
             card: PendingCard {
                 id: id.to_owned(),
                 title: title.to_owned(),
@@ -40,7 +40,7 @@ impl SampleSource {
                     "Next",
                     "sample:next:1",
                     "Choose the first frontend interaction",
-                    "Start with cards by lane and section, then add filters.",
+                    "Boards as tabs, one column per filter.",
                     CardSeverity::Warning,
                 ),
             ],
@@ -50,6 +50,10 @@ impl SampleSource {
 }
 
 impl PendingSource for SampleSource {
+    fn columns(&self) -> Vec<String> {
+        vec!["Review".to_owned(), "Next".to_owned()]
+    }
+
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
         Box::pin(std::future::ready(Ok(Self::batch(sample_time()))))
     }
@@ -67,7 +71,8 @@ pub fn sample_snapshot() -> DashboardSnapshot {
         at,
         vec![SourceReport {
             name: SampleSource::NAME.to_owned(),
-            lane: DEFAULT_LANE.to_owned(),
+            board: DEFAULT_BOARD.to_owned(),
+            columns: SampleSource.columns(),
             outcome: SourceOutcome::Fresh {
                 batch: SampleSource::batch(at),
                 refreshed_at: at,

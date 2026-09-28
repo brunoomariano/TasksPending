@@ -247,7 +247,7 @@ mod tests {
             vec![SourceSpec {
                 name: "sample".to_owned(),
                 source: Arc::new(SampleSource),
-                lane: "Inbox".to_owned(),
+                board: "Inbox".to_owned(),
                 interval: Duration::from_secs(300),
             }],
             Duration::from_secs(30),
@@ -270,7 +270,7 @@ mod tests {
         let snapshot: DashboardSnapshot = serde_json::from_slice(&body).unwrap();
         assert_eq!(snapshot.sources[0].name, "sample");
         assert_eq!(snapshot.sources[0].status, SourceStatus::Ready);
-        assert_eq!(snapshot.lanes[0].name, "Inbox");
+        assert_eq!(snapshot.boards[0].name, "Inbox");
     }
 
     async fn get(app: Router, path: &str) -> (StatusCode, String) {
@@ -320,6 +320,10 @@ mod tests {
     struct Counting(Arc<std::sync::atomic::AtomicUsize>);
 
     impl pending_core::PendingSource for Counting {
+        fn columns(&self) -> Vec<String> {
+            Vec::new()
+        }
+
         fn refresh(
             &self,
         ) -> pending_core::BoxFuture<'_, Result<pending_core::SourceBatch, pending_core::SourceError>>
@@ -355,7 +359,7 @@ mod tests {
             vec![SourceSpec {
                 name: "counting".to_owned(),
                 source: Arc::new(Counting(calls.clone())),
-                lane: "Inbox".to_owned(),
+                board: "Inbox".to_owned(),
                 interval: Duration::from_secs(300),
             }],
             Duration::from_secs(30),

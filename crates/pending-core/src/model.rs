@@ -5,18 +5,28 @@ use ts_rs::TS;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct DashboardSnapshot {
     pub generated_at: DateTime<Utc>,
-    pub lanes: Vec<Lane>,
+    /// Areas of work (Work, Personal, …), shown as tabs.
+    pub boards: Vec<Board>,
     pub sources: Vec<SourceHealth>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct Lane {
+pub struct Board {
     pub name: String,
-    pub sections: Vec<Section>,
+    /// One group of columns per source, in configuration order.
+    pub groups: Vec<Group>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct Section {
+pub struct Group {
+    /// Configured source name; matches a `SourceHealth::name`.
+    pub source: String,
+    pub columns: Vec<Column>,
+}
+
+/// A kanban column: the cards matching one of the source's filters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Column {
     pub name: String,
     pub cards: Vec<PendingCard>,
 }

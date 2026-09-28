@@ -41,7 +41,7 @@ function isSnapshot(value: unknown): value is DashboardSnapshot {
   const candidate = value as Record<string, unknown>;
   return (
     typeof candidate.generated_at === "string" &&
-    Array.isArray(candidate.lanes) &&
+    Array.isArray(candidate.boards) &&
     Array.isArray(candidate.sources)
   );
 }

@@ -21,14 +21,28 @@ pub struct AppConfig {
 pub struct SourceConfig {
     pub name: String,
     pub kind: SourceKind,
-    /// Dashboard lane that receives this source's cards.
-    #[serde(default = "default_lane")]
-    pub lane: String,
+    /// Area (tab) that shows this source's columns. `lane` is the old name.
+    #[serde(default = "default_board", alias = "lane")]
+    pub board: String,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     #[serde(default)]
     pub refresh_seconds: Option<u64>,
+    /// Columns (filters) of this source; empty means the source's defaults.
+    /// Filter keys depend on `kind` and are checked when the source is built.
+    #[serde(default)]
+    pub columns: Vec<ColumnConfig>,
 }
+
+/// One kanban column of a source: a name plus kind-specific filter keys.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ColumnConfig {
+    pub name: String,
+    #[serde(flatten)]
+    pub filter: toml::Table,
+}
+
+impl Eq for ColumnConfig {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -37,6 +51,7 @@ pub enum SourceKind {
     Ical,
     Plane,
     Sample,
+    Todoist,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -45,6 +60,10 @@ pub enum ConfigError {
     DuplicateSourceName(String),
     #[error("`{0}` must be greater than zero")]
     Zero(String),
+    #[error("source `{source_name}` has more than one column named `{column}`")]
+    DuplicateColumnName { source_name: String, column: String },
+    #[error("source `{0}` has a column without a name")]
+    EmptyColumnName(String),
 }
 
 impl Default for AppConfig {
@@ -72,6 +91,18 @@ impl AppConfig {
             if !names.insert(source.name.as_str()) {
                 return Err(ConfigError::DuplicateSourceName(source.name.clone()));
             }
+            let mut columns = HashSet::new();
+            for column in &source.columns {
+                if column.name.trim().is_empty() {
+                    return Err(ConfigError::EmptyColumnName(source.name.clone()));
+                }
+                if !columns.insert(column.name.as_str()) {
+                    return Err(ConfigError::DuplicateColumnName {
+                        source_name: source.name.clone(),
+                        column: column.name.clone(),
+                    });
+                }
+            }
             if source.refresh_seconds == Some(0) {
                 return Err(ConfigError::Zero(format!(
                     "sources.{}.refresh_seconds",
@@ -97,10 +128,10 @@ fn default_timeout_seconds() -> u64 {
     60
 }
 
-pub const DEFAULT_LANE: &str = "Inbox";
+pub const DEFAULT_BOARD: &str = "Inbox";
 
-fn default_lane() -> String {
-    DEFAULT_LANE.to_owned()
+fn default_board() -> String {
+    DEFAULT_BOARD.to_owned()
 }
 
 fn default_enabled() -> bool {
@@ -166,8 +197,8 @@ mod tests {
         )
         .expect("valid config");
 
-        assert_eq!(sources.sources[0].lane, "Work");
-        assert_eq!(sources.sources[1].lane, "Inbox");
+        assert_eq!(sources.sources[0].board, "Work");
+        assert_eq!(sources.sources[1].board, "Inbox");
     }
 
     fn parse(text: &str) -> AppConfig {

@@ -13,6 +13,7 @@ use pending_core::{
 };
 use reqwest::Client;
 use reqwest::redirect::Policy;
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::task::JoinSet;
 
@@ -27,14 +28,97 @@ const MAX_PAGES: usize = 20;
 const CLOUD_API_HOST: &str = "https://api.plane.so";
 const CLOUD_WEB_URL: &str = "https://app.plane.so";
 
-/// Sections in display order, by Plane state group.
-const SECTIONS: [(&str, &str); 3] = [
-    ("started", "In progress"),
-    ("unstarted", "To do"),
-    ("backlog", "Backlog"),
-];
-/// State groups that are never pending.
-const CLOSED_GROUPS: [&str; 2] = ["completed", "cancelled"];
+/// State groups that count as open when a column does not list its own.
+const OPEN_GROUPS: [&str; 3] = ["backlog", "unstarted", "started"];
+
+/// Whose work items a column shows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Assignee {
+    /// Assigned to the owner of the API key.
+    #[default]
+    Me,
+    /// Assigned to nobody.
+    None,
+    /// Assigned to someone, but not to the owner of the API key.
+    Others,
+    /// Anyone or nobody.
+    Any,
+}
+
+/// One column: a filter over the workspace's work items, applied locally.
+/// Empty lists match everything; `state_group` defaults to the open groups.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlaneColumn {
+    #[serde(skip)]
+    pub name: String,
+    #[serde(default)]
+    pub assignee: Assignee,
+    /// `backlog`, `unstarted`, `started`, `completed`, `cancelled`.
+    #[serde(default)]
+    pub state_group: Vec<String>,
+    /// State names, e.g. `In Review` (case-insensitive).
+    #[serde(default)]
+    pub state: Vec<String>,
+    /// Project identifiers, e.g. `API`.
+    #[serde(default)]
+    pub project: Vec<String>,
+    /// `urgent`, `high`, `medium`, `low`, `none`.
+    #[serde(default)]
+    pub priority: Vec<String>,
+}
+
+impl PlaneColumn {
+    fn matches(&self, facts: &Facts, me: &str) -> bool {
+        let in_list = |list: &[String], value: &str| {
+            list.is_empty() || list.iter().any(|item| item.eq_ignore_ascii_case(value))
+        };
+        let groups_ok = if self.state_group.is_empty() {
+            OPEN_GROUPS.contains(&facts.group.as_str())
+        } else {
+            in_list(&self.state_group, &facts.group)
+        };
+        let mine = facts.assignees.iter().any(|a| a == me);
+        let assignee_ok = match self.assignee {
+            Assignee::Me => mine,
+            Assignee::None => facts.assignees.is_empty(),
+            Assignee::Others => !facts.assignees.is_empty() && !mine,
+            Assignee::Any => true,
+        };
+        groups_ok
+            && assignee_ok
+            && in_list(&self.state, &facts.state_name)
+            && in_list(&self.project, &facts.project)
+            && in_list(&self.priority, &facts.priority)
+    }
+}
+
+/// Columns used when the configuration declares none: your open items by
+/// state group.
+pub fn default_columns() -> Vec<PlaneColumn> {
+    [
+        ("In progress", "started"),
+        ("To do", "unstarted"),
+        ("Backlog", "backlog"),
+    ]
+    .into_iter()
+    .map(|(name, group)| PlaneColumn {
+        name: name.to_owned(),
+        state_group: vec![group.to_owned()],
+        ..PlaneColumn::default()
+    })
+    .collect()
+}
+
+/// What a column filter looks at.
+struct Facts {
+    group: String,
+    state_name: String,
+    assignees: Vec<String>,
+    priority: String,
+    project: String,
+}
 
 #[derive(Clone)]
 pub struct PlaneSettings {
@@ -112,6 +196,7 @@ pub struct PlaneSource {
     client: Client,
     settings: Result<PlaneSettings, String>,
     project_budget: Duration,
+    columns: Vec<PlaneColumn>,
 }
 
 impl PlaneSource {
@@ -133,7 +218,16 @@ impl PlaneSource {
                 s
             }),
             project_budget: DEFAULT_PROJECT_BUDGET,
+            columns: default_columns(),
         }
+    }
+
+    /// Replaces the default columns; an empty list keeps the defaults.
+    pub fn with_columns(mut self, columns: Vec<PlaneColumn>) -> Self {
+        if !columns.is_empty() {
+            self.columns = columns;
+        }
+        self
     }
 
     pub fn with_project_budget(mut self, budget: Duration) -> Self {
@@ -143,6 +237,10 @@ impl PlaneSource {
 }
 
 impl PendingSource for PlaneSource {
+    fn columns(&self) -> Vec<String> {
+        self.columns.iter().map(|c| c.name.clone()).collect()
+    }
+
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
         Box::pin(async move {
             match &self.settings {
@@ -151,7 +249,7 @@ impl PendingSource for PlaneSource {
                         client: self.client.clone(),
                         settings: settings.clone(),
                     };
-                    api.refresh(self.project_budget)
+                    api.refresh(self.project_budget, &self.columns)
                         .await
                         .map_err(SourceError::new)
                 }
@@ -183,7 +281,11 @@ struct ProjectItems {
 }
 
 impl Api {
-    async fn refresh(self, project_budget: Duration) -> Result<SourceBatch, String> {
+    async fn refresh(
+        self,
+        project_budget: Duration,
+        columns: &[PlaneColumn],
+    ) -> Result<SourceBatch, String> {
         let me = self.get("/users/me/", &[]).await?;
         let me = me
             .get("id")
@@ -238,7 +340,6 @@ impl Api {
             ));
         }
         let mut failures = Vec::new();
-        let mut items = Vec::new();
         for (project, result) in projects.iter().zip(per_project) {
             match result.expect("every project task reports") {
                 Ok(found) => {
@@ -250,10 +351,17 @@ impl Api {
                     }
                     let mut unknown_state = 0usize;
                     for issue in &found.issues {
-                        match self.to_item(issue, project, &me, &found.states, today) {
-                            Placement::Shown(rank, item) => items.push((rank, item)),
-                            Placement::UnknownState => unknown_state += 1,
-                            Placement::Hidden => {}
+                        match self.describe_issue(issue, project, &found.states, today) {
+                            Described::Card(facts, card) => {
+                                for column in columns.iter().filter(|c| c.matches(&facts, &me)) {
+                                    batch.items.push(SourceItem {
+                                        column: column.name.clone(),
+                                        card: (*card).clone(),
+                                    });
+                                }
+                            }
+                            Described::UnknownState => unknown_state += 1,
+                            Described::Malformed => {}
                         }
                     }
                     if unknown_state > 0 {
@@ -273,9 +381,6 @@ impl Api {
                 failures.join("; ")
             ));
         }
-        // Sections appear in state order: in progress, to do, backlog.
-        items.sort_by_key(|(rank, _)| *rank);
-        batch.items = items.into_iter().map(|(_, item)| item).collect();
         batch.warnings.extend(failures);
         Ok(batch)
     }
@@ -353,26 +458,14 @@ impl Api {
         Ok((all, true))
     }
 
-    fn to_item(
+    /// The card for a work item plus the facts column filters look at.
+    fn describe_issue(
         &self,
         issue: &Value,
         project: &Project,
-        me: &str,
         states: &States,
         today: NaiveDate,
-    ) -> Placement {
-        let assigned = issue
-            .get("assignees")
-            .and_then(Value::as_array)
-            .is_some_and(|assignees| {
-                assignees
-                    .iter()
-                    .any(|a| a.as_str().or_else(|| a.get("id").and_then(Value::as_str)) == Some(me))
-            });
-        if !assigned {
-            return Placement::Hidden;
-        }
-
+    ) -> Described {
         // Expanded state object, or a state id looked up in the project's states.
         let (group, state_name) = match issue.get("state") {
             Some(state @ Value::Object(_)) => (
@@ -386,43 +479,55 @@ impl Api {
             _ => (None, None),
         };
         let Some(group) = group else {
-            return Placement::UnknownState;
+            return Described::UnknownState;
         };
-        if CLOSED_GROUPS.contains(&group) {
-            return Placement::Hidden;
-        }
-        let Some((rank, section)) = SECTIONS
-            .iter()
-            .enumerate()
-            .find(|(_, (g, _))| *g == group)
-            .map(|(rank, (_, section))| (rank, *section))
-        else {
-            return Placement::UnknownState;
-        };
-
         let (Some(id), Some(sequence)) = (
             issue.get("id").and_then(Value::as_str),
             issue.get("sequence_id").and_then(Value::as_u64),
         ) else {
-            return Placement::Hidden;
+            return Described::Malformed;
         };
+
+        let assignees: Vec<&Value> = issue
+            .get("assignees")
+            .and_then(Value::as_array)
+            .map(|list| list.iter().collect())
+            .unwrap_or_default();
+        let assignee_ids = assignees
+            .iter()
+            .filter_map(|a| a.as_str().or_else(|| a.get("id").and_then(Value::as_str)))
+            .map(str::to_owned)
+            .collect();
+        let assignee_names: Vec<&str> = assignees
+            .iter()
+            .filter_map(|a| a.get("display_name").and_then(Value::as_str))
+            .collect();
+
         let reference = format!("{}-{sequence}", project.identifier);
         let due = issue
             .get("target_date")
             .and_then(Value::as_str)
             .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok());
         let overdue = due.is_some_and(|due| due < today);
+        let priority = issue
+            .get("priority")
+            .and_then(Value::as_str)
+            .unwrap_or("none");
 
-        let severity = match issue.get("priority").and_then(Value::as_str) {
+        let severity = match priority {
             _ if overdue => CardSeverity::Critical,
-            Some("urgent") => CardSeverity::Critical,
-            Some("high") => CardSeverity::Warning,
+            "urgent" => CardSeverity::Critical,
+            "high" => CardSeverity::Warning,
             _ => CardSeverity::Info,
         };
 
         let mut body = format!("{reference} · {}", project.name);
         if let Some(state_name) = state_name.filter(|name| !name.is_empty()) {
             body.push_str(&format!(" · {state_name}"));
+        }
+        if !assignee_names.is_empty() {
+            let names: Vec<String> = assignee_names.iter().map(|n| format!("@{n}")).collect();
+            body.push_str(&format!(" · {}", names.join(" ")));
         }
         if let Some(due) = due {
             body.push_str(&format!(
@@ -439,30 +544,33 @@ impl Api {
                 .map(|at| at.with_timezone(&Utc))
         };
         let settings = &self.settings;
-        Placement::Shown(
-            rank,
-            SourceItem {
-                section: section.to_owned(),
-                card: PendingCard {
-                    id: format!("plane:{reference}"),
-                    title: str_field(issue, "name").to_owned(),
-                    body,
-                    source: "plane".to_owned(),
-                    url: Some(format!(
-                        "{}/{}/projects/{}/issues/{id}",
-                        settings.web_url, settings.workspace_slug, project.id
-                    )),
-                    // Local midnight, matching how "overdue" is decided.
-                    due_at: due
-                        .and_then(|due| due.and_hms_opt(0, 0, 0))
-                        .and_then(|due| due.and_local_timezone(Local).earliest())
-                        .map(|due| due.with_timezone(&Utc)),
-                    severity,
-                    updated_at: timestamp("updated_at")
-                        .or_else(|| timestamp("created_at"))
-                        .unwrap_or(DateTime::UNIX_EPOCH),
-                },
+        Described::Card(
+            Facts {
+                group: group.to_owned(),
+                state_name: state_name.unwrap_or_default().to_owned(),
+                assignees: assignee_ids,
+                priority: priority.to_owned(),
+                project: project.identifier.clone(),
             },
+            Box::new(PendingCard {
+                id: format!("plane:{reference}"),
+                title: str_field(issue, "name").to_owned(),
+                body,
+                source: "plane".to_owned(),
+                url: Some(format!(
+                    "{}/{}/projects/{}/issues/{id}",
+                    settings.web_url, settings.workspace_slug, project.id
+                )),
+                // Local midnight, matching how "overdue" is decided.
+                due_at: due
+                    .and_then(|due| due.and_hms_opt(0, 0, 0))
+                    .and_then(|due| due.and_local_timezone(Local).earliest())
+                    .map(|due| due.with_timezone(&Utc)),
+                severity,
+                updated_at: timestamp("updated_at")
+                    .or_else(|| timestamp("created_at"))
+                    .unwrap_or(DateTime::UNIX_EPOCH),
+            }),
         )
     }
 
@@ -501,12 +609,12 @@ impl Api {
     }
 }
 
-enum Placement {
-    Shown(usize, SourceItem),
-    /// Not assigned to me, closed, or malformed.
-    Hidden,
+enum Described {
+    Card(Facts, Box<PendingCard>),
     /// Its state group could not be determined.
     UnknownState,
+    /// Missing id or sequence number.
+    Malformed,
 }
 
 /// A list response: a bare array or `{ "results": [...] }`.

@@ -80,9 +80,9 @@ function viewKey(state: ViewState): string {
       return `unavailable:${state.error}`;
     case "ready":
     case "stale": {
-      const { lanes, sources } = state.snapshot;
+      const { boards, sources } = state.snapshot;
       const error = state.kind === "stale" ? state.error : "";
-      return JSON.stringify([state.kind, error, lanes, sources]);
+      return JSON.stringify([state.kind, error, boards, sources]);
     }
   }
 }

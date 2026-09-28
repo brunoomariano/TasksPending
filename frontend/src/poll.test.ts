@@ -7,22 +7,27 @@ import type { ViewState } from "./state";
 const snapshot = (generatedAt: string, title = "a"): DashboardSnapshot => ({
   generated_at: generatedAt,
   sources: [],
-  lanes: [
+  boards: [
     {
       name: "Work",
-      sections: [
+      groups: [
         {
-          name: "Review",
-          cards: [
+          source: "github",
+          columns: [
             {
-              id: "a",
-              title,
-              body: "",
-              source: "github",
-              url: null,
-              severity: "info",
-              due_at: null,
-              updated_at: "2026-09-28T09:00:00Z",
+              name: "Review",
+              cards: [
+                {
+                  id: "a",
+                  title,
+                  body: "",
+                  source: "github",
+                  url: null,
+                  severity: "info",
+                  due_at: null,
+                  updated_at: "2026-09-28T09:00:00Z",
+                },
+              ],
             },
           ],
         },

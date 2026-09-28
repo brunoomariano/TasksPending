@@ -1616,6 +1616,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "futures-util",
  "pending-core",
  "pending-http",
  "reqwest",
@@ -1643,6 +1644,7 @@ dependencies = [
  "pending-http",
  "reqwest",
  "rrule",
+ "serde",
  "tokio",
 ]
 
@@ -1669,12 +1671,28 @@ dependencies = [
  "pending-github",
  "pending-ical",
  "pending-plane",
+ "pending-todoist",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "toml",
  "tracing",
+]
+
+[[package]]
+name = "pending-todoist"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "futures-util",
+ "pending-core",
+ "pending-http",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

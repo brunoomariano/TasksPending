@@ -30,7 +30,7 @@ fn items(ics: &str) -> Vec<SourceItem> {
 fn summary(items: &[SourceItem]) -> Vec<(String, String)> {
     items
         .iter()
-        .map(|item| (item.section.clone(), item.card.title.clone()))
+        .map(|item| (item.column.clone(), item.card.title.clone()))
         .collect()
 }
 
@@ -147,7 +147,7 @@ EXDATE;TZID=America/Sao_Paulo:20261006T100000\r\n",
             "2026-10-27T13:00:00+00:00",
         ]
     );
-    assert_eq!(items[0].section, "Tomorrow");
+    assert_eq!(items[0].column, "Tomorrow");
 }
 
 /// A janela para em 25 eventos, mesmo que caibam mais em 30 dias.
@@ -427,5 +427,57 @@ DTEND;TZID=America/New_York:20260930T030000\r\nRRULE:FREQ=WEEKLY;UNTIL=20270314T
     assert!(
         count("Gap") > 0,
         "a non-existent UNTIL time keeps the series"
+    );
+}
+
+/// Colunas configuradas agrupam as faixas de tempo: "Hoje" com o que está
+/// acontecendo e o resto do dia, "Depois" com amanhã e adiante; uma faixa que
+/// nenhuma coluna lista não aparece.
+#[test]
+fn configured_columns_group_time_buckets() {
+    use pending_ical::{IcalColumn, When, assign_columns};
+
+    let ics = calendar(
+        &[
+            event(
+                "now",
+                "SUMMARY:Ongoing\r\nDTSTART:20260928T113000Z\r\nDTEND:20260928T123000Z\r\n",
+            ),
+            event(
+                "today",
+                "SUMMARY:Afternoon\r\nDTSTART:20260928T150000Z\r\nDTEND:20260928T160000Z\r\n",
+            ),
+            event(
+                "tomorrow",
+                "SUMMARY:Tomorrow\r\nDTSTART:20260929T150000Z\r\nDTEND:20260929T160000Z\r\n",
+            ),
+            event(
+                "later",
+                "SUMMARY:Friday\r\nDTSTART:20261002T150000Z\r\nDTEND:20261002T160000Z\r\n",
+            ),
+        ]
+        .concat(),
+    );
+    let columns = vec![
+        IcalColumn {
+            name: "Hoje".to_owned(),
+            when: vec![When::Now, When::Today],
+        },
+        IcalColumn {
+            name: "Semana".to_owned(),
+            when: vec![When::Later],
+        },
+    ];
+
+    let batch = occurrences(&ics, now(), Window::default(), chrono_tz::UTC, None).unwrap();
+    let batch = assign_columns(&columns, batch);
+
+    assert_eq!(
+        summary(&batch.items),
+        vec![
+            ("Hoje".to_owned(), "Ongoing".to_owned()),
+            ("Hoje".to_owned(), "Afternoon".to_owned()),
+            ("Semana".to_owned(), "Friday".to_owned()),
+        ]
     );
 }

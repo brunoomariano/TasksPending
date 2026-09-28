@@ -27,8 +27,8 @@ pub struct SourceSpec {
     /// Name from the source's configuration, shown in source health.
     pub name: String,
     pub source: Arc<dyn PendingSource>,
-    /// Lane from the source's configuration.
-    pub lane: String,
+    /// Board (tab) from the source's configuration.
+    pub board: String,
     /// Wait between the end of one refresh and the start of the next.
     pub interval: Duration,
 }
@@ -37,7 +37,7 @@ impl std::fmt::Debug for SourceSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SourceSpec")
             .field("name", &self.name)
-            .field("lane", &self.lane)
+            .field("board", &self.board)
             .field("interval", &self.interval)
             .finish_non_exhaustive()
     }
@@ -129,7 +129,8 @@ impl Aggregator {
             .iter()
             .map(|spec| SourceReport {
                 name: spec.name.clone(),
-                lane: spec.lane.clone(),
+                board: spec.board.clone(),
+                columns: spec.source.columns(),
                 outcome: match cached.remove(&spec.name) {
                     Some((refreshed_at, batch)) => SourceOutcome::Cached {
                         batch,

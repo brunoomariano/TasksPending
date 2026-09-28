@@ -8,32 +8,50 @@
 - Frontend: `make frontend-dev`
 - Verification: `make ci-check`
 
+## Boards and Columns
+
+The dashboard is a kanban: each board (`board` in a source, formerly `lane`) is a tab; inside it, each source is a group of columns, one per `[[sources.columns]]` entry (or the source's defaults). A card shows in every column whose filter it matches. See `config.example.toml` for every kind's column keys:
+
+| kind | column keys | default columns |
+|---|---|---|
+| `github` | `query` (search syntax), `severity` | Review requested, My pull requests, Assigned issues |
+| `plane` | `assignee` (me/none/others/any), `state_group`, `state`, `project`, `priority` | In progress, To do, Backlog (yours) |
+| `ical` | `when` (now/today/tomorrow/later) | Now, Today, Tomorrow, Next 30 days |
+| `todoist` | `filter` (Todoist filter query) | Today (today \| overdue), Next 7 days |
+| `sample` | none | Review, Next |
+
+Unknown keys or invalid values fail at startup naming the source and the column.
+
 ## Source Cache
 
 After every successful refresh, each source's cards are saved to `$XDG_STATE_HOME/tasks-pending/cache.json` (default `~/.local/state/tasks-pending/cache.json`). A restart shows them immediately, marked as data from the previous run, while sources refresh. Delete the file to start empty; a corrupt file is ignored and rewritten.
 
 ## Plane Source
 
-`kind = "plane"` lists open work items assigned to the owner of the API key, across every project of one workspace. Settings come only from the environment:
+`kind = "plane"` reads the open work items of every project of one workspace and fills each column with the items matching its filter (by default, yours). Settings come only from the environment:
 
 - `PLANE_BASE_URL`: instance URL (self-hosted, or `https://api.plane.so` for Plane Cloud);
 - `PLANE_WORKSPACE_SLUG` (or `PLANE_WORKSPACE`);
 - `PLANE_API_KEY` (or `PLANE_TOKEN`): sent as `x-api-key`, never logged or shown; redirects are not followed, so the key never reaches another host;
 - `PLANE_WEB_URL` (optional): web app origin for card links; defaults to `PLANE_BASE_URL`, or `https://app.plane.so` when the API is Plane Cloud's.
 
-Missing variables make the source fail with their names. Sections follow the state group: "In progress" (started), "To do" (unstarted), "Backlog"; completed and cancelled items are left out. Assignee and state filters run locally, because some Plane deployments ignore them server-side; when items come back without their state expanded, the project's states are fetched to find each group, and items whose state is still unknown are skipped with a warning. Urgent priority and a past target date make a card critical; high priority makes it a warning. "Overdue" uses the machine's local date. A refresh reads the user, the project list and every project (up to 20 s each, in parallel), so keep `timeout_seconds` at 60 (the default) or more; configs copied from older examples with 30 can time out the whole source. Projects and their work items are read page by page. Each project has 20 s; a failing or slow project becomes a warning naming its identifier, and the other projects still show.
+Missing variables make the source fail with their names. Column filters: `assignee` (`me` by default, `none`, `others`, `any`), `state_group` (default: backlog, unstarted, started; list `completed` to include them), `state` (names such as `In Review`), `project` (identifiers) and `priority`. Cards show the assignees' names. Assignee and state filters run locally, because some Plane deployments ignore them server-side; when items come back without their state expanded, the project's states are fetched to find each group, and items whose state is still unknown are skipped with a warning. Urgent priority and a past target date make a card critical; high priority makes it a warning. "Overdue" uses the machine's local date. A refresh reads the user, the project list and every project (up to 20 s each, in parallel), so keep `timeout_seconds` at 60 (the default) or more; configs copied from older examples with 30 can time out the whole source. Projects and their work items are read page by page. Each project has 20 s; a failing or slow project becomes a warning naming its identifier, and the other projects still show.
 
 ## Calendar Source
 
 `kind = "ical"` reads an iCal feed from `TASKS_PENDING_ICAL_URL`. For Google Calendar, use the calendar's "Secret address in iCal format" (Settings → the calendar → Integrate calendar); no Google Cloud project or OAuth is needed. The URL grants read access to the calendar: keep it out of git and out of the config file. Errors never show it.
 
-It shows events that are not over yet, starting within 30 days, at most 25, soonest first, in the machine's time zone: "Now" (in progress), "Today", "Tomorrow", "Next 30 days". Events in progress or starting within an hour are warnings. Recurring events are expanded (RRULE, including `UNTIL` given as a date or a floating time; RDATE; EXDATE), all-day events cover the whole local day even when clocks change, moved or cancelled occurrences (RECURRENCE-ID) are respected, and cancelled events are hidden. Cards from a Google feed link to that day in Google Calendar. Entries with an unknown time zone or unreadable recurrence become a warning. Known limits: Windows time zone names (Outlook feeds) are not understood; a series whose first occurrence falls on a midnight that does not exist in its zone (clocks jumping forward at 00:00, e.g. America/Santiago) cannot be expanded; series with more than about 500 occurrences a day are cut short.
+It shows events that are not over yet, starting within 30 days, at most 25, soonest first, in the machine's time zone, in time buckets: now (in progress), today, tomorrow, later. By default each bucket is a column; `when = [...]` on a column groups buckets. Events in progress or starting within an hour are warnings. Recurring events are expanded (RRULE, including `UNTIL` given as a date or a floating time; RDATE; EXDATE), all-day events cover the whole local day even when clocks change, moved or cancelled occurrences (RECURRENCE-ID) are respected, and cancelled events are hidden. Cards from a Google feed link to that day in Google Calendar. Entries with an unknown time zone or unreadable recurrence become a warning. Known limits: Windows time zone names (Outlook feeds) are not understood; a series whose first occurrence falls on a midnight that does not exist in its zone (clocks jumping forward at 00:00, e.g. America/Santiago) cannot be expanded; series with more than about 500 occurrences a day are cut short.
+
+## Todoist Source
+
+`kind = "todoist"` runs one Todoist filter query per column (the same syntax as the app, e.g. `today | overdue`, `#Work & @waiting`). The token comes from `TODOIST_API_TOKEN` (Todoist Settings → Integrations → Developer → API token); without it the source fails with that hint. Overdue tasks are critical, priority p1 is a warning; cards show the project, due date and labels, and link to the task.
 
 ## TUI
 
 `pending-tui` runs the same aggregator as the API in-process, so it works without the API running. It reads the same config (`--config` or the default locations) and redraws every 250 ms.
 
-Keys: `j`/`k` or arrows move the selection (lanes scroll to keep it visible), `Enter` opens the selected card's link (`xdg-open`, or `open` on macOS), `r` refreshes every source now (at most once every 10 s, to respect provider rate limits), `q`/`Esc`/`Ctrl-C` quit. The Sources panel shows one line per source with its status and failure reason; feedback and failures show in the footer.
+Keys: `1`–`9` or `Tab`/`Shift+Tab` switch boards; `h`/`l` or left/right move between columns (the board scrolls sideways when they don't fit); `j`/`k` or up/down move within a column (it scrolls to keep the selection visible); `Enter` opens the selected card's link (`xdg-open`, or `open` on macOS), `r` refreshes every source now (at most once every 10 s, to respect provider rate limits), `q`/`Esc`/`Ctrl-C` quit. The Sources panel shows one line per source with its status and failure reason; feedback and failures show in the footer.
 
 ## Web Dashboard
 
@@ -65,10 +83,10 @@ Tokens are read from the environment by each source, never from the config file.
 
 ## GitHub Source
 
-`kind = "github"` searches the authenticated user's open work: review requests (section "Review requested", warning severity), open pull requests ("My pull requests") and assigned issues ("Assigned issues"). An item found by two searches shows once, in the first section.
+`kind = "github"` runs one search per column (`query`, github.com search syntax; optional `severity`). By default: review requests (warning), your open pull requests and your assigned issues. An item found by several searches shows in each of those columns.
 
 - Token: `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token` (given up after 5 s; the API logs before running it, the TUI starts silently until then), resolved once at startup for all GitHub sources. Without a token the source shows as failed with a setup hint; restart after logging in.
-- The three searches run in parallel, each limited to 10 s, so a hanging search becomes a warning for its section instead of failing the refresh. Keep `timeout_seconds` (default 60) above 10, or the aggregator timeout fails the whole refresh first.
+- The searches run in parallel, each limited to 10 s, so a hanging search becomes a warning for its section instead of failing the refresh. Keep `timeout_seconds` (default 60) above 10, or the aggregator timeout fails the whole refresh first.
 - One failed search keeps the other sections and makes the source degraded; all searches failing makes it failed. Rate limiting reports the reset time, and both scheduled and manual refreshes wait for it (up to an hour); a manual refresh only skips the ordinary backoff.
 - Each search loads up to 50 items; more than that, or GitHub reporting incomplete results, shows as a warning. Draft pull requests are marked in the card.
 - Error messages never include the token or request URLs.

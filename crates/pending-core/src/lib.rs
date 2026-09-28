@@ -5,9 +5,9 @@ pub mod sample;
 pub mod snapshot;
 pub mod source;
 
-pub use config::{AppConfig, ConfigError, DEFAULT_LANE, SourceConfig, SourceKind};
+pub use config::{AppConfig, ColumnConfig, ConfigError, DEFAULT_BOARD, SourceConfig, SourceKind};
 pub use model::{
-    CardSeverity, DashboardSnapshot, Lane, PendingCard, Section, SourceHealth, SourceStatus,
+    Board, CardSeverity, Column, DashboardSnapshot, Group, PendingCard, SourceHealth, SourceStatus,
 };
 pub use sample::{SampleSource, sample_snapshot};
 pub use snapshot::{SourceOutcome, SourceReport, build_snapshot};

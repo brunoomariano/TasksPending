@@ -11,6 +11,7 @@ use pending_core::{
     BoxFuture, CardSeverity, PendingCard, PendingSource, SourceBatch, SourceError, SourceItem,
 };
 use reqwest::Client;
+use serde::Deserialize;
 
 /// Environment variable holding the feed URL. The URL is a secret: anyone with
 /// it can read the calendar.
@@ -40,10 +41,83 @@ impl Default for Window {
     }
 }
 
+/// A time bucket of the window; `occurrences` names its columns after these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum When {
+    /// In progress.
+    Now,
+    Today,
+    Tomorrow,
+    /// Later within the window.
+    Later,
+}
+
+impl When {
+    const ALL: [When; 4] = [When::Now, When::Today, When::Tomorrow, When::Later];
+
+    /// The column name `occurrences` uses for this bucket.
+    fn default_name(self) -> &'static str {
+        match self {
+            When::Now => "Now",
+            When::Today => "Today",
+            When::Tomorrow => "Tomorrow",
+            When::Later => "Next 30 days",
+        }
+    }
+}
+
+/// One column: the events falling in some of the time buckets.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IcalColumn {
+    #[serde(skip)]
+    pub name: String,
+    pub when: Vec<When>,
+}
+
+/// Columns used when the configuration declares none: one per bucket.
+pub fn default_columns() -> Vec<IcalColumn> {
+    When::ALL
+        .into_iter()
+        .map(|when| IcalColumn {
+            name: when.default_name().to_owned(),
+            when: vec![when],
+        })
+        .collect()
+}
+
+/// Moves each occurrence from its time bucket (as named by [`occurrences`]) to
+/// every column that lists that bucket.
+pub fn assign_columns(columns: &[IcalColumn], batch: SourceBatch) -> SourceBatch {
+    let items = batch
+        .items
+        .into_iter()
+        .flat_map(|item| {
+            let bucket = When::ALL
+                .into_iter()
+                .find(|when| when.default_name() == item.column);
+            columns
+                .iter()
+                .filter(|column| bucket.is_some_and(|b| column.when.contains(&b)))
+                .map(|column| SourceItem {
+                    column: column.name.clone(),
+                    card: item.card.clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    SourceBatch {
+        items,
+        warnings: batch.warnings,
+    }
+}
+
 pub struct IcalSource {
     client: Client,
     url: Result<String, String>,
     window: Window,
+    columns: Vec<IcalColumn>,
 }
 
 impl IcalSource {
@@ -66,7 +140,16 @@ impl IcalSource {
             client,
             url,
             window: Window::default(),
+            columns: default_columns(),
         }
+    }
+
+    /// Replaces the default columns; an empty list keeps the defaults.
+    pub fn with_columns(mut self, columns: Vec<IcalColumn>) -> Self {
+        if !columns.is_empty() {
+            self.columns = columns;
+        }
+        self
     }
 
     async fn fetch(&self, url: &str) -> Result<SourceBatch, String> {
@@ -86,10 +169,15 @@ impl IcalSource {
         }
         let text = response.text().await.map_err(describe)?;
         occurrences(&text, Utc::now(), self.window, local_zone(), Some(url))
+            .map(|batch| assign_columns(&self.columns, batch))
     }
 }
 
 impl PendingSource for IcalSource {
+    fn columns(&self) -> Vec<String> {
+        self.columns.iter().map(|c| c.name.clone()).collect()
+    }
+
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
         Box::pin(async move {
             match &self.url {
@@ -271,7 +359,7 @@ fn card(
         });
 
     SourceItem {
-        section: section.to_owned(),
+        column: section.to_owned(),
         card: PendingCard {
             id: format!("ical:{}:{}", event.uid, start.to_rfc3339()),
             title: event

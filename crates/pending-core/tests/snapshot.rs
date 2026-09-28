@@ -1,26 +1,26 @@
-//! Montagem do snapshot a partir do resultado de cada fonte.
+//! Montagem do dashboard: áreas (abas) → grupos por fonte → colunas → cards.
 
 use chrono::{DateTime, TimeZone, Utc};
 use pending_core::{
-    CardSeverity, PendingCard, SourceBatch, SourceError, SourceItem, SourceOutcome, SourceReport,
-    SourceStatus, build_snapshot,
+    CardSeverity, DashboardSnapshot, PendingCard, SourceBatch, SourceError, SourceHealth,
+    SourceItem, SourceOutcome, SourceReport, SourceStatus, build_snapshot,
 };
 
 fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 28, hour, 0, 0).unwrap()
 }
 
-fn item(section: &str, id: &str, severity: CardSeverity, hour: u32) -> SourceItem {
+fn item(column: &str, id: &str, severity: CardSeverity, hour: u32) -> SourceItem {
     SourceItem {
-        section: section.to_owned(),
+        column: column.to_owned(),
         card: PendingCard {
             id: id.to_owned(),
             title: id.to_owned(),
             body: String::new(),
             source: "test".to_owned(),
             url: None,
-            severity,
             due_at: None,
+            severity,
             updated_at: at(hour),
         },
     }
@@ -31,37 +31,48 @@ fn with_url(mut item: SourceItem, url: &str) -> SourceItem {
     item
 }
 
-fn ok(name: &str, lane: &str, items: Vec<SourceItem>) -> SourceReport {
+fn report(name: &str, board: &str, columns: &[&str], outcome: SourceOutcome) -> SourceReport {
     SourceReport {
         name: name.to_owned(),
-        lane: lane.to_owned(),
-        outcome: SourceOutcome::Fresh {
-            batch: SourceBatch {
-                items,
-                warnings: Vec::new(),
-            },
-            refreshed_at: at(11),
-        },
+        board: board.to_owned(),
+        columns: columns.iter().map(|c| (*c).to_owned()).collect(),
+        outcome,
     }
 }
 
-fn layout(snapshot: &pending_core::DashboardSnapshot) -> Vec<String> {
+fn fresh(items: Vec<SourceItem>) -> SourceOutcome {
+    SourceOutcome::Fresh {
+        batch: SourceBatch {
+            items,
+            warnings: Vec::new(),
+        },
+        refreshed_at: at(11),
+    }
+}
+
+/// `Board/grupo/coluna: ids` para cada coluna, na ordem da tela.
+fn layout(snapshot: &DashboardSnapshot) -> Vec<String> {
     snapshot
-        .lanes
+        .boards
         .iter()
-        .flat_map(|lane| {
-            lane.sections.iter().map(move |section| {
-                let ids: Vec<&str> = section.cards.iter().map(|c| c.id.as_str()).collect();
-                format!("{}/{}: {}", lane.name, section.name, ids.join(","))
+        .flat_map(|board| {
+            board.groups.iter().flat_map(move |group| {
+                group.columns.iter().map(move |column| {
+                    let ids: Vec<&str> = column.cards.iter().map(|c| c.id.as_str()).collect();
+                    format!(
+                        "{}/{}/{}: {}",
+                        board.name,
+                        group.source,
+                        column.name,
+                        ids.join(",")
+                    )
+                })
             })
         })
         .collect()
 }
 
-fn health<'a>(
-    snapshot: &'a pending_core::DashboardSnapshot,
-    name: &str,
-) -> &'a pending_core::SourceHealth {
+fn health<'a>(snapshot: &'a DashboardSnapshot, name: &str) -> &'a SourceHealth {
     snapshot
         .sources
         .iter()
@@ -69,65 +80,139 @@ fn health<'a>(
         .expect("source health present")
 }
 
-/// Cada fonte alimenta a lane que a configuração dela define, e decide a seção
-/// de cada card. Lanes e seções aparecem na ordem em que surgiram, para que a
-/// ordem das fontes na configuração controle o layout.
+/// Cada fonte vira um grupo de colunas na área (aba) configurada; as áreas e
+/// os grupos seguem a ordem da configuração, e as colunas declaradas aparecem
+/// na ordem declarada, mesmo vazias.
 #[test]
-fn places_cards_in_the_configured_lane_and_source_section() {
+fn sources_become_column_groups_inside_their_board() {
     let snapshot = build_snapshot(
         at(12),
         vec![
-            ok(
+            report(
+                "plane",
+                "Work",
+                &["Mine", "Inbox"],
+                fresh(vec![item("Mine", "p1", CardSeverity::Info, 1)]),
+            ),
+            report(
+                "todoist",
+                "Personal",
+                &["Today"],
+                fresh(vec![item("Today", "t1", CardSeverity::Info, 1)]),
+            ),
+            report(
                 "github",
                 "Work",
-                vec![
-                    item("Review", "a", CardSeverity::Info, 1),
-                    item("Alerts", "c", CardSeverity::Info, 1),
-                    item("Review", "d", CardSeverity::Info, 1),
-                ],
-            ),
-            ok(
-                "todo",
-                "Personal",
-                vec![item("Next", "b", CardSeverity::Info, 1)],
-            ),
-            ok(
-                "jira",
-                "Work",
-                vec![item("Review", "e", CardSeverity::Info, 1)],
+                &["Review"],
+                fresh(vec![item("Review", "g1", CardSeverity::Info, 1)]),
             ),
         ],
     );
 
     assert_eq!(
         layout(&snapshot),
-        vec!["Work/Review: a,d,e", "Work/Alerts: c", "Personal/Next: b"]
+        vec![
+            "Work/plane/Mine: p1",
+            "Work/plane/Inbox: ",
+            "Work/github/Review: g1",
+            "Personal/todoist/Today: t1",
+        ]
     );
     assert_eq!(snapshot.generated_at, at(12));
 }
 
-/// Dentro de uma seção, o que é mais grave vem primeiro; com a mesma
-/// gravidade, o que mudou por último vem primeiro.
+/// Uma coluna que a fonte usa sem ter declarado é acrescentada no fim do grupo.
 #[test]
-fn orders_cards_by_severity_then_most_recent_update() {
+fn undeclared_columns_are_appended() {
     let snapshot = build_snapshot(
         at(12),
-        vec![ok(
+        vec![report(
             "github",
             "Work",
-            vec![
-                item("Review", "old-info", CardSeverity::Info, 1),
-                item("Review", "new-info", CardSeverity::Info, 5),
-                item("Review", "critical", CardSeverity::Critical, 0),
-                item("Review", "warning", CardSeverity::Warning, 3),
-            ],
+            &["Review"],
+            fresh(vec![item("Extra", "g1", CardSeverity::Info, 1)]),
         )],
     );
 
     assert_eq!(
         layout(&snapshot),
-        vec!["Work/Review: critical,warning,new-info,old-info"]
+        vec!["Work/github/Review: ", "Work/github/Extra: g1"]
     );
+}
+
+/// Dentro de uma coluna, o mais grave vem primeiro; depois, o que tem data,
+/// do mais próximo ao mais distante; por fim, o mais recentemente atualizado.
+#[test]
+fn cards_are_ordered_by_severity_due_time_and_recency() {
+    let due = |mut item: SourceItem, hour: u32| {
+        item.card.due_at = Some(at(hour));
+        item
+    };
+    let snapshot = build_snapshot(
+        at(12),
+        vec![report(
+            "calendar",
+            "Work",
+            &["Today"],
+            fresh(vec![
+                item("Today", "old-info", CardSeverity::Info, 1),
+                item("Today", "new-info", CardSeverity::Info, 5),
+                due(item("Today", "late", CardSeverity::Info, 1), 18),
+                due(item("Today", "soon", CardSeverity::Info, 1), 13),
+                item("Today", "critical", CardSeverity::Critical, 0),
+                due(item("Today", "warning", CardSeverity::Warning, 1), 20),
+            ]),
+        )],
+    );
+
+    assert_eq!(
+        layout(&snapshot),
+        vec!["Work/calendar/Today: critical,warning,soon,late,new-info,old-info"]
+    );
+}
+
+/// Colunas são filtros independentes: o mesmo item pode aparecer em várias
+/// colunas e em fontes diferentes; repetido dentro da mesma coluna, fica só
+/// uma vez e a fonte avisa.
+#[test]
+fn an_item_may_appear_in_several_columns_but_once_per_column() {
+    let snapshot = build_snapshot(
+        at(12),
+        vec![
+            report(
+                "plane",
+                "Work",
+                &["Mine", "Urgent"],
+                fresh(vec![
+                    item("Mine", "same", CardSeverity::Info, 1),
+                    item("Urgent", "same", CardSeverity::Critical, 1),
+                    item("Mine", "same", CardSeverity::Info, 2),
+                ]),
+            ),
+            report(
+                "mirror",
+                "Work",
+                &["Mine"],
+                fresh(vec![item("Mine", "same", CardSeverity::Info, 1)]),
+            ),
+        ],
+    );
+
+    assert_eq!(
+        layout(&snapshot),
+        vec![
+            "Work/plane/Mine: same",
+            "Work/plane/Urgent: same",
+            "Work/mirror/Mine: same",
+        ]
+    );
+    let plane = health(&snapshot, "plane");
+    assert_eq!(plane.status, SourceStatus::Degraded);
+    assert!(
+        plane.message.as_deref().unwrap_or("").contains("same"),
+        "{plane:?}"
+    );
+    assert_eq!(health(&snapshot, "mirror").status, SourceStatus::Ready);
 }
 
 /// Uma fonte saudável aparece pronta, com o horário do refresh.
@@ -135,10 +220,11 @@ fn orders_cards_by_severity_then_most_recent_update() {
 fn healthy_source_is_ready() {
     let snapshot = build_snapshot(
         at(12),
-        vec![ok(
+        vec![report(
             "github",
             "Work",
-            vec![item("Review", "a", CardSeverity::Info, 1)],
+            &["Review"],
+            fresh(vec![item("Review", "a", CardSeverity::Info, 1)]),
         )],
     );
 
@@ -148,104 +234,65 @@ fn healthy_source_is_ready() {
     assert_eq!(github.message, None);
 }
 
-/// Uma fonte que falha não derruba o dashboard: ela aparece como falha, com o
-/// motivo, e as outras fontes continuam visíveis.
+/// Uma fonte que falha não derruba o dashboard: aparece como falha, com o
+/// motivo, com as colunas vazias; as outras fontes continuam visíveis.
 #[test]
-fn failed_source_is_reported_without_hiding_other_sources() {
+fn failed_source_keeps_empty_columns_and_other_sources() {
     let snapshot = build_snapshot(
         at(12),
         vec![
-            SourceReport {
-                name: "github".to_owned(),
-                lane: "Work".to_owned(),
-                outcome: SourceOutcome::Failed(SourceError::new("401 bad credentials")),
-            },
-            ok(
-                "todo",
-                "Personal",
-                vec![item("Next", "b", CardSeverity::Info, 1)],
-            ),
-        ],
-    );
-
-    assert_eq!(layout(&snapshot), vec!["Personal/Next: b"]);
-    let github = health(&snapshot, "github");
-    assert_eq!(github.status, SourceStatus::Failed);
-    assert_eq!(github.last_refresh_at, None);
-    assert_eq!(github.message.as_deref(), Some("401 bad credentials"));
-    assert_eq!(health(&snapshot, "todo").status, SourceStatus::Ready);
-}
-
-/// Uma fonte que trouxe só parte dos dados (ex.: um repo sem permissão) mostra
-/// o que conseguiu e fica degradada com o aviso.
-#[test]
-fn source_warnings_degrade_the_source_but_keep_its_cards() {
-    let mut report = ok(
-        "github",
-        "Work",
-        vec![item("Review", "a", CardSeverity::Info, 1)],
-    );
-    if let SourceOutcome::Fresh { batch, .. } = &mut report.outcome {
-        batch.warnings.push("o/private: 403".to_owned());
-    }
-
-    let snapshot = build_snapshot(at(12), vec![report]);
-
-    assert_eq!(layout(&snapshot), vec!["Work/Review: a"]);
-    let github = health(&snapshot, "github");
-    assert_eq!(github.status, SourceStatus::Degraded);
-    assert_eq!(github.message.as_deref(), Some("o/private: 403"));
-}
-
-/// Duas fontes que emitem o mesmo id tornariam ações sobre o card ambíguas. O
-/// primeiro card fica, o repetido é descartado e a fonte dele fica degradada
-/// nomeando o id; o resto do dashboard continua.
-#[test]
-fn duplicate_card_ids_keep_the_first_and_degrade_the_later_source() {
-    let snapshot = build_snapshot(
-        at(12),
-        vec![
-            ok(
+            report(
                 "github",
                 "Work",
-                vec![item("Review", "dup", CardSeverity::Info, 1)],
+                &["Review"],
+                SourceOutcome::Failed(SourceError::new("401 bad credentials")),
             ),
-            ok(
-                "mirror",
+            report(
+                "todoist",
                 "Personal",
-                vec![
-                    item("Next", "dup", CardSeverity::Info, 2),
-                    item("Next", "b", CardSeverity::Info, 2),
-                ],
+                &["Today"],
+                fresh(vec![item("Today", "b", CardSeverity::Info, 1)]),
             ),
         ],
     );
 
     assert_eq!(
         layout(&snapshot),
-        vec!["Work/Review: dup", "Personal/Next: b"]
+        vec!["Work/github/Review: ", "Personal/todoist/Today: b"]
     );
-    assert_eq!(health(&snapshot, "github").status, SourceStatus::Ready);
-    let mirror = health(&snapshot, "mirror");
-    assert_eq!(mirror.status, SourceStatus::Degraded);
-    assert!(
-        mirror.message.as_deref().unwrap_or("").contains("dup"),
-        "{mirror:?}"
-    );
+    let github = health(&snapshot, "github");
+    assert_eq!(github.status, SourceStatus::Failed);
+    assert_eq!(github.last_refresh_at, None);
+    assert_eq!(github.message.as_deref(), Some("401 bad credentials"));
 }
 
-/// O link do card vira `href` no frontend; um esquema como `javascript:` vindo
-/// de uma fonte executaria código ao clicar. Esse card é descartado e a fonte
-/// fica degradada nomeando o card; links http(s) passam, sem diferenciar
-/// maiúsculas no esquema.
+/// Avisos da fonte (dados parciais) deixam a fonte degradada, com os cards.
+#[test]
+fn source_warnings_degrade_the_source_but_keep_its_cards() {
+    let mut outcome = fresh(vec![item("Review", "a", CardSeverity::Info, 1)]);
+    if let SourceOutcome::Fresh { batch, .. } = &mut outcome {
+        batch.warnings.push("o/private: 403".to_owned());
+    }
+
+    let snapshot = build_snapshot(at(12), vec![report("github", "Work", &["Review"], outcome)]);
+
+    assert_eq!(layout(&snapshot), vec!["Work/github/Review: a"]);
+    let github = health(&snapshot, "github");
+    assert_eq!(github.status, SourceStatus::Degraded);
+    assert_eq!(github.message.as_deref(), Some("o/private: 403"));
+}
+
+/// Links que não são http(s) nunca chegam à tela: o card é descartado e a
+/// fonte fica degradada nomeando-o.
 #[test]
 fn cards_with_non_http_urls_are_dropped_and_degrade_the_source() {
     let snapshot = build_snapshot(
         at(12),
-        vec![ok(
+        vec![report(
             "github",
             "Work",
-            vec![
+            &["Review"],
+            fresh(vec![
                 with_url(
                     item("Review", "good-link", CardSeverity::Info, 1),
                     "HTTPS://github.com/o/r/pull/1",
@@ -254,11 +301,11 @@ fn cards_with_non_http_urls_are_dropped_and_degrade_the_source() {
                     item("Review", "bad-link", CardSeverity::Info, 1),
                     "javascript:alert(1)",
                 ),
-            ],
+            ]),
         )],
     );
 
-    assert_eq!(layout(&snapshot), vec!["Work/Review: good-link"]);
+    assert_eq!(layout(&snapshot), vec!["Work/github/Review: good-link"]);
     let github = health(&snapshot, "github");
     assert_eq!(github.status, SourceStatus::Degraded);
     assert!(
@@ -267,36 +314,37 @@ fn cards_with_non_http_urls_are_dropped_and_degrade_the_source() {
     );
 }
 
-/// Enquanto a primeira consulta de uma fonte não termina, ela aparece como
-/// atualizando, sem cards e sem horário de refresh.
+/// Enquanto a primeira consulta não termina, a fonte aparece como atualizando,
+/// com as colunas vazias.
 #[test]
 fn pending_source_shows_as_refreshing() {
     let snapshot = build_snapshot(
         at(12),
-        vec![SourceReport {
-            name: "github".to_owned(),
-            lane: "Work".to_owned(),
-            outcome: SourceOutcome::Pending,
-        }],
+        vec![report(
+            "github",
+            "Work",
+            &["Review"],
+            SourceOutcome::Pending,
+        )],
     );
 
-    assert!(snapshot.lanes.is_empty());
+    assert_eq!(layout(&snapshot), vec!["Work/github/Review: "]);
     let github = health(&snapshot, "github");
     assert_eq!(github.status, SourceStatus::Refreshing);
     assert_eq!(github.last_refresh_at, None);
 }
 
-/// Quando um refresh falha depois de um sucesso, o dashboard continua mostrando
-/// os últimos cards conhecidos; a fonte fica degradada, diz que o dado é antigo
-/// e por quê, e o horário é o do último sucesso.
+/// Falha depois de um sucesso mantém os últimos cards, avisando que o dado é
+/// antigo e por quê, com o horário do último sucesso.
 #[test]
 fn stale_source_keeps_last_known_cards_and_explains_the_failure() {
     let snapshot = build_snapshot(
         at(12),
-        vec![SourceReport {
-            name: "github".to_owned(),
-            lane: "Work".to_owned(),
-            outcome: SourceOutcome::Stale {
+        vec![report(
+            "github",
+            "Work",
+            &["Review"],
+            SourceOutcome::Stale {
                 batch: SourceBatch {
                     items: vec![item("Review", "a", CardSeverity::Info, 1)],
                     warnings: vec!["o/private: 403".to_owned()],
@@ -304,10 +352,10 @@ fn stale_source_keeps_last_known_cards_and_explains_the_failure() {
                 refreshed_at: at(9),
                 error: SourceError::new("timed out"),
             },
-        }],
+        )],
     );
 
-    assert_eq!(layout(&snapshot), vec!["Work/Review: a"]);
+    assert_eq!(layout(&snapshot), vec!["Work/github/Review: a"]);
     let github = health(&snapshot, "github");
     assert_eq!(github.status, SourceStatus::Degraded);
     assert_eq!(github.last_refresh_at, Some(at(9)));
@@ -317,27 +365,27 @@ fn stale_source_keeps_last_known_cards_and_explains_the_failure() {
     assert!(message.contains("o/private: 403"), "{message}");
 }
 
-/// Na subida, uma fonte com dados de uma execução anterior mostra esses cards
-/// enquanto a primeira consulta não termina: fica como atualizando, diz que o
-/// dado veio da execução anterior e mostra o horário dele.
+/// Na subida, a fonte com dados da execução anterior mostra esses cards e fica
+/// como atualizando até a primeira consulta.
 #[test]
 fn cached_source_shows_previous_cards_while_refreshing() {
     let snapshot = build_snapshot(
         at(12),
-        vec![SourceReport {
-            name: "github".to_owned(),
-            lane: "Work".to_owned(),
-            outcome: SourceOutcome::Cached {
+        vec![report(
+            "github",
+            "Work",
+            &["Review"],
+            SourceOutcome::Cached {
                 batch: SourceBatch {
                     items: vec![item("Review", "a", CardSeverity::Info, 1)],
                     warnings: Vec::new(),
                 },
                 refreshed_at: at(8),
             },
-        }],
+        )],
     );
 
-    assert_eq!(layout(&snapshot), vec!["Work/Review: a"]);
+    assert_eq!(layout(&snapshot), vec!["Work/github/Review: a"]);
     let github = health(&snapshot, "github");
     assert_eq!(github.status, SourceStatus::Refreshing);
     assert_eq!(github.last_refresh_at, Some(at(8)));
@@ -348,33 +396,5 @@ fn cached_source_shows_previous_cards_while_refreshing() {
             .unwrap_or("")
             .contains("previous run"),
         "{github:?}"
-    );
-}
-
-/// Cards com data (evento, prazo) vêm antes dos sem data e em ordem do mais
-/// próximo para o mais distante, dentro da mesma gravidade.
-#[test]
-fn cards_with_a_due_time_come_soonest_first() {
-    let due = |mut item: SourceItem, hour: u32| {
-        item.card.due_at = Some(at(hour));
-        item
-    };
-    let snapshot = build_snapshot(
-        at(12),
-        vec![ok(
-            "calendar",
-            "Work",
-            vec![
-                item("Today", "undated", CardSeverity::Info, 9),
-                due(item("Today", "late", CardSeverity::Info, 1), 18),
-                due(item("Today", "soon", CardSeverity::Info, 1), 13),
-                due(item("Today", "urgent", CardSeverity::Warning, 1), 20),
-            ],
-        )],
-    );
-
-    assert_eq!(
-        layout(&snapshot),
-        vec!["Work/Today: urgent,soon,late,undated"]
     );
 }

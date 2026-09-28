@@ -13,17 +13,22 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// A refreshable provider of pending cards.
 ///
-/// Sources decide the section of each card; the name and lane come from the
-/// source's configuration. The future is boxed so different sources can live in one
-/// `Vec<Box<dyn PendingSource>>`.
+/// Sources place each card in one of their columns (filters); the name and
+/// board come from the source's configuration. The future is boxed so
+/// different sources can live in one `Vec<Box<dyn PendingSource>>`.
 pub trait PendingSource: Send + Sync {
+    /// Column names in display order, shown even before the first refresh
+    /// and when empty.
+    fn columns(&self) -> Vec<String>;
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>>;
 }
 
-/// One card and the section it belongs to inside the source's lane.
+/// One card and the column it belongs to. The same card may appear in several
+/// columns when it matches several filters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceItem {
-    pub section: String,
+    #[serde(alias = "section")]
+    pub column: String,
     pub card: PendingCard,
 }
 

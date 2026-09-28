@@ -12,7 +12,7 @@ async fn sources_are_refreshed_through_a_shared_port() {
     for source in &sources {
         let batch = source.refresh().await.expect("sample never fails");
         assert!(!batch.items.is_empty());
-        assert!(batch.items.iter().all(|item| !item.section.is_empty()));
+        assert!(batch.items.iter().all(|item| !item.column.is_empty()));
         assert!(batch.warnings.is_empty());
     }
 }
@@ -23,7 +23,7 @@ async fn sources_are_refreshed_through_a_shared_port() {
 fn sample_snapshot_is_built_from_the_sample_source() {
     let snapshot = sample_snapshot();
 
-    assert!(!snapshot.lanes.is_empty());
+    assert!(!snapshot.boards.is_empty());
     let sample = snapshot
         .sources
         .iter()

@@ -9,6 +9,7 @@ homepage.workspace = true
 
 [dependencies]
 chrono.workspace = true
+futures-util.workspace = true
 pending-core = { path = "../pending-core" }
 pending-http = { path = "../pending-http" }
 reqwest.workspace = true

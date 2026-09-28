@@ -9,21 +9,22 @@ TasksPending tracks pending work from refreshable sources and renders it consist
 The shared model starts in `pending-core`:
 
 - `DashboardSnapshot`: the complete view at one refresh point.
-- `Lane`: a high-level track, such as Work, Personal, or Open Source.
-- `Section`: a group inside a lane, such as GitHub, Review, or Alerts.
+- `Board`: an area of work shown as a tab, such as Work, Personal or Contributions.
+- `Group`: one configured source's columns inside a board (Plane, GitHub…).
+- `Column`: one filter of that source, shown as a kanban column (Assigned to me, Review requested…).
 - `PendingCard`: an actionable pending item.
 - `SourceStatus`: source health and refresh metadata.
 
 ## Sources
 
-Every source implements the `PendingSource` port: `refresh()` returns a `SourceBatch` (cards with their section, plus warnings for partial data) or a `SourceError`. The lane comes from the source's configuration (`lane`, default `Inbox`), never from the source itself.
+Every source implements the `PendingSource` port: `columns()` names its columns (from `[[sources.columns]]`, or the source's defaults), and `refresh()` returns a `SourceBatch` (cards with their column, plus warnings for partial data) or a `SourceError`. The board comes from the source's configuration (`board`, formerly `lane`, default `Inbox`). Column filter keys are kind-specific: each source crate defines its column type with `deny_unknown_fields`, and `pending_runtime::config` parses `[[sources.columns]]` into it, naming the source and column on errors.
 
 `build_snapshot` turns one `SourceReport` per source into the dashboard. A bad source never takes the dashboard down:
 
 - a failed source shows as `failed` with its error and contributes no cards;
 - warnings make the source `degraded`;
-- cards with a non-http(s) url, or an id already used by an earlier source, are dropped, and their source shows as `degraded` naming them;
-- lanes and sections keep first-seen order; cards sort by severity, then most recent update.
+- a card may appear in several columns (they are independent filters); within one column, a repeated id or a non-http(s) url drops the card and the source shows as `degraded` naming it;
+- boards and groups keep configuration order; declared columns show even when empty; cards sort by severity, then due time (soonest first), then most recent update.
 
 The frontend types in `frontend/src/contract.gen.ts` are generated from these Rust types with `make contract`.
 
@@ -47,7 +48,8 @@ The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME
 
 - `sample` (`pending-core`): fixed cards.
 - `ical` (`pending-ical`): upcoming events from an iCal feed (Google Calendar's secret address); recurrences expanded with `rrule`. Cards set `due_at` to the event start.
-- `plane` (`pending-plane`): open work items assigned to the API key's owner, per project, filtered locally; request shapes follow PlaneCockpit.
+- `plane` (`pending-plane`): the workspace's work items, read per project and filtered locally per column; request shapes follow PlaneCockpit.
+- `todoist` (`pending-todoist`): one Todoist filter query per column (API v1).
 - `github` (`pending-github`): search API for review requests, authored pull requests and assigned issues; token precedence and error handling follow `ghpending`. See `docs/operations.md`.
 
 ## Reference Repositories

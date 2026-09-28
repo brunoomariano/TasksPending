@@ -48,6 +48,10 @@ impl Scripted {
 }
 
 impl PendingSource for Scripted {
+    fn columns(&self) -> Vec<String> {
+        vec!["Review".to_owned()]
+    }
+
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let mut script = self.script.lock().unwrap();
@@ -67,7 +71,7 @@ impl PendingSource for Scripted {
 fn batch(id: &str) -> SourceBatch {
     SourceBatch {
         items: vec![SourceItem {
-            section: "Review".to_owned(),
+            column: "Review".to_owned(),
             card: PendingCard {
                 id: id.to_owned(),
                 title: id.to_owned(),
@@ -91,7 +95,7 @@ fn named_spec(name: &str, source: Arc<dyn PendingSource>, interval_secs: u64) ->
     SourceSpec {
         name: name.to_owned(),
         source,
-        lane: "Work".to_owned(),
+        board: "Work".to_owned(),
         interval: Duration::from_secs(interval_secs),
     }
 }
@@ -106,10 +110,11 @@ fn health<'a>(snapshot: &'a DashboardSnapshot, name: &str) -> &'a SourceHealth {
 
 fn card_ids(snapshot: &DashboardSnapshot) -> Vec<String> {
     snapshot
-        .lanes
+        .boards
         .iter()
-        .flat_map(|l| &l.sections)
-        .flat_map(|s| &s.cards)
+        .flat_map(|b| &b.groups)
+        .flat_map(|g| &g.columns)
+        .flat_map(|c| &c.cards)
         .map(|c| c.id.clone())
         .collect()
 }
@@ -242,6 +247,10 @@ struct Panicky {
 }
 
 impl PendingSource for Panicky {
+    fn columns(&self) -> Vec<String> {
+        vec!["Review".to_owned()]
+    }
+
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         if call < self.panics {

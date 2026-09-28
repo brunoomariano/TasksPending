@@ -1,10 +1,24 @@
 // Generated from crates/pending-core by `make contract`. Do not edit.
 
-export type DashboardSnapshot = { generated_at: string, lanes: Array<Lane>, sources: Array<SourceHealth>, };
+export type DashboardSnapshot = { generated_at: string, 
+/**
+ * Areas of work (Work, Personal, …), shown as tabs.
+ */
+boards: Array<Board>, sources: Array<SourceHealth>, };
 
-export type Lane = { name: string, sections: Array<Section>, };
+export type Board = { name: string, 
+/**
+ * One group of columns per source, in configuration order.
+ */
+groups: Array<Group>, };
 
-export type Section = { name: string, cards: Array<PendingCard>, };
+export type Group = { 
+/**
+ * Configured source name; matches a `SourceHealth::name`.
+ */
+source: string, columns: Array<Column>, };
+
+export type Column = { name: string, cards: Array<PendingCard>, };
 
 export type PendingCard = { id: string, title: string, body: string, source: string, url: string | null, 
 /**

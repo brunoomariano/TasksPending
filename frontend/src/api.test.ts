@@ -18,7 +18,7 @@ describe("loadSnapshot", () => {
   test("returns the snapshot when the API answers", async () => {
     const snapshot = {
       generated_at: "2026-09-28T10:00:00Z",
-      lanes: [],
+      boards: [],
       sources: [],
     };
     const ok = async () => Response.json(snapshot);

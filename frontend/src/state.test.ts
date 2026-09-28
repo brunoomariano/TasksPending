@@ -7,22 +7,27 @@ const snapshot = (id: string): DashboardSnapshot => ({
   sources: [
     { name: "github", status: "ready", last_refresh_at: null, message: null },
   ],
-  lanes: [
+  boards: [
     {
       name: "Work",
-      sections: [
+      groups: [
         {
-          name: "Review",
-          cards: [
+          source: "github",
+          columns: [
             {
-              id,
-              title: id,
-              body: "",
-              source: "github",
-              url: null,
-              severity: "info",
-              due_at: null,
-              updated_at: "2026-09-28T09:00:00Z",
+              name: "Review",
+              cards: [
+                {
+                  id,
+                  title: id,
+                  body: "",
+                  source: "github",
+                  url: null,
+                  severity: "info",
+                  due_at: null,
+                  updated_at: "2026-09-28T09:00:00Z",
+                },
+              ],
             },
           ],
         },

@@ -168,7 +168,7 @@ fn ids(batch: &SourceBatch) -> Vec<(String, String)> {
     batch
         .items
         .iter()
-        .map(|item| (item.section.clone(), item.card.id.clone()))
+        .map(|item| (item.column.clone(), item.card.id.clone()))
         .collect()
 }
 
@@ -547,4 +547,105 @@ fn common_alternative_variable_names_are_accepted() {
     let settings = PlaneSettings::from_env(&both).unwrap();
     assert_eq!(settings.api_key, "primary");
     assert_eq!(settings.workspace_slug, "primary-ws");
+}
+
+/// Colunas configuradas filtram o workspace inteiro: itens meus, itens em
+/// Inbox sem responsável e itens em In Review de outras pessoas; um item que
+/// casa com duas colunas aparece nas duas.
+#[tokio::test]
+async fn configured_columns_filter_by_assignee_state_and_priority() {
+    use pending_plane::{Assignee, PlaneColumn};
+
+    let stub = Stub::default();
+    let with_state = |mut value: Value, name: &str, group: &str| {
+        value["state"] = json!({ "id": format!("s-{name}"), "name": name, "group": group });
+        value
+    };
+    let unassigned = |mut value: Value| {
+        value["assignees"] = json!([]);
+        value
+    };
+    let mut urgent_mine = with_state(
+        issue("i1", 1, "Mine urgent", "started", ME),
+        "Doing",
+        "started",
+    );
+    urgent_mine["priority"] = json!("urgent");
+    one_project(
+        &stub,
+        vec![
+            urgent_mine,
+            unassigned(with_state(
+                issue("i2", 2, "Triage me", "backlog", ME),
+                "Inbox",
+                "backlog",
+            )),
+            with_state(
+                issue("i3", 3, "Their review", "started", "someone-else"),
+                "In Review",
+                "started",
+            ),
+            with_state(
+                issue("i4", 4, "My review", "started", ME),
+                "In Review",
+                "started",
+            ),
+            with_state(
+                issue("i5", 5, "Their done", "completed", "someone-else"),
+                "Done",
+                "completed",
+            ),
+        ],
+    );
+    let base = serve(stub).await;
+    let column = |name: &str, filter: PlaneColumn| PlaneColumn {
+        name: name.to_owned(),
+        ..filter
+    };
+    let source = source(base).with_columns(vec![
+        column("Mine", PlaneColumn::default()),
+        column(
+            "Inbox unassigned",
+            PlaneColumn {
+                assignee: Assignee::None,
+                state: vec!["inbox".to_owned()],
+                ..PlaneColumn::default()
+            },
+        ),
+        column(
+            "In review (others)",
+            PlaneColumn {
+                assignee: Assignee::Others,
+                state: vec!["In Review".to_owned()],
+                ..PlaneColumn::default()
+            },
+        ),
+        column(
+            "Urgent",
+            PlaneColumn {
+                assignee: Assignee::Any,
+                priority: vec!["urgent".to_owned()],
+                ..PlaneColumn::default()
+            },
+        ),
+    ]);
+
+    let batch = source.refresh().await.expect("refresh succeeds");
+
+    let mut found = ids(&batch);
+    found.sort();
+    assert_eq!(
+        found,
+        vec![
+            ("In review (others)".to_owned(), "plane:API-3".to_owned()),
+            ("Inbox unassigned".to_owned(), "plane:API-2".to_owned()),
+            ("Mine".to_owned(), "plane:API-1".to_owned()),
+            ("Mine".to_owned(), "plane:API-4".to_owned()),
+            ("Urgent".to_owned(), "plane:API-1".to_owned()),
+        ]
+    );
+    assert_eq!(
+        source.columns(),
+        vec!["Mine", "Inbox unassigned", "In review (others)", "Urgent"]
+    );
 }

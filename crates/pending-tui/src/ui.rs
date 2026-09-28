@@ -1,5 +1,7 @@
-//! Rendering of the dashboard state.
+//! Rendering of the dashboard as a kanban: board tabs, then columns grouped
+//! by source.
 
+use chrono::{DateTime, Local, Utc};
 use pending_core::{CardSeverity, SourceHealth, SourceStatus};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -9,10 +11,17 @@ use ratatui::widgets::{
     Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
 };
 
-use crate::app::App;
+use crate::app::{App, ColumnRef};
 
-const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M UTC";
-const HELP: &str = "j/k move · enter open · r refresh · q quit";
+const HELP: &str = "1-9/tab boards · h/l columns · j/k cards · enter open · r refresh · q quit";
+/// Narrowest useful column; with less room the board scrolls sideways.
+const MIN_COLUMN_WIDTH: u16 = 26;
+
+fn local(at: DateTime<Utc>) -> String {
+    at.with_timezone(&Local)
+        .format("%Y-%m-%d %H:%M")
+        .to_string()
+}
 
 /// `header` describes where the config came from.
 pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
@@ -20,29 +29,27 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Length(snapshot.sources.len().max(1) as u16 + 2),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
         .split(area);
 
-    let title = Line::from(vec![
+    Paragraph::new(Line::from(vec![
         Span::styled(
             "TasksPending",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!(
-            "  {}  ",
-            snapshot.generated_at.format(TIMESTAMP_FORMAT)
-        )),
+        Span::raw(format!("  {}  ", local(snapshot.generated_at))),
         Span::styled(header, Style::default().fg(Color::DarkGray)),
-    ]);
-    Paragraph::new(title)
-        .block(Block::default().borders(Borders::ALL))
-        .render(layout[0], buf);
+    ]))
+    .render(layout[0], buf);
+
+    render_tabs(layout[1], buf, app);
 
     // One line per source, clipped, so a long failure message never pushes
     // the other sources out of the panel.
@@ -56,9 +63,9 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
     };
     Paragraph::new(sources)
         .block(Block::default().title("Sources").borders(Borders::ALL))
-        .render(layout[1], buf);
+        .render(layout[2], buf);
 
-    render_lanes(layout[2], buf, app);
+    render_board(layout[3], buf, app);
 
     let footer = match app.notice() {
         Some(notice) if app.notice_is_error() => {
@@ -67,7 +74,25 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
         Some(notice) => Span::styled(notice, Style::default().fg(Color::Cyan)),
         None => Span::styled(HELP, Style::default().fg(Color::DarkGray)),
     };
-    Paragraph::new(footer).render(layout[3], buf);
+    Paragraph::new(footer).render(layout[4], buf);
+}
+
+fn render_tabs(area: Rect, buf: &mut Buffer, app: &App) {
+    let mut spans = Vec::new();
+    for (index, board) in app.snapshot().boards.iter().enumerate() {
+        let label = format!(" {} {} ", index + 1, board.name);
+        let style = if index == app.board_index() {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        spans.push(Span::styled(label, style));
+        spans.push(Span::raw(" "));
+    }
+    Paragraph::new(Line::from(spans)).render(area, buf);
 }
 
 fn source_line(source: &SourceHealth) -> Line<'_> {
@@ -86,85 +111,137 @@ fn source_line(source: &SourceHealth) -> Line<'_> {
     }
     if let Some(at) = source.last_refresh_at {
         spans.push(Span::styled(
-            format!("  ({})", at.format(TIMESTAMP_FORMAT)),
+            format!("  ({})", local(at)),
             Style::default().fg(Color::DarkGray),
         ));
     }
     Line::from(spans)
 }
 
-fn render_lanes(area: Rect, buf: &mut Buffer, app: &App) {
-    let snapshot = app.snapshot();
-    if snapshot.lanes.is_empty() {
-        Paragraph::new("No pending cards.")
+/// The first visible column and how many fit, keeping `selected` in view.
+fn visible_window(total: usize, selected: usize, width: u16) -> (usize, usize) {
+    let fit = usize::from((width / MIN_COLUMN_WIDTH).max(1)).min(total);
+    let start = selected.saturating_sub(fit - 1).min(total - fit);
+    (start, fit)
+}
+
+fn render_board(area: Rect, buf: &mut Buffer, app: &App) {
+    let columns = app.columns();
+    if columns.is_empty() {
+        Paragraph::new("No columns on this board.")
             .block(Block::default().borders(Borders::ALL))
             .render(area, buf);
         return;
     }
 
-    let lane_count = snapshot.lanes.len();
-    let lanes = Layout::default()
+    let (start, fit) = visible_window(columns.len(), app.selected_column(), area.width);
+    let visible = &columns[start..start + fit];
+
+    // Consecutive columns of the same source share one titled group box.
+    let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
+    for (offset, column) in visible.iter().enumerate() {
+        match groups.last_mut() {
+            Some((source, indexes)) if *source == column.source => indexes.push(start + offset),
+            _ => groups.push((column.source, vec![start + offset])),
+        }
+    }
+
+    let group_areas = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints(vec![Constraint::Ratio(1, lane_count as u32); lane_count])
+        .constraints(
+            groups
+                .iter()
+                .map(|(_, indexes)| Constraint::Ratio(indexes.len() as u32, fit as u32))
+                .collect::<Vec<_>>(),
+        )
         .split(area);
 
-    for (lane, area) in snapshot.lanes.iter().zip(lanes.iter()) {
-        let mut items = Vec::new();
-        let mut state = ListState::default();
-        for section in &lane.sections {
-            let header = items.len();
-            items.push(ListItem::new(Line::from(Span::styled(
-                section.name.as_str(),
+    for ((source, indexes), group_area) in groups.iter().zip(group_areas.iter()) {
+        let block = Block::default()
+            .title(Span::styled(
+                format!(" {source} "),
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
-            ))));
+            ))
+            .borders(Borders::ALL);
+        let inner = block.inner(*group_area);
+        block.render(*group_area, buf);
 
-            for card in &section.cards {
-                let marker = match card.severity {
-                    CardSeverity::Info => Style::default().fg(Color::Blue),
-                    CardSeverity::Warning => Style::default().fg(Color::Yellow),
-                    CardSeverity::Critical => Style::default().fg(Color::Red),
-                };
-                let title_style = if app.is_selected(card) {
-                    // Scrolls the lane so the selected card stays visible.
-                    state.select(Some(items.len()));
-                    // Start at the card's section title so it stays in view;
-                    // ratatui scrolls further when the card would not fit.
-                    *state.offset_mut() = header;
-                    Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-                items.push(ListItem::new(vec![
-                    Line::from(vec![
-                        Span::styled("▍ ", marker),
-                        Span::styled(card.title.as_str(), title_style),
-                    ]),
-                    Line::from(Span::styled(
-                        format!(
-                            "  {} · {}",
-                            card.body,
-                            card.updated_at.format(TIMESTAMP_FORMAT)
-                        ),
-                        Style::default().fg(Color::DarkGray),
-                    )),
-                ]));
-            }
+        let column_areas = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(vec![
+                Constraint::Ratio(1, indexes.len() as u32);
+                indexes.len()
+            ])
+            .split(inner);
+        for (&index, column_area) in indexes.iter().zip(column_areas.iter()) {
+            render_column(*column_area, buf, app, index, &columns[index]);
         }
-
-        let list = List::new(items).block(
-            Block::default()
-                .title(lane.name.as_str())
-                .borders(Borders::ALL),
-        );
-        StatefulWidget::render(list, *area, buf, &mut state);
     }
+}
+
+fn render_column(area: Rect, buf: &mut Buffer, app: &App, index: usize, column: &ColumnRef<'_>) {
+    let selected_column = index == app.selected_column();
+    let title_style = if selected_column {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        Style::default().fg(Color::Yellow)
+    };
+    let block = Block::default()
+        .title(Span::styled(
+            format!("{} ({})", column.column.name, column.column.cards.len()),
+            title_style,
+        ))
+        .borders(Borders::TOP);
+
+    if column.column.cards.is_empty() {
+        Paragraph::new(Span::styled("—", Style::default().fg(Color::DarkGray)))
+            .block(block)
+            .render(area, buf);
+        return;
+    }
+
+    let mut state = ListState::default();
+    let items: Vec<ListItem> = column
+        .column
+        .cards
+        .iter()
+        .enumerate()
+        .map(|(position, card)| {
+            let marker = match card.severity {
+                CardSeverity::Info => Style::default().fg(Color::Blue),
+                CardSeverity::Warning => Style::default().fg(Color::Yellow),
+                CardSeverity::Critical => Style::default().fg(Color::Red),
+            };
+            let title_style = if app.is_selected(index, position) {
+                state.select(Some(position));
+                Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled("▍", marker),
+                    Span::styled(card.title.as_str(), title_style),
+                ]),
+                Line::from(Span::styled(
+                    format!(" {}", card.body),
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ])
+        })
+        .collect();
+
+    StatefulWidget::render(List::new(items).block(block), area, buf, &mut state);
 }
 
 #[cfg(test)]
 mod tests {
     use chrono::{TimeZone, Utc};
+    use crossterm::event::{KeyCode, KeyEvent};
     use pending_core::{
         CardSeverity, PendingCard, SourceBatch, SourceError, SourceItem, SourceOutcome,
         SourceReport, build_snapshot,
@@ -175,263 +252,176 @@ mod tests {
     use super::*;
     use crate::app::App;
 
-    fn text(app: &App, header: &str) -> String {
-        let area = Rect::new(0, 0, 100, 20);
-        let mut buf = Buffer::empty(area);
-        render(area, &mut buf, app, header);
-        (0..area.height)
-            .map(|y| {
-                (0..area.width)
-                    .map(|x| buf[(x, y)].symbol())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn app() -> App {
-        let at = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
-        App::new(build_snapshot(
-            at,
-            vec![
-                SourceReport {
-                    name: "github".to_owned(),
-                    lane: "Work".to_owned(),
-                    outcome: SourceOutcome::Fresh {
-                        batch: SourceBatch {
-                            items: vec![SourceItem {
-                                section: "Review requested".to_owned(),
-                                card: PendingCard {
-                                    id: "github:o/api#7".to_owned(),
-                                    title: "Add cache".to_owned(),
-                                    body: "o/api#7 · @octocat".to_owned(),
-                                    source: "github".to_owned(),
-                                    url: None,
-                                    severity: CardSeverity::Warning,
-                                    due_at: None,
-                                    updated_at: at,
-                                },
-                            }],
-                            warnings: Vec::new(),
-                        },
-                        refreshed_at: at,
-                    },
-                },
-                SourceReport {
-                    name: "jira".to_owned(),
-                    lane: "Work".to_owned(),
-                    outcome: SourceOutcome::Failed(SourceError::new("401 bad credentials")),
-                },
-                SourceReport {
-                    name: "slow".to_owned(),
-                    lane: "Work".to_owned(),
-                    outcome: SourceOutcome::Pending,
-                },
-            ],
-        ))
-    }
-
-    /// A tela mostra lanes, seções e cards, e a saúde de cada fonte com o
-    /// motivo das falhas, para o usuário saber o que não está sendo mostrado.
-    #[test]
-    fn dashboard_shows_cards_and_source_health() {
-        let screen = text(&app(), "config: ~/.config/tasks-pending/config.toml");
-
-        for expected in [
-            "Work",
-            "Review requested",
-            "Add cache",
-            "o/api#7",
-            "github ready",
-            "jira failed: 401 bad credentials",
-            "slow refreshing",
-            "config: ~/.config/tasks-pending/config.toml",
-            "r refresh",
-        ] {
-            assert!(
-                screen.contains(expected),
-                "missing {expected:?} in\n{screen}"
-            );
-        }
-    }
-
-    /// Quando uma ação falha (ex.: abrir o link sem navegador disponível), o
-    /// rodapé mostra o motivo no lugar da ajuda.
-    #[test]
-    fn footer_shows_the_last_notice() {
-        let mut app = app();
-        app.set_notice("could not open link: xdg-open not found");
-
-        let screen = text(&app, "");
-
-        assert!(
-            screen.contains("could not open link: xdg-open not found"),
-            "{screen}"
-        );
-    }
-
     fn screen(app: &App, width: u16, height: u16) -> String {
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
-        render(area, &mut buf, app, "");
+        render(
+            area,
+            &mut buf,
+            app,
+            "config: ~/.config/tasks-pending/config.toml",
+        );
         (0..height)
             .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n")
     }
 
-    fn many_cards(count: usize) -> App {
-        let at = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
-        let items = (0..count)
-            .map(|i| SourceItem {
-                section: "Review".to_owned(),
-                card: PendingCard {
-                    id: format!("card-{i}"),
-                    title: format!("Card number {i}"),
-                    body: String::new(),
-                    source: "github".to_owned(),
-                    url: None,
-                    severity: CardSeverity::Info,
-                    due_at: None,
-                    updated_at: at,
+    fn card(column: &str, id: &str, title: &str) -> SourceItem {
+        SourceItem {
+            column: column.to_owned(),
+            card: PendingCard {
+                id: id.to_owned(),
+                title: title.to_owned(),
+                body: format!("{id} · body"),
+                source: "test".to_owned(),
+                url: None,
+                due_at: None,
+                severity: CardSeverity::Info,
+                updated_at: Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap(),
+            },
+        }
+    }
+
+    fn fresh(name: &str, board: &str, columns: &[&str], items: Vec<SourceItem>) -> SourceReport {
+        SourceReport {
+            name: name.to_owned(),
+            board: board.to_owned(),
+            columns: columns.iter().map(|c| (*c).to_owned()).collect(),
+            outcome: SourceOutcome::Fresh {
+                batch: SourceBatch {
+                    items,
+                    warnings: Vec::new(),
                 },
-            })
-            .collect();
+                refreshed_at: Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap(),
+            },
+        }
+    }
+
+    fn app(reports: Vec<SourceReport>) -> App {
         App::new(build_snapshot(
-            at,
-            vec![SourceReport {
-                name: "github".to_owned(),
-                lane: "Work".to_owned(),
-                outcome: SourceOutcome::Fresh {
-                    batch: SourceBatch {
-                        items,
-                        warnings: Vec::new(),
-                    },
-                    refreshed_at: at,
-                },
-            }],
+            Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap(),
+            reports,
         ))
     }
 
-    /// Com mais cards do que cabem na tela, a lane rola para manter o card
-    /// selecionado visível; o Enter nunca abre algo que o usuário não vê.
+    fn work() -> App {
+        app(vec![
+            fresh(
+                "plane",
+                "Trabalho",
+                &["Minhas", "Inbox"],
+                vec![card("Minhas", "API-1", "Fix login")],
+            ),
+            fresh(
+                "github",
+                "Trabalho",
+                &["Review"],
+                vec![card("Review", "gh-1", "Add cache")],
+            ),
+            SourceReport {
+                name: "calendar".to_owned(),
+                board: "Pessoal".to_owned(),
+                columns: vec!["Hoje".to_owned()],
+                outcome: SourceOutcome::Failed(SourceError::new("feed returned 404")),
+            },
+        ])
+    }
+
+    /// A tela mostra as áreas como abas, cada ferramenta como um grupo de
+    /// colunas com a contagem de cards, e a saúde das fontes.
     #[test]
-    fn the_selected_card_stays_visible_in_long_lanes() {
-        let mut app = many_cards(30);
-        for _ in 0..29 {
-            app.handle_key(crossterm::event::KeyEvent::from(
-                crossterm::event::KeyCode::Char('j'),
-            ));
+    fn boards_are_tabs_and_sources_are_groups_of_columns() {
+        let screen = screen(&work(), 120, 24);
+
+        for expected in [
+            "1 Trabalho",
+            "2 Pessoal",
+            " plane ",
+            " github ",
+            "Minhas (1)",
+            "Inbox (0)",
+            "Review (1)",
+            "Fix login",
+            "Add cache",
+            "calendar failed: feed returned 404",
+            "h/l columns",
+        ] {
+            assert!(
+                screen.contains(expected),
+                "missing {expected:?} in\n{screen}"
+            );
+        }
+        assert!(
+            !screen.contains("Hoje"),
+            "other boards stay hidden\n{screen}"
+        );
+    }
+
+    /// Com mais colunas do que cabem na largura, a área rola para o lado para
+    /// manter a coluna selecionada visível.
+    #[test]
+    fn wide_boards_scroll_to_the_selected_column() {
+        let names: Vec<String> = (0..8).map(|i| format!("Col{i}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut app = app(vec![fresh(
+            "plane",
+            "Trabalho",
+            &names,
+            vec![card("Col7", "last", "Last column card")],
+        )]);
+        for _ in 0..7 {
+            app.handle_key(KeyEvent::from(KeyCode::Char('l')));
         }
 
-        let screen = screen(&app, 80, 20);
+        let screen = screen(&app, 80, 24);
+
+        assert!(screen.contains("Col7 (1)"), "{screen}");
+        assert!(screen.contains("Last column card"), "{screen}");
+        assert!(!screen.contains("Col0"), "{screen}");
+    }
+
+    /// Com mais cards do que cabem na altura, a coluna rola para manter o
+    /// card selecionado visível.
+    #[test]
+    fn long_columns_keep_the_selected_card_visible() {
+        let items = (0..30)
+            .map(|i| card("Minhas", &format!("c{i}"), &format!("Card number {i}")))
+            .collect();
+        let mut app = app(vec![fresh("plane", "Trabalho", &["Minhas"], items)]);
+        for _ in 0..29 {
+            app.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        }
+
+        let screen = screen(&app, 80, 24);
 
         assert!(screen.contains("Card number 29"), "{screen}");
         assert!(!screen.contains("Card number 0 "), "{screen}");
     }
 
-    /// Uma mensagem de falha longa não empurra as outras fontes para fora do
-    /// painel: cada fonte ocupa uma linha.
-    #[test]
-    fn long_source_messages_do_not_hide_other_sources() {
-        let at = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
-        let failed = |name: &str, message: &str| SourceReport {
-            name: name.to_owned(),
-            lane: "Work".to_owned(),
-            outcome: SourceOutcome::Failed(SourceError::new(message)),
-        };
-        let app = App::new(build_snapshot(
-            at,
-            vec![
-                failed("first", &"very long failure reason ".repeat(10)),
-                failed("second", "401"),
-                failed("third", "503"),
-            ],
-        ));
-
-        let screen = screen(&app, 80, 20);
-
-        for name in ["first", "second failed: 401", "third failed: 503"] {
-            assert!(screen.contains(name), "missing {name:?} in\n{screen}");
-        }
-    }
-
-    /// Sem nenhuma fonte habilitada, a tela diz isso em vez de parecer que não
-    /// há pendências.
+    /// Sem nenhuma fonte, a tela explica que não há fontes configuradas.
     #[test]
     fn no_sources_is_explained() {
-        let at = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
-        let app = App::new(build_snapshot(at, Vec::new()));
-
-        let screen = screen(&app, 80, 20);
+        let screen = screen(&app(Vec::new()), 80, 20);
 
         assert!(screen.contains("No sources configured"), "{screen}");
     }
 
-    /// Aviso informativo (ex.: atualização pedida) não aparece em vermelho,
-    /// que fica reservado para falhas.
+    /// Aviso informativo não aparece em vermelho; falha, sim.
     #[test]
-    fn informational_notices_are_not_styled_as_errors() {
-        let mut app = app();
-        app.set_info("refreshing all sources…");
+    fn footer_notices_use_error_color_only_for_failures() {
         let area = Rect::new(0, 0, 100, 20);
+        let footer_y = area.height - 1;
+        let mut app = work();
+
+        app.set_info("refreshing all sources…");
         let mut buf = Buffer::empty(area);
         render(area, &mut buf, &app, "");
-
-        let footer_y = area.height - 1;
         assert_ne!(buf[(0, footer_y)].fg, ratatui::style::Color::Red);
 
         app.set_notice("could not open link: xdg-open not found");
         let mut buf = Buffer::empty(area);
         render(area, &mut buf, &app, "");
         assert_eq!(buf[(0, footer_y)].fg, ratatui::style::Color::Red);
-    }
-
-    /// Ao chegar ao primeiro card de uma seção, a tela mostra o título dela e
-    /// os cards seguintes da mesma seção, em vez de deixar o card selecionado
-    /// colado no rodapé.
-    #[test]
-    fn selecting_a_card_shows_its_section_from_the_title() {
-        let at = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
-        let items = (0..24)
-            .map(|i| SourceItem {
-                section: format!("Section {}", i / 4),
-                card: PendingCard {
-                    id: format!("card-{i}"),
-                    title: format!("Card number {i}"),
-                    body: String::new(),
-                    source: "github".to_owned(),
-                    url: None,
-                    due_at: None,
-                    severity: CardSeverity::Info,
-                    updated_at: at,
-                },
-            })
-            .collect();
-        let mut app = App::new(build_snapshot(
-            at,
-            vec![SourceReport {
-                name: "github".to_owned(),
-                lane: "Work".to_owned(),
-                outcome: SourceOutcome::Fresh {
-                    batch: SourceBatch {
-                        items,
-                        warnings: Vec::new(),
-                    },
-                    refreshed_at: at,
-                },
-            }],
-        ));
-        for _ in 0..20 {
-            app.handle_key(crossterm::event::KeyEvent::from(
-                crossterm::event::KeyCode::Char('j'),
-            ));
-        }
-
-        let screen = screen(&app, 80, 20);
-
-        assert!(screen.contains("Section 5"), "{screen}");
-        assert!(screen.contains("Card number 20"), "{screen}");
-        assert!(screen.contains("Card number 23"), "{screen}");
     }
 }

@@ -18,6 +18,10 @@ struct Fixed {
 }
 
 impl PendingSource for Fixed {
+    fn columns(&self) -> Vec<String> {
+        vec!["Review".to_owned()]
+    }
+
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
         let delay = self.delay;
         let result = self.result.clone();
@@ -31,7 +35,7 @@ impl PendingSource for Fixed {
 fn batch(id: &str) -> SourceBatch {
     SourceBatch {
         items: vec![SourceItem {
-            section: "Review".to_owned(),
+            column: "Review".to_owned(),
             card: PendingCard {
                 id: id.to_owned(),
                 title: id.to_owned(),
@@ -54,7 +58,7 @@ fn spec(result: Result<SourceBatch, SourceError>, delay_secs: u64) -> SourceSpec
             delay: Duration::from_secs(delay_secs),
             result,
         }),
-        lane: "Work".to_owned(),
+        board: "Work".to_owned(),
         interval: Duration::from_secs(300),
     }
 }
@@ -70,10 +74,11 @@ fn cache_file(test: &str) -> PathBuf {
 fn card_ids(aggregator: &Aggregator) -> Vec<String> {
     aggregator
         .snapshot()
-        .lanes
+        .boards
         .iter()
-        .flat_map(|l| &l.sections)
-        .flat_map(|s| &s.cards)
+        .flat_map(|b| &b.groups)
+        .flat_map(|g| &g.columns)
+        .flat_map(|c| &c.cards)
         .map(|c| c.id.clone())
         .collect()
 }

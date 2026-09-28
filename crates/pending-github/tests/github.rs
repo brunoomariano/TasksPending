@@ -121,7 +121,7 @@ fn sections(batch: &SourceBatch) -> Vec<(String, String)> {
     batch
         .items
         .iter()
-        .map(|item| (item.section.clone(), item.card.id.clone()))
+        .map(|item| (item.column.clone(), item.card.id.clone()))
         .collect()
 }
 
@@ -185,10 +185,10 @@ async fn every_search_is_authenticated_with_the_token() {
     );
 }
 
-/// O mesmo item em duas buscas aparece uma vez só, na primeira seção, para não
-/// degradar a fonte com ids repetidos.
+/// Colunas são filtros independentes: o mesmo item achado por duas buscas
+/// aparece nas duas colunas.
 #[tokio::test]
-async fn an_item_found_by_two_searches_appears_once() {
+async fn an_item_found_by_two_searches_appears_in_both_columns() {
     let shared = item("o/api", 7, "Add cache", true);
     let batch = refresh(stub_with(vec![
         ("review-requested", Reply::items(vec![shared.clone()])),
@@ -199,8 +199,37 @@ async fn an_item_found_by_two_searches_appears_once() {
 
     assert_eq!(
         sections(&batch),
-        vec![("Review requested".to_owned(), "github:o/api#7".to_owned())]
+        vec![
+            ("Review requested".to_owned(), "github:o/api#7".to_owned()),
+            ("Assigned issues".to_owned(), "github:o/api#7".to_owned()),
+        ]
     );
+}
+
+/// Colunas da configuração substituem as padrão: cada uma é uma busca, com a
+/// gravidade escolhida.
+#[tokio::test]
+async fn configured_columns_run_their_own_queries() {
+    let stub = stub_with(vec![(
+        "org:acme",
+        Reply::items(vec![item("acme/app", 1, "Acme PR", true)]),
+    )]);
+    let base = serve(stub).await;
+    let source = GithubSource::new(base, Some(TOKEN.to_owned())).with_columns(vec![
+        pending_github::GithubColumn {
+            name: "Acme reviews".to_owned(),
+            query: "is:open is:pr org:acme review-requested:@me".to_owned(),
+            severity: Some(CardSeverity::Critical),
+        },
+    ]);
+
+    assert_eq!(source.columns(), vec!["Acme reviews".to_owned()]);
+    let batch = source.refresh().await.expect("refresh succeeds");
+    assert_eq!(
+        sections(&batch),
+        vec![("Acme reviews".to_owned(), "github:acme/app#1".to_owned())]
+    );
+    assert_eq!(batch.items[0].card.severity, CardSeverity::Critical);
 }
 
 /// Se uma das buscas falha, as outras seções continuam na tela e o aviso diz

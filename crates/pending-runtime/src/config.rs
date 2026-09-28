@@ -1,14 +1,18 @@
 //! Locating and loading the config file, and turning it into scheduled sources.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use pending_core::{AppConfig, ConfigError, DEFAULT_LANE, PendingSource, SampleSource, SourceKind};
-use pending_github::{DEFAULT_API_URL, GithubSource, gh_cli_token, resolve_token};
-use pending_ical::IcalSource;
-use pending_plane::{PlaneSettings, PlaneSource};
+use pending_core::{
+    AppConfig, ConfigError, DEFAULT_BOARD, PendingSource, SampleSource, SourceConfig, SourceKind,
+};
+use pending_github::{DEFAULT_API_URL, GithubColumn, GithubSource, gh_cli_token, resolve_token};
+use pending_ical::{IcalColumn, IcalSource};
+use pending_plane::{PlaneColumn, PlaneSettings, PlaneSource};
+use pending_todoist::{TodoistColumn, TodoistSource};
+use serde::de::DeserializeOwned;
 use thiserror::Error;
 use tracing::info;
 
@@ -58,6 +62,13 @@ pub enum LoadError {
     },
     #[error("invalid config {}: {source}", path.display())]
     Invalid { path: PathBuf, source: ConfigError },
+    #[error("invalid config {}: source `{source_name}`, column `{column}`: {message}", path.display())]
+    Column {
+        path: PathBuf,
+        source_name: String,
+        column: String,
+        message: String,
+    },
 }
 
 /// Resolves the config path: `cli`, then `TASKS_PENDING_CONFIG`, then
@@ -154,55 +165,107 @@ pub fn load_plan_with(
     if let Err(source) = config.validate() {
         return Err(LoadError::Invalid { path, source });
     }
-    let plan = plan(&config, env, gh);
+    let plan = plan(&config, &path, env, gh)?;
     Ok((plan, Origin::File(path)))
 }
 
 fn plan(
     config: &AppConfig,
+    path: &Path,
     env: &dyn Fn(&str) -> Option<OsString>,
     gh: &dyn Fn() -> Option<String>,
-) -> Plan {
+) -> Result<Plan, LoadError> {
+    let env_string = |key: &str| env(key).and_then(|value| value.into_string().ok());
     // Resolved at most once: `gh auth token` may be slow, and every GitHub
     // source uses the same account.
     let mut github_token: Option<Option<String>> = None;
     let mut specs = Vec::new();
 
     for source in config.sources.iter().filter(|source| source.enabled) {
-        let implementation: Arc<dyn PendingSource> = match source.kind {
-            SourceKind::Sample => Arc::new(SampleSource),
-            SourceKind::Ical => {
-                let env = |key: &str| env(key).and_then(|value| value.into_string().ok());
-                Arc::new(IcalSource::from_env(&env))
-            }
-            SourceKind::Plane => {
-                let env = |key: &str| env(key).and_then(|value| value.into_string().ok());
-                Arc::new(PlaneSource::new(PlaneSettings::from_env(&env)))
-            }
-            SourceKind::Github => {
-                let token = github_token
-                    .get_or_insert_with(|| {
-                        let env = |key: &str| env(key).and_then(|value| value.into_string().ok());
-                        resolve_token(&env, &|| {
-                            info!("no GitHub token in the environment; asking `gh auth token`");
-                            gh()
+        let implementation: Arc<dyn PendingSource> =
+            match source.kind {
+                SourceKind::Sample => {
+                    if let Some(column) = source.columns.first() {
+                        return Err(column_error(
+                            path,
+                            source,
+                            &column.name,
+                            "the sample source has fixed columns",
+                        ));
+                    }
+                    Arc::new(SampleSource)
+                }
+                SourceKind::Ical => Arc::new(IcalSource::from_env(&env_string).with_columns(
+                    parse_columns(path, source, |c: &mut IcalColumn, name| c.name = name)?,
+                )),
+                SourceKind::Plane => Arc::new(
+                    PlaneSource::new(PlaneSettings::from_env(&env_string)).with_columns(
+                        parse_columns(path, source, |c: &mut PlaneColumn, name| c.name = name)?,
+                    ),
+                ),
+                SourceKind::Todoist => Arc::new(TodoistSource::from_env(&env_string).with_columns(
+                    parse_columns(path, source, |c: &mut TodoistColumn, name| c.name = name)?,
+                )),
+                SourceKind::Github => {
+                    let token = github_token
+                        .get_or_insert_with(|| {
+                            resolve_token(&env_string, &|| {
+                                info!("no GitHub token in the environment; asking `gh auth token`");
+                                gh()
+                            })
                         })
-                    })
-                    .clone();
-                Arc::new(GithubSource::new(DEFAULT_API_URL, token))
-            }
-        };
+                        .clone();
+                    Arc::new(
+                        GithubSource::new(DEFAULT_API_URL, token).with_columns(parse_columns(
+                            path,
+                            source,
+                            |c: &mut GithubColumn, name| c.name = name,
+                        )?),
+                    )
+                }
+            };
         specs.push(SourceSpec {
             name: source.name.clone(),
             source: implementation,
-            lane: source.lane.clone(),
+            board: source.board.clone(),
             interval: Duration::from_secs(config.refresh_seconds_for(source)),
         });
     }
 
-    Plan {
+    Ok(Plan {
         specs,
         timeout: Duration::from_secs(config.timeout_seconds),
+    })
+}
+
+/// A source's `[[sources.columns]]` read as that kind's column type; unknown
+/// or missing filter keys name the source and the column.
+fn parse_columns<T: DeserializeOwned>(
+    path: &Path,
+    source: &SourceConfig,
+    set_name: impl Fn(&mut T, String),
+) -> Result<Vec<T>, LoadError> {
+    source
+        .columns
+        .iter()
+        .map(|column| {
+            let mut parsed: T = toml::Value::Table(column.filter.clone())
+                .try_into()
+                .map_err(|error: toml::de::Error| {
+                    column_error(path, source, &column.name, error.message())
+                })?;
+            set_name(&mut parsed, column.name.clone());
+            Ok(parsed)
+        })
+        .collect()
+}
+
+fn column_error(path: &Path, source: &SourceConfig, column: &str, message: &str) -> LoadError {
+    LoadError::Column {
+        path: path.to_owned(),
+        source_name: source.name.clone(),
+        column: column.to_owned(),
+        message: message.to_owned(),
     }
 }
 
@@ -212,7 +275,7 @@ fn sample_plan() -> Plan {
         specs: vec![SourceSpec {
             name: "sample".to_owned(),
             source: Arc::new(SampleSource),
-            lane: DEFAULT_LANE.to_owned(),
+            board: DEFAULT_BOARD.to_owned(),
             interval: Duration::from_secs(defaults.refresh_seconds),
         }],
         timeout: Duration::from_secs(defaults.timeout_seconds),

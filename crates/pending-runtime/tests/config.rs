@@ -149,7 +149,7 @@ fn config_file_turns_enabled_sources_into_scheduled_specs() {
     assert_eq!(origin, Origin::File(path));
     assert_eq!(plan.timeout.as_secs(), 10);
     assert_eq!(plan.specs.len(), 1);
-    assert_eq!(plan.specs[0].lane, "Work");
+    assert_eq!(plan.specs[0].board, "Work");
     assert_eq!(plan.specs[0].interval.as_secs(), 45);
 }
 
@@ -206,7 +206,7 @@ fn github_sources_are_scheduled_with_the_token_from_the_environment() {
 
     assert_eq!(plan.specs.len(), 1);
     assert_eq!(plan.specs[0].name, "work-github");
-    assert_eq!(plan.specs[0].lane, "Work");
+    assert_eq!(plan.specs[0].board, "Work");
 }
 
 /// Sem token no ambiente, o `gh` é consultado uma vez só, mesmo com várias
@@ -298,4 +298,104 @@ fn ical_sources_are_scheduled() {
     let (plan, _) = load_plan_with(Some(path), &env(&[]), &|| None).expect("ical is supported");
 
     assert_eq!(plan.specs[0].name, "calendar");
+}
+
+/// Cada fonte declara as colunas dela na configuração, e a área (aba) onde
+/// aparece; `lane` continua aceito como nome antigo de `board`.
+#[test]
+fn sources_declare_board_and_columns() {
+    let path = scratch("columns").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "plane"
+        kind = "plane"
+        board = "Trabalho"
+
+          [[sources.columns]]
+          name = "Minhas"
+
+          [[sources.columns]]
+          name = "Inbox sem responsável"
+          assignee = "none"
+          state = ["Inbox"]
+
+        [[sources]]
+        name = "todo"
+        kind = "todoist"
+        lane = "Pessoal"
+
+          [[sources.columns]]
+          name = "Hoje"
+          filter = "today | overdue"
+
+        [[sources]]
+        name = "gh"
+        kind = "github"
+        board = "Contribuições"
+
+          [[sources.columns]]
+          name = "OSS reviews"
+          query = "is:open is:pr review-requested:@me -org:SejaSenfio"
+          severity = "warning"
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) = load_plan_with(Some(path), &env(&[("GITHUB_TOKEN", "t")]), &|| None)
+        .expect("valid columns");
+
+    let summary: Vec<(String, String, Vec<String>)> = plan
+        .specs
+        .iter()
+        .map(|spec| (spec.name.clone(), spec.board.clone(), spec.source.columns()))
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            (
+                "plane".to_owned(),
+                "Trabalho".to_owned(),
+                vec!["Minhas".to_owned(), "Inbox sem responsável".to_owned()]
+            ),
+            (
+                "todo".to_owned(),
+                "Pessoal".to_owned(),
+                vec!["Hoje".to_owned()]
+            ),
+            (
+                "gh".to_owned(),
+                "Contribuições".to_owned(),
+                vec!["OSS reviews".to_owned()]
+            ),
+        ]
+    );
+}
+
+/// Um filtro com chave errada ou valor inválido é recusado citando a fonte e
+/// a coluna, em vez de virar uma coluna que nunca mostra nada.
+#[test]
+fn invalid_column_filters_name_the_source_and_column() {
+    let dir = scratch("bad-columns");
+    for (name, body) in [
+        ("typo.toml", "assigne = \"me\""),
+        ("value.toml", "assignee = \"somebody\""),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "[[sources]]\nname = \"plane\"\nkind = \"plane\"\n[[sources.columns]]\nname = \"Minhas\"\n{body}\n"
+            ),
+        )
+        .unwrap();
+
+        let error = load_plan_with(Some(path), &env(&[]), &|| None).expect_err(name);
+        let message = error.to_string();
+        assert!(
+            message.contains("plane") && message.contains("Minhas"),
+            "{message}"
+        );
+    }
 }

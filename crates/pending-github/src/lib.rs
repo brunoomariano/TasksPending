@@ -1,10 +1,10 @@
 //! GitHub as a pending-work source: review requests, open pull requests and
 //! assigned issues of the authenticated user, via the search API.
 
-use std::collections::HashSet;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use futures_util::future::join_all;
 use pending_core::{
     BoxFuture, CardSeverity, PendingCard, PendingSource, SourceBatch, SourceError, SourceItem,
 };
@@ -16,41 +16,55 @@ pub const DEFAULT_API_URL: &str = "https://api.github.com";
 /// Results per search. More than this is reported as a warning.
 const PAGE_SIZE: usize = 50;
 
-/// Per-search limit, below the aggregator's default refresh timeout (30s) so a
+/// Per-search limit, below the aggregator's default refresh timeout (60s) so a
 /// hanging search becomes a warning instead of failing the whole refresh.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-struct Search {
-    section: &'static str,
-    query: &'static str,
-    severity: CardSeverity,
+/// One column: a GitHub search query (the search syntax of github.com).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GithubColumn {
+    #[serde(skip)]
+    pub name: String,
+    pub query: String,
+    /// Severity of the cards in this column (default `info`).
+    #[serde(default)]
+    pub severity: Option<CardSeverity>,
 }
 
-/// Searches run in this order; an item found by two searches stays in the first.
-const SEARCHES: [Search; 3] = [
-    Search {
-        section: "Review requested",
-        query: "is:open is:pr archived:false review-requested:@me",
-        severity: CardSeverity::Warning,
-    },
-    Search {
-        section: "My pull requests",
-        query: "is:open is:pr archived:false author:@me",
-        severity: CardSeverity::Info,
-    },
-    Search {
-        section: "Assigned issues",
-        query: "is:open is:issue archived:false assignee:@me",
-        severity: CardSeverity::Info,
-    },
-];
+/// Columns used when the configuration declares none.
+pub fn default_columns() -> Vec<GithubColumn> {
+    let column = |name: &str, query: &str, severity| GithubColumn {
+        name: name.to_owned(),
+        query: query.to_owned(),
+        severity: Some(severity),
+    };
+    vec![
+        column(
+            "Review requested",
+            "is:open is:pr archived:false review-requested:@me",
+            CardSeverity::Warning,
+        ),
+        column(
+            "My pull requests",
+            "is:open is:pr archived:false author:@me",
+            CardSeverity::Info,
+        ),
+        column(
+            "Assigned issues",
+            "is:open is:issue archived:false assignee:@me",
+            CardSeverity::Info,
+        ),
+    ]
+}
 
 pub struct GithubSource {
     client: Client,
     api_url: String,
     token: Option<String>,
     request_timeout: Duration,
+    columns: Vec<GithubColumn>,
 }
 
 impl GithubSource {
@@ -66,6 +80,7 @@ impl GithubSource {
             api_url: api_url.into().trim_end_matches('/').to_owned(),
             token,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            columns: default_columns(),
         }
     }
 
@@ -74,54 +89,59 @@ impl GithubSource {
         self
     }
 
+    /// Replaces the default columns; an empty list keeps the defaults.
+    pub fn with_columns(mut self, columns: Vec<GithubColumn>) -> Self {
+        if !columns.is_empty() {
+            self.columns = columns;
+        }
+        self
+    }
+
     async fn refresh_with(&self, token: &str) -> Result<SourceBatch, SourceError> {
-        let mut seen = HashSet::new();
         let mut batch = SourceBatch::default();
         let mut failures = Vec::new();
         let mut retry_at = None;
 
-        let [review, authored, assigned] = &SEARCHES;
-        let (review, authored, assigned) = tokio::join!(
-            self.search(token, review.query),
-            self.search(token, authored.query),
-            self.search(token, assigned.query),
-        );
+        let results = join_all(
+            self.columns
+                .iter()
+                .map(|column| self.search(token, &column.query)),
+        )
+        .await;
 
-        for (search, result) in SEARCHES.iter().zip([review, authored, assigned]) {
+        for (column, result) in self.columns.iter().zip(results) {
             match result {
                 Ok(page) => {
                     if page.incomplete_results {
                         batch.warnings.push(format!(
                             "{}: GitHub reported incomplete results",
-                            search.section
+                            column.name
                         ));
                     }
                     if page.total_count > page.items.len() {
                         batch.warnings.push(format!(
                             "{}: showing {} of {} results",
-                            search.section,
+                            column.name,
                             page.items.len(),
                             page.total_count
                         ));
                     }
+                    let severity = column.severity.unwrap_or(CardSeverity::Info);
                     for issue in page.items {
-                        let card = issue.into_card(search.severity, &self.api_url);
-                        if seen.insert(card.id.clone()) {
-                            batch.items.push(SourceItem {
-                                section: search.section.to_owned(),
-                                card,
-                            });
-                        }
+                        batch.items.push(SourceItem {
+                            column: column.name.clone(),
+                            card: issue.into_card(severity, &self.api_url),
+                        });
                     }
                 }
                 Err(failure) => {
                     retry_at = retry_at.max(failure.retry_at);
-                    failures.push(format!("{}: {}", search.section, failure.message));
+                    failures.push(format!("{}: {}", column.name, failure.message));
                 }
             }
         }
 
-        if failures.len() == SEARCHES.len() {
+        if failures.len() == self.columns.len() {
             let error = SourceError::new(format!(
                 "all GitHub searches failed; {}",
                 failures.join("; ")
@@ -196,6 +216,10 @@ impl GithubSource {
 }
 
 impl PendingSource for GithubSource {
+    fn columns(&self) -> Vec<String> {
+        self.columns.iter().map(|c| c.name.clone()).collect()
+    }
+
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
         Box::pin(async move {
             match &self.token {

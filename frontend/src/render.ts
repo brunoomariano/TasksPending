@@ -1,24 +1,27 @@
 import type {
+  Board,
   CardSeverity,
+  Column,
   DashboardSnapshot,
-  Lane,
+  Group,
   PendingCard,
-  Section,
   SourceHealth,
 } from "./contract.gen";
 import type { ViewState } from "./state";
 
-export function renderApp(state: ViewState): string {
+/** `board` is the index of the selected tab. */
+export function renderApp(state: ViewState, board = 0): string {
   switch (state.kind) {
     case "loading":
       return renderMessage("Loading…");
     case "unavailable":
       return renderUnavailable(state.error);
     case "ready":
-      return renderSnapshot(state.snapshot, "");
+      return renderSnapshot(state.snapshot, board, "");
     case "stale":
       return renderSnapshot(
         state.snapshot,
+        board,
         `<section class="stale" role="alert">
           API unavailable (${escapeHtml(state.error)}); showing data from
           ${escapeHtml(state.fetchedAt.toLocaleTimeString())}.
@@ -52,22 +55,39 @@ function renderUnavailable(error: string): string {
   `;
 }
 
-function renderSnapshot(snapshot: DashboardSnapshot, banner: string): string {
+function renderSnapshot(
+  snapshot: DashboardSnapshot,
+  board: number,
+  banner: string,
+): string {
+  const selected = snapshot.boards[Math.min(board, snapshot.boards.length - 1)];
   return `
     <header class="topbar">
       <div>
         <h1>TasksPending</h1>
-        <p>${snapshot.lanes.length} lanes · ${snapshot.sources.length} sources · ${escapeHtml(snapshot.generated_at)}</p>
+        <p>${snapshot.sources.length} sources · ${escapeHtml(localTime(snapshot.generated_at))}</p>
       </div>
       <button type="button" class="refresh" data-action="refresh">Refresh</button>
     </header>
     ${banner}
+    <nav class="tabs">
+      ${snapshot.boards.map((b, index) => renderTab(b, index, b === selected)).join("")}
+    </nav>
     <ul class="sources">
       ${snapshot.sources.map(renderSource).join("")}
     </ul>
-    <section class="lanes">
-      ${snapshot.lanes.map(renderLane).join("")}
-    </section>
+    ${selected ? renderBoard(selected) : '<p class="empty">No sources configured.</p>'}
+  `;
+}
+
+function renderTab(board: Board, index: number, active: boolean): string {
+  const count = board.groups
+    .flatMap((group) => group.columns)
+    .reduce((total, column) => total + column.cards.length, 0);
+  return `
+    <button type="button" class="tab${active ? " active" : ""}" data-board="${index}">
+      ${index + 1} ${escapeHtml(board.name)} <span>${count}</span>
+    </button>
   `;
 }
 
@@ -80,22 +100,33 @@ function renderSource(source: SourceHealth): string {
   `;
 }
 
-function renderLane(lane: Lane): string {
+function renderBoard(board: Board): string {
   return `
-    <article class="lane">
-      <h2>${escapeHtml(lane.name)}</h2>
-      ${lane.sections.map(renderSection).join("")}
-    </article>
+    <section class="board">
+      ${board.groups.map(renderGroup).join("")}
+    </section>
   `;
 }
 
-function renderSection(section: Section): string {
+function renderGroup(group: Group): string {
   return `
-    <section class="section">
-      <h3>${escapeHtml(section.name)}</h3>
-      <div class="cards">
-        ${section.cards.map(renderCard).join("")}
+    <section class="group">
+      <h2>${escapeHtml(group.source)}</h2>
+      <div class="columns">
+        ${group.columns.map(renderColumn).join("")}
       </div>
+    </section>
+  `;
+}
+
+function renderColumn(column: Column): string {
+  const cards = column.cards.length
+    ? column.cards.map(renderCard).join("")
+    : '<p class="empty">—</p>';
+  return `
+    <section class="column">
+      <h3>${escapeHtml(column.name)} <span>${column.cards.length}</span></h3>
+      <div class="cards">${cards}</div>
     </section>
   `;
 }
@@ -105,6 +136,9 @@ function renderCard(card: PendingCard): string {
     card.url && isHttpUrl(card.url)
       ? `<a href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">${escapeHtml(card.title)}</a>`
       : escapeHtml(card.title);
+  const when = card.due_at
+    ? `due ${localTime(card.due_at)}`
+    : `updated ${localTime(card.updated_at)}`;
 
   return `
     <article class="card severity-${card.severity}">
@@ -113,9 +147,20 @@ function renderCard(card: PendingCard): string {
         <span>${severityLabel(card.severity)}</span>
       </div>
       <p>${escapeHtml(card.body)}</p>
-      <footer>${escapeHtml(card.source)} · ${escapeHtml(card.updated_at)}</footer>
+      <footer>${escapeHtml(when)}</footer>
     </article>
   `;
+}
+
+/** An ISO timestamp in the browser's time zone and locale. */
+function localTime(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime())
+    ? iso
+    : date.toLocaleString(undefined, {
+        dateStyle: "short",
+        timeStyle: "short",
+      });
 }
 
 function isHttpUrl(value: string): boolean {

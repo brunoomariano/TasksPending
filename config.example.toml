@@ -1,38 +1,88 @@
 # TasksPending config. Copy to ~/.config/tasks-pending/config.toml
 # (or $XDG_CONFIG_HOME/tasks-pending/config.toml), or point
-# TASKS_PENDING_CONFIG / --config at it. Tokens never go here.
+# TASKS_PENDING_CONFIG / --config at it. Tokens and secret URLs never go here.
 
 # Default wait between refreshes of a source, in seconds.
 refresh_seconds = 300
-# A refresh slower than this counts as a failure.
+# A refresh slower than this counts as a failure (Plane needs about 60).
 timeout_seconds = 60
 
-# Sources appear on the dashboard in this order.
+# Each source is a group of kanban columns inside a board (tab). Boards and
+# groups appear in the order below. Without [[sources.columns]] a source uses
+# its default columns.
 [[sources]]
 name = "sample"      # shown in source health; must be unique
 kind = "sample"      # built-in fixed cards
-lane = "Inbox"       # dashboard lane for this source's cards (default "Inbox")
+board = "Inbox"      # tab that shows this source (default "Inbox")
 enabled = true
 # refresh_seconds = 60   # overrides the default above
 
-# GitHub: review requests, your open pull requests and issues assigned to you.
+# --- Examples (uncomment and adapt) ---------------------------------------
+
+# GitHub: every column is a search query (github.com search syntax).
 # Token from GITHUB_TOKEN, then GH_TOKEN, then `gh auth token`.
 # [[sources]]
 # name = "github"
 # kind = "github"
-# lane = "Work"
+# board = "Work"
+#
+#   [[sources.columns]]
+#   name = "Review requested"
+#   query = "is:open is:pr archived:false review-requested:@me"
+#   severity = "warning"          # optional: info (default), warning, critical
+#
+#   [[sources.columns]]
+#   name = "My pull requests"
+#   query = "is:open is:pr archived:false author:@me"
 
-# Plane: open work items assigned to you, across the workspace's projects.
-# Needs PLANE_BASE_URL, PLANE_WORKSPACE_SLUG and PLANE_API_KEY in the environment.
+# Plane: every column filters the workspace's work items locally.
+# Needs PLANE_BASE_URL, PLANE_WORKSPACE_SLUG (or PLANE_WORKSPACE) and
+# PLANE_API_KEY (or PLANE_TOKEN) in the environment.
 # [[sources]]
 # name = "plane"
 # kind = "plane"
-# lane = "Work"
+# board = "Work"
+#
+#   [[sources.columns]]
+#   name = "Assigned to me"       # assignee defaults to "me", open states
+#
+#   [[sources.columns]]
+#   name = "Inbox, unassigned"
+#   assignee = "none"             # me | none | others | any
+#   state = ["Inbox"]             # state names, case-insensitive
+#
+#   [[sources.columns]]
+#   name = "In review (others)"
+#   assignee = "others"
+#   state = ["In Review"]
+#   # also: state_group = ["started"], project = ["API"], priority = ["urgent"]
 
-# Calendar (any iCal feed; for Google Calendar use the "secret address in
-# iCal format" from the calendar's settings). Needs TASKS_PENDING_ICAL_URL in
-# the environment; that URL is a secret, never put it in this file.
+# Calendar (any iCal feed; for Google Calendar the "secret address in iCal
+# format"). Needs TASKS_PENDING_ICAL_URL; that URL is a secret.
 # [[sources]]
 # name = "calendar"
 # kind = "ical"
-# lane = "Agenda"
+# board = "Personal"
+#
+#   [[sources.columns]]
+#   name = "Today"
+#   when = ["now", "today"]       # now | today | tomorrow | later
+#
+#   [[sources.columns]]
+#   name = "Coming up"
+#   when = ["tomorrow", "later"]
+
+# Todoist: every column is a Todoist filter query.
+# Needs TODOIST_API_TOKEN (Todoist Settings → Integrations → Developer).
+# [[sources]]
+# name = "todoist"
+# kind = "todoist"
+# board = "Personal"
+#
+#   [[sources.columns]]
+#   name = "Today"
+#   filter = "today | overdue"
+#
+#   [[sources.columns]]
+#   name = "Next 7 days"
+#   filter = "7 days & !today & !overdue"

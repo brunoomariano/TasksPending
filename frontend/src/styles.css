@@ -101,6 +101,11 @@ body {
   font-size: 0.95rem;
 }
 
+.card-title a {
+  color: inherit;
+  text-decoration-color: #54a7ff;
+}
+
 .card-title span {
   flex: 0 0 auto;
   color: #101418;
@@ -121,6 +126,24 @@ body {
   color: #8795a1;
   font-size: 0.8rem;
   overflow-wrap: anywhere;
+}
+
+.unavailable {
+  margin: 24px;
+  padding: 16px 20px;
+  border: 1px solid #ef476f;
+  border-radius: 8px;
+  background: #1d1418;
+}
+
+.unavailable h2 {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+}
+
+.unavailable p {
+  margin: 0;
+  color: #c7d1da;
 }
 
 .severity-info {

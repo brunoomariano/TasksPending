@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := ci-check
 
-.PHONY: bootstrap doctor ci ci-check test fmt lint build up down logs tui contract frontend-dev frontend-build release-local
+.PHONY: bootstrap doctor ci ci-check test fmt lint build up down logs tui contract frontend-dev frontend-build frontend-test release-local
 
 bootstrap:
 	cargo fetch --locked
@@ -18,7 +18,7 @@ doctor:
 
 ci: fmt ci-check
 
-ci-check: lint test frontend-build
+ci-check: lint test frontend-test frontend-build
 
 fmt:
 	cargo fmt --all
@@ -55,6 +55,9 @@ frontend-dev:
 
 frontend-build:
 	npm --prefix frontend run build
+
+frontend-test:
+	npm --prefix frontend test
 
 release-local:
 	./scripts/release-local.sh

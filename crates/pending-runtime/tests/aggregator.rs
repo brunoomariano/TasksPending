@@ -330,3 +330,30 @@ async fn timeout_message_shows_sub_second_durations() {
         .unwrap_or_default();
     assert!(message.contains("500ms"), "{message}");
 }
+
+/// Pedir atualização agora consulta todas as fontes sem esperar o intervalo, e
+/// o próximo refresh volta a contar a partir daí.
+#[tokio::test(start_paused = true)]
+async fn refresh_now_refreshes_every_source_immediately() {
+    let (a, a_calls) = Scripted::new("a", vec![Ok(batch("a"))]);
+    let (b, b_calls) = Scripted::new("b", vec![Ok(batch("b"))]);
+    let aggregator = Aggregator::start(vec![spec(a, 60), spec(b, 300)], TIMEOUT);
+
+    advance(5).await;
+    assert_eq!(a_calls.load(Ordering::SeqCst), 1);
+
+    aggregator.refresh_now();
+    tokio::time::sleep(Duration::from_millis(1)).await;
+
+    assert_eq!(a_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(b_calls.load(Ordering::SeqCst), 2);
+
+    advance(59).await;
+    assert_eq!(
+        a_calls.load(Ordering::SeqCst),
+        2,
+        "interval restarts after refresh_now"
+    );
+    advance(2).await;
+    assert_eq!(a_calls.load(Ordering::SeqCst), 3);
+}

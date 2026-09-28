@@ -12,7 +12,7 @@ chrono.workspace = true
 pending-core = { path = "../pending-core" }
 pending-github = { path = "../pending-github" }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 toml.workspace = true
 tracing.workspace = true
 

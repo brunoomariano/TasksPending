@@ -12,6 +12,7 @@ use pending_core::{
     DashboardSnapshot, PendingSource, SourceBatch, SourceError, SourceOutcome, SourceReport,
     build_snapshot,
 };
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tracing::{info, warn};
@@ -44,6 +45,7 @@ impl std::fmt::Debug for SourceSpec {
 #[derive(Clone)]
 pub struct Aggregator {
     reports: Arc<RwLock<Vec<SourceReport>>>,
+    wake: Arc<Notify>,
     _tasks: Arc<Tasks>,
 }
 
@@ -72,16 +74,32 @@ impl Aggregator {
                 .collect(),
         ));
 
+        let wake = Arc::new(Notify::new());
         let tasks = specs
             .into_iter()
             .enumerate()
-            .map(|(index, spec)| tokio::spawn(refresh_loop(index, spec, timeout, reports.clone())))
+            .map(|(index, spec)| {
+                tokio::spawn(refresh_loop(
+                    index,
+                    spec,
+                    timeout,
+                    reports.clone(),
+                    wake.clone(),
+                ))
+            })
             .collect();
 
         Self {
             reports,
+            wake,
             _tasks: Arc::new(Tasks(tasks)),
         }
+    }
+
+    /// Wakes every source that is waiting for its next interval. A source in
+    /// the middle of a refresh finishes that one and is not refreshed twice.
+    pub fn refresh_now(&self) {
+        self.wake.notify_waiters();
     }
 
     pub fn snapshot(&self) -> DashboardSnapshot {
@@ -101,6 +119,7 @@ async fn refresh_loop(
     spec: SourceSpec,
     timeout: Duration,
     reports: Arc<RwLock<Vec<SourceReport>>>,
+    wake: Arc<Notify>,
 ) {
     let name = spec.name.clone();
     loop {
@@ -126,7 +145,10 @@ async fn refresh_loop(
             report.outcome = next_outcome(previous, result);
         }
 
-        tokio::time::sleep(spec.interval).await;
+        tokio::select! {
+            () = tokio::time::sleep(spec.interval) => {}
+            () = wake.notified() => {}
+        }
     }
 }
 

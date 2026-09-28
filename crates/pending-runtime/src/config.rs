@@ -8,6 +8,7 @@ use std::time::Duration;
 use pending_core::{AppConfig, ConfigError, DEFAULT_LANE, PendingSource, SampleSource, SourceKind};
 use pending_github::{DEFAULT_API_URL, GithubSource, gh_cli_token, resolve_token};
 use thiserror::Error;
+use tracing::info;
 
 use crate::SourceSpec;
 
@@ -93,6 +94,15 @@ pub fn load_plan(
     cli: Option<PathBuf>,
     env: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<(Plan, Origin), LoadError> {
+    load_plan_with(cli, env, &gh_cli_token)
+}
+
+/// [`load_plan`] with the `gh auth token` lookup injected, for tests.
+pub fn load_plan_with(
+    cli: Option<PathBuf>,
+    env: &dyn Fn(&str) -> Option<OsString>,
+    gh: &dyn Fn() -> Option<String>,
+) -> Result<(Plan, Origin), LoadError> {
     let location = locate(cli, env);
     let Some(location) = location else {
         return Ok((sample_plan(), Origin::SampleDefault { searched: None }));
@@ -127,32 +137,43 @@ pub fn load_plan(
     if let Err(source) = config.validate() {
         return Err(LoadError::Invalid { path, source });
     }
-    let plan = plan(&config, env);
+    let plan = plan(&config, env, gh);
     Ok((plan, Origin::File(path)))
 }
 
-fn plan(config: &AppConfig, env: &dyn Fn(&str) -> Option<OsString>) -> Plan {
-    let specs = config
-        .sources
-        .iter()
-        .filter(|source| source.enabled)
-        .map(|source| {
-            let implementation: Arc<dyn PendingSource> = match source.kind {
-                SourceKind::Sample => Arc::new(SampleSource),
-                SourceKind::Github => {
-                    let env = |key: &str| env(key).and_then(|value| value.into_string().ok());
-                    let token = resolve_token(&env, &gh_cli_token);
-                    Arc::new(GithubSource::new(DEFAULT_API_URL, token))
-                }
-            };
-            SourceSpec {
-                name: source.name.clone(),
-                source: implementation,
-                lane: source.lane.clone(),
-                interval: Duration::from_secs(config.refresh_seconds_for(source)),
+fn plan(
+    config: &AppConfig,
+    env: &dyn Fn(&str) -> Option<OsString>,
+    gh: &dyn Fn() -> Option<String>,
+) -> Plan {
+    // Resolved at most once: `gh auth token` may be slow, and every GitHub
+    // source uses the same account.
+    let mut github_token: Option<Option<String>> = None;
+    let mut specs = Vec::new();
+
+    for source in config.sources.iter().filter(|source| source.enabled) {
+        let implementation: Arc<dyn PendingSource> = match source.kind {
+            SourceKind::Sample => Arc::new(SampleSource),
+            SourceKind::Github => {
+                let token = github_token
+                    .get_or_insert_with(|| {
+                        let env = |key: &str| env(key).and_then(|value| value.into_string().ok());
+                        resolve_token(&env, &|| {
+                            info!("no GitHub token in the environment; asking `gh auth token`");
+                            gh()
+                        })
+                    })
+                    .clone();
+                Arc::new(GithubSource::new(DEFAULT_API_URL, token))
             }
-        })
-        .collect();
+        };
+        specs.push(SourceSpec {
+            name: source.name.clone(),
+            source: implementation,
+            lane: source.lane.clone(),
+            interval: Duration::from_secs(config.refresh_seconds_for(source)),
+        });
+    }
 
     Plan {
         specs,

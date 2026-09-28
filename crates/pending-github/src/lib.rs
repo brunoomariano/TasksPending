@@ -2,6 +2,7 @@
 //! assigned issues of the authenticated user, via the search API.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use pending_core::{
@@ -14,6 +15,11 @@ pub const DEFAULT_API_URL: &str = "https://api.github.com";
 
 /// Results per search. More than this is reported as a warning.
 const PAGE_SIZE: usize = 50;
+
+/// Per-search limit, below the aggregator's default refresh timeout (30s) so a
+/// hanging search becomes a warning instead of failing the whole refresh.
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct Search {
     section: &'static str,
@@ -44,17 +50,28 @@ pub struct GithubSource {
     client: Client,
     api_url: String,
     token: Option<String>,
+    request_timeout: Duration,
 }
 
 impl GithubSource {
     /// `token` is `None` when none could be resolved; every refresh then fails
     /// with a setup hint.
     pub fn new(api_url: impl Into<String>, token: Option<String>) -> Self {
+        let client = Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()
+            .unwrap_or_default();
         Self {
-            client: Client::new(),
+            client,
             api_url: api_url.into().trim_end_matches('/').to_owned(),
             token,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
+    }
+
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
     }
 
     async fn refresh_with(&self, token: &str) -> Result<SourceBatch, SourceError> {
@@ -62,9 +79,22 @@ impl GithubSource {
         let mut batch = SourceBatch::default();
         let mut failures = Vec::new();
 
-        for search in &SEARCHES {
-            match self.search(token, search.query).await {
+        let [review, authored, assigned] = &SEARCHES;
+        let (review, authored, assigned) = tokio::join!(
+            self.search(token, review.query),
+            self.search(token, authored.query),
+            self.search(token, assigned.query),
+        );
+
+        for (search, result) in SEARCHES.iter().zip([review, authored, assigned]) {
+            match result {
                 Ok(page) => {
+                    if page.incomplete_results {
+                        batch.warnings.push(format!(
+                            "{}: GitHub reported incomplete results",
+                            search.section
+                        ));
+                    }
                     if page.total_count > page.items.len() {
                         batch.warnings.push(format!(
                             "{}: showing {} of {} results",
@@ -74,7 +104,7 @@ impl GithubSource {
                         ));
                     }
                     for issue in page.items {
-                        let card = issue.into_card(search.severity);
+                        let card = issue.into_card(search.severity, &self.api_url);
                         if seen.insert(card.id.clone()) {
                             batch.items.push(SourceItem {
                                 section: search.section.to_owned(),
@@ -110,6 +140,7 @@ impl GithubSource {
                 ("sort", "updated"),
                 ("order", "desc"),
             ])
+            .timeout(self.request_timeout)
             .bearer_auth(token)
             .header("accept", "application/vnd.github+json")
             .header("x-github-api-version", "2022-11-28")
@@ -119,14 +150,14 @@ impl GithubSource {
             )
             .send()
             .await
-            .map_err(|error| error.without_url().to_string())?;
+            .map_err(|error| self.describe(error))?;
 
         let status = response.status();
         if status.is_success() {
             return response
                 .json::<SearchPage>()
                 .await
-                .map_err(|error| format!("unexpected GitHub response: {}", error.without_url()));
+                .map_err(|error| format!("unexpected GitHub response: {}", self.describe(error)));
         }
 
         if let Some(reset) = rate_limit_reset(status, response.headers()) {
@@ -140,6 +171,24 @@ impl GithubSource {
         Err(format!("GitHub API returned {status}: {message}")
             .trim_end_matches([':', ' '])
             .to_owned())
+    }
+}
+
+impl GithubSource {
+    /// The error and its causes, without the request URL.
+    fn describe(&self, error: reqwest::Error) -> String {
+        if error.is_timeout() {
+            return format!("timed out after {:?}", self.request_timeout);
+        }
+        let error = error.without_url();
+        let mut message = error.to_string();
+        let mut source = std::error::Error::source(&error);
+        while let Some(cause) = source {
+            message.push_str(": ");
+            message.push_str(&cause.to_string());
+            source = cause.source();
+        }
+        message
     }
 }
 
@@ -180,30 +229,52 @@ pub fn resolve_token(
     env: &dyn Fn(&str) -> Option<String>,
     gh: &dyn Fn() -> Option<String>,
 ) -> Option<String> {
-    let non_empty = |value: Option<String>| value.filter(|v| !v.trim().is_empty());
+    let non_empty =
+        |value: Option<String>| value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
     non_empty(env("GITHUB_TOKEN"))
         .or_else(|| non_empty(env("GH_TOKEN")))
         .or_else(|| non_empty(gh()))
 }
 
-/// Token from `gh auth token`, if the GitHub CLI is installed and logged in.
+/// Longest wait for `gh auth token`; a locked keyring can block it forever.
+const GH_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Token from `gh auth token`, if the GitHub CLI is installed, logged in and
+/// answers within a few seconds.
 pub fn gh_cli_token() -> Option<String> {
-    let output = std::process::Command::new("gh")
+    let mut child = std::process::Command::new("gh")
         .args(["auth", "token"])
         .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .output()
+        .spawn()
         .ok()?;
-    if !output.status.success() {
-        return None;
+
+    let deadline = std::time::Instant::now() + GH_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) | Err(_) => return None,
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+        }
     }
-    let token = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+
+    let mut stdout = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut stdout).ok()?;
+    let token = stdout.trim().to_owned();
     (!token.is_empty()).then_some(token)
 }
 
 #[derive(Deserialize)]
 struct SearchPage {
     total_count: usize,
+    #[serde(default)]
+    incomplete_results: bool,
     items: Vec<Issue>,
 }
 
@@ -215,6 +286,8 @@ struct Issue {
     repository_url: String,
     updated_at: DateTime<Utc>,
     user: Option<User>,
+    #[serde(default)]
+    draft: bool,
 }
 
 #[derive(Deserialize)]
@@ -228,16 +301,25 @@ struct ApiError {
 }
 
 impl Issue {
-    fn into_card(self, severity: CardSeverity) -> PendingCard {
+    fn into_card(self, severity: CardSeverity, api_url: &str) -> PendingCard {
         let repo = self
             .repository_url
-            .rsplit_once("/repos/")
-            .map_or(self.repository_url.as_str(), |(_, repo)| repo);
+            .strip_prefix(api_url)
+            .and_then(|rest| rest.strip_prefix("/repos/"))
+            .or_else(|| {
+                self.repository_url
+                    .split_once("/repos/")
+                    .map(|(_, repo)| repo)
+            })
+            .unwrap_or(&self.repository_url);
         let reference = format!("{repo}#{}", self.number);
-        let body = match &self.user {
+        let mut body = match &self.user {
             Some(user) => format!("{reference} · @{}", user.login),
             None => reference.clone(),
         };
+        if self.draft {
+            body.push_str(" · draft");
+        }
 
         PendingCard {
             id: format!("github:{reference}"),

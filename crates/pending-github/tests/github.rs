@@ -335,3 +335,122 @@ fn token_follows_env_then_gh_cli_precedence() {
     assert_eq!(resolve_token(&env(&[]), &gh), Some("from-gh".to_owned()));
     assert_eq!(resolve_token(&env(&[]), &no_gh), None);
 }
+
+/// Com a API fora do ar, o erro diz o que aconteceu na conexão, sem URL e
+/// sem token.
+#[tokio::test]
+async fn transport_errors_explain_the_cause_without_url_or_token() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+
+    let error = GithubSource::new(base.clone(), Some(TOKEN.to_owned()))
+        .refresh()
+        .await
+        .expect_err("connection refused");
+
+    let message = error.to_string().to_lowercase();
+    assert!(message.contains("connect"), "{message}");
+    assert!(!message.contains(&base), "{message}");
+    assert!(!message.contains(TOKEN), "{message}");
+}
+
+/// Uma busca que trava não derruba as outras: ela vence o tempo limite
+/// próprio, vira aviso com o nome da seção, e as demais seções aparecem.
+#[tokio::test]
+async fn a_hanging_search_times_out_without_losing_the_other_sections() {
+    let app = Router::new().route(
+        "/search/issues",
+        get(|Query(params): Query<HashMap<String, String>>| async move {
+            let q = params.get("q").cloned().unwrap_or_default();
+            if q.contains("review-requested") {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+            let items = if q.contains("author") {
+                vec![item("o/web", 3, "Fix layout", true)]
+            } else {
+                Vec::new()
+            };
+            axum::Json(json!({ "total_count": items.len(), "items": items }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let batch = GithubSource::new(base, Some(TOKEN.to_owned()))
+        .with_request_timeout(std::time::Duration::from_millis(300))
+        .refresh()
+        .await
+        .expect("other sections still load");
+
+    assert_eq!(
+        sections(&batch),
+        vec![("My pull requests".to_owned(), "github:o/web#3".to_owned())]
+    );
+    assert!(
+        batch
+            .warnings
+            .iter()
+            .any(|w| w.contains("Review requested") && w.contains("timed out")),
+        "{:?}",
+        batch.warnings
+    );
+}
+
+/// Quando o próprio GitHub avisa que a busca ficou incompleta, a fonte
+/// repassa o aviso em vez de apresentar o resultado como completo.
+#[tokio::test]
+async fn incomplete_search_results_are_reported() {
+    let mut reply = Reply::items(vec![item("o/api", 1, "One", true)]);
+    reply.body["incomplete_results"] = json!(true);
+    let batch = refresh(stub_with(vec![("author", reply)]))
+        .await
+        .expect("refresh succeeds");
+
+    assert!(
+        batch
+            .warnings
+            .iter()
+            .any(|w| w.contains("My pull requests") && w.contains("incomplete")),
+        "{:?}",
+        batch.warnings
+    );
+}
+
+/// PR em rascunho é marcado no card, para não parecer pronto para revisão.
+#[tokio::test]
+async fn draft_pull_requests_are_marked() {
+    let mut draft = item("o/api", 7, "Add cache", true);
+    draft["draft"] = json!(true);
+    let batch = refresh(stub_with(vec![("author", Reply::items(vec![draft]))]))
+        .await
+        .expect("refresh succeeds");
+
+    assert!(
+        batch.items[0].card.body.contains("draft"),
+        "{}",
+        batch.items[0].card.body
+    );
+}
+
+/// O id usa dono e repositório mesmo quando algum deles se chama `repos`.
+#[tokio::test]
+async fn card_id_keeps_owner_and_repo_named_repos() {
+    let batch = refresh(stub_with(vec![(
+        "author",
+        Reply::items(vec![item("repos/repos", 5, "Odd names", true)]),
+    )]))
+    .await
+    .expect("refresh succeeds");
+
+    assert_eq!(batch.items[0].card.id, "github:repos/repos#5");
+}
+
+/// Um token com espaço ou quebra de linha no fim (comum ao copiar de arquivo)
+/// é usado sem esses caracteres.
+#[test]
+fn tokens_are_trimmed() {
+    let env = |key: &str| (key == "GITHUB_TOKEN").then(|| "abc\n".to_owned());
+    assert_eq!(resolve_token(&env, &|| None), Some("abc".to_owned()));
+}

@@ -3,7 +3,9 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use pending_runtime::config::{ConfigLocation, LoadError, Origin, load_plan, locate};
+use pending_runtime::config::{
+    ConfigLocation, LoadError, Origin, load_plan, load_plan_with, locate,
+};
 
 fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
     move |key| {
@@ -205,4 +207,34 @@ fn github_sources_are_scheduled_with_the_token_from_the_environment() {
     assert_eq!(plan.specs.len(), 1);
     assert_eq!(plan.specs[0].name, "work-github");
     assert_eq!(plan.specs[0].lane, "Work");
+}
+
+/// Sem token no ambiente, o `gh` é consultado uma vez só, mesmo com várias
+/// fontes GitHub, para não multiplicar a espera na subida.
+#[test]
+fn gh_cli_is_asked_for_a_token_once_for_all_github_sources() {
+    let path = scratch("github-gh").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "work"
+        kind = "github"
+
+        [[sources]]
+        name = "oss"
+        kind = "github"
+        "#,
+    )
+    .unwrap();
+    let calls = std::cell::Cell::new(0);
+    let gh = || {
+        calls.set(calls.get() + 1);
+        Some("from-gh".to_owned())
+    };
+
+    let (plan, _) = load_plan_with(Some(path), &env(&[]), &gh).expect("valid plan");
+
+    assert_eq!(plan.specs.len(), 2);
+    assert_eq!(calls.get(), 1);
 }

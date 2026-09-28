@@ -248,3 +248,20 @@ fn a_late_save_with_older_data_does_not_win() {
 
     assert_eq!(cache.load()["github"].1.items[0].card.id, "new");
 }
+
+/// Um cache gravado por uma versão anterior (cards com `section`) continua
+/// sendo lido depois da atualização.
+#[test]
+fn caches_from_the_previous_format_still_load() {
+    let path = cache_file("old-format");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        r#"{"version":1,"sources":{"github":{"refreshed_at":"2026-09-28T10:00:00Z","batch":{"items":[{"section":"Review requested","card":{"id":"github:o/r#1","title":"t","body":"b","source":"github","url":null,"severity":"info","updated_at":"2026-09-28T10:00:00Z"}}],"warnings":[]}}}}"#,
+    )
+    .unwrap();
+
+    let entries = Cache::new(path).load();
+
+    assert_eq!(entries["github"].1.items[0].column, "Review requested");
+}

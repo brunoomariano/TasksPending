@@ -96,7 +96,7 @@ impl AppConfig {
                 if column.name.trim().is_empty() {
                     return Err(ConfigError::EmptyColumnName(source.name.clone()));
                 }
-                if !columns.insert(column.name.as_str()) {
+                if !columns.insert(column.name.trim()) {
                     return Err(ConfigError::DuplicateColumnName {
                         source_name: source.name.clone(),
                         column: column.name.clone(),

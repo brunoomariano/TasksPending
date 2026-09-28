@@ -182,3 +182,27 @@ fn empty_and_relative_env_paths_are_ignored() {
     );
     assert_eq!(locate(None, &env(&[("HOME", "relative-home")])), None);
 }
+
+/// Uma fonte `github` na configuração vira uma fonte agendada com o nome e a
+/// lane configurados; o token vem do ambiente, nunca do arquivo.
+#[test]
+fn github_sources_are_scheduled_with_the_token_from_the_environment() {
+    let path = scratch("github").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "work-github"
+        kind = "github"
+        lane = "Work"
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) =
+        load_plan(Some(path), &env(&[("GITHUB_TOKEN", "t")])).expect("github is supported");
+
+    assert_eq!(plan.specs.len(), 1);
+    assert_eq!(plan.specs[0].name, "work-github");
+    assert_eq!(plan.specs[0].lane, "Work");
+}

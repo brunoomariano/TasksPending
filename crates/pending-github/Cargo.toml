@@ -1,5 +1,5 @@
 [package]
-name = "pending-runtime"
+name = "pending-github"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,11 +10,11 @@ homepage.workspace = true
 [dependencies]
 chrono.workspace = true
 pending-core = { path = "../pending-core" }
-pending-github = { path = "../pending-github" }
-thiserror.workspace = true
-tokio = { workspace = true, features = ["rt", "time"] }
-toml.workspace = true
+reqwest.workspace = true
+serde.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }
+axum.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt"] }

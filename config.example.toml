@@ -14,3 +14,10 @@ kind = "sample"      # built-in fixed cards
 lane = "Inbox"       # dashboard lane for this source's cards (default "Inbox")
 enabled = true
 # refresh_seconds = 60   # overrides the default above
+
+# GitHub: review requests, your open pull requests and issues assigned to you.
+# Token from GITHUB_TOKEN, then GH_TOKEN, then `gh auth token`.
+# [[sources]]
+# name = "github"
+# kind = "github"
+# lane = "Work"

@@ -35,6 +35,7 @@ make frontend-dev
 
 - `crates/pending-core`: shared domain model, config types, and source contracts.
 - `crates/pending-runtime`: refresh scheduling and in-memory source state.
+- `crates/pending-github`: GitHub source adapter.
 - `crates/pending-api`: HTTP API over the shared dashboard snapshot.
 - `crates/pending-tui`: terminal dashboard.
 - `frontend`: vanilla TypeScript UI built with Vite.
@@ -42,4 +43,4 @@ make frontend-dev
 
 ## Current State
 
-The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Only the built-in `sample` source exists so far. Next: the first real GitHub source.
+The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Sources available: `github` (review requests, your pull requests, assigned issues) and the built-in `sample`. Next: the TUI on the shared runtime, then frontend polling.

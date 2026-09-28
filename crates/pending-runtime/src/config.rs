@@ -1,11 +1,12 @@
 //! Locating and loading the config file, and turning it into scheduled sources.
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use pending_core::{AppConfig, ConfigError, DEFAULT_LANE, SampleSource, SourceKind};
+use pending_core::{AppConfig, ConfigError, DEFAULT_LANE, PendingSource, SampleSource, SourceKind};
+use pending_github::{DEFAULT_API_URL, GithubSource, gh_cli_token, resolve_token};
 use thiserror::Error;
 
 use crate::SourceSpec;
@@ -54,12 +55,6 @@ pub enum LoadError {
     },
     #[error("invalid config {}: {source}", path.display())]
     Invalid { path: PathBuf, source: ConfigError },
-    #[error("invalid config {}: source `{name}` has kind `{kind}`, which is not supported yet", path.display())]
-    UnsupportedKind {
-        path: PathBuf,
-        name: String,
-        kind: String,
-    },
 }
 
 /// Resolves the config path: `cli`, then `TASKS_PENDING_CONFIG`, then
@@ -132,39 +127,37 @@ pub fn load_plan(
     if let Err(source) = config.validate() {
         return Err(LoadError::Invalid { path, source });
     }
-    let plan = plan(&config, &path)?;
+    let plan = plan(&config, env);
     Ok((plan, Origin::File(path)))
 }
 
-fn plan(config: &AppConfig, path: &Path) -> Result<Plan, LoadError> {
+fn plan(config: &AppConfig, env: &dyn Fn(&str) -> Option<OsString>) -> Plan {
     let specs = config
         .sources
         .iter()
         .filter(|source| source.enabled)
         .map(|source| {
-            let implementation: Arc<dyn pending_core::PendingSource> = match source.kind {
+            let implementation: Arc<dyn PendingSource> = match source.kind {
                 SourceKind::Sample => Arc::new(SampleSource),
                 SourceKind::Github => {
-                    return Err(LoadError::UnsupportedKind {
-                        path: path.to_owned(),
-                        name: source.name.clone(),
-                        kind: "github".to_owned(),
-                    });
+                    let env = |key: &str| env(key).and_then(|value| value.into_string().ok());
+                    let token = resolve_token(&env, &gh_cli_token);
+                    Arc::new(GithubSource::new(DEFAULT_API_URL, token))
                 }
             };
-            Ok(SourceSpec {
+            SourceSpec {
                 name: source.name.clone(),
                 source: implementation,
                 lane: source.lane.clone(),
                 interval: Duration::from_secs(config.refresh_seconds_for(source)),
-            })
+            }
         })
-        .collect::<Result<_, _>>()?;
+        .collect();
 
-    Ok(Plan {
+    Plan {
         specs,
         timeout: Duration::from_secs(config.timeout_seconds),
-    })
+    }
 }
 
 fn sample_plan() -> Plan {

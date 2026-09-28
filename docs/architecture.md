@@ -39,7 +39,10 @@ There is no persistence yet: a restart starts every source as `pending` again.
 
 `pending_runtime::config` locates and loads the config file, validates it with `AppConfig::validate`, and turns each enabled source into a `SourceSpec`. The source's configured `name` is what source health shows.
 
-Next: GitHub as the first concrete source, borrowing ideas from `ghpending`.
+## Sources Available
+
+- `sample` (`pending-core`): fixed cards.
+- `github` (`pending-github`): search API for review requests, authored pull requests and assigned issues; token precedence and error handling follow `ghpending`. See `docs/operations.md`.
 
 ## Reference Repositories
 

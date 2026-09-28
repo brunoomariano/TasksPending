@@ -1,14 +1,15 @@
 //! Onde a configuração é procurada, como é lida e que fontes ela liga.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use pending_runtime::config::{ConfigLocation, LoadError, Origin, load_plan, locate};
 
-fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
     move |key| {
         vars.iter()
             .find(|(k, _)| *k == key)
-            .map(|(_, v)| (*v).to_owned())
+            .map(|(_, v)| OsString::from(*v))
     }
 }
 
@@ -159,4 +160,25 @@ fn committed_example_config_is_valid() {
     let (plan, _) = load_plan(Some(example), &env(&[])).expect("example config loads");
 
     assert!(!plan.specs.is_empty());
+}
+
+/// Variáveis vazias ou com caminho relativo não contam: a busca segue para a
+/// próxima opção, como manda a especificação XDG.
+#[test]
+fn empty_and_relative_env_paths_are_ignored() {
+    assert_eq!(
+        locate(
+            None,
+            &env(&[
+                ("TASKS_PENDING_CONFIG", ""),
+                ("XDG_CONFIG_HOME", "relative/xdg"),
+                ("HOME", "/home/me"),
+            ])
+        ),
+        Some(ConfigLocation {
+            path: PathBuf::from("/home/me/.config/tasks-pending/config.toml"),
+            explicit: false
+        })
+    );
+    assert_eq!(locate(None, &env(&[("HOME", "relative-home")])), None);
 }

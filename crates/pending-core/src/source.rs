@@ -11,11 +11,10 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// A refreshable provider of pending cards.
 ///
-/// Sources decide the section of each card; the lane comes from the source's
-/// configuration. The future is boxed so different sources can live in one
+/// Sources decide the section of each card; the name and lane come from the
+/// source's configuration. The future is boxed so different sources can live in one
 /// `Vec<Box<dyn PendingSource>>`.
 pub trait PendingSource: Send + Sync {
-    fn name(&self) -> &str;
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>>;
 }
 

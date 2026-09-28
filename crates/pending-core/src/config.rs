@@ -17,6 +17,7 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SourceConfig {
     pub name: String,
     pub kind: SourceKind,
@@ -236,5 +237,22 @@ mod tests {
     fn unknown_top_level_keys_are_rejected() {
         let error = toml::from_str::<AppConfig>("refresh_secs = 10").expect_err("typo");
         assert!(error.to_string().contains("refresh_secs"), "{error}");
+    }
+
+    /// Um erro de digitação dentro de uma fonte (ex.: `enable` em vez de
+    /// `enabled`) é recusado citando a chave, em vez de ligar a fonte com o
+    /// valor padrão.
+    #[test]
+    fn unknown_source_keys_are_rejected() {
+        let error = toml::from_str::<AppConfig>(
+            r#"
+            [[sources]]
+            name = "github"
+            kind = "github"
+            enable = false
+            "#,
+        )
+        .expect_err("typo inside a source");
+        assert!(error.to_string().contains("enable"), "{error}");
     }
 }

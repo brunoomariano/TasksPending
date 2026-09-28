@@ -18,7 +18,8 @@ struct Cli {
     #[arg(long, default_value = "127.0.0.1:8080")]
     listen: SocketAddr,
     /// Config file. Defaults to $TASKS_PENDING_CONFIG, then
-    /// $XDG_CONFIG_HOME/tasks-pending/config.toml.
+    /// $XDG_CONFIG_HOME/tasks-pending/config.toml, then
+    /// ~/.config/tasks-pending/config.toml.
     #[arg(long)]
     config: Option<PathBuf>,
 }
@@ -34,8 +35,12 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     init_tracing();
 
-    let (plan, origin) = load_plan(cli.config, &|key| std::env::var(key).ok())?;
+    let (plan, origin) = load_plan(cli.config, &|key| std::env::var_os(key))?;
     match &origin {
+        Origin::File(path) if plan.specs.is_empty() => warn!(
+            config = %path.display(),
+            "config has no enabled sources; the dashboard will be empty"
+        ),
         Origin::File(path) => {
             info!(config = %path.display(), sources = plan.specs.len(), "config loaded")
         }

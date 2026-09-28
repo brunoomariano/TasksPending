@@ -1,5 +1,6 @@
 //! Locating and loading the config file, and turning it into scheduled sources.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,7 +40,7 @@ pub struct Plan {
 
 #[derive(Debug, Error)]
 pub enum LoadError {
-    #[error("config file {} does not exist", .0.display())]
+    #[error("config file {:?} does not exist", .0)]
     Missing(PathBuf),
     #[error("reading {}: {source}", path.display())]
     Read {
@@ -63,23 +64,28 @@ pub enum LoadError {
 
 /// Resolves the config path: `cli`, then `TASKS_PENDING_CONFIG`, then
 /// `$XDG_CONFIG_HOME/tasks-pending/config.toml`, then
-/// `$HOME/.config/tasks-pending/config.toml`.
+/// `$HOME/.config/tasks-pending/config.toml`. Empty variables are ignored, and
+/// so are relative `XDG_CONFIG_HOME`/`HOME` values, per the XDG spec.
 pub fn locate(
     cli: Option<PathBuf>,
-    env: &dyn Fn(&str) -> Option<String>,
+    env: &dyn Fn(&str) -> Option<OsString>,
 ) -> Option<ConfigLocation> {
-    let non_empty = |key: &str| env(key).filter(|value| !value.is_empty());
+    let non_empty = |key: &str| {
+        env(key)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    let absolute = |key: &str| non_empty(key).filter(|path| path.is_absolute());
 
-    if let Some(path) = cli.or_else(|| non_empty(CONFIG_ENV).map(PathBuf::from)) {
+    if let Some(path) = cli.or_else(|| non_empty(CONFIG_ENV)) {
         return Some(ConfigLocation {
             path,
             explicit: true,
         });
     }
 
-    let base = non_empty("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| non_empty("HOME").map(|home| Path::new(&home).join(".config")))?;
+    let base = absolute("XDG_CONFIG_HOME")
+        .or_else(|| absolute("HOME").map(|home| home.join(".config")))?;
     Some(ConfigLocation {
         path: base.join("tasks-pending").join("config.toml"),
         explicit: false,
@@ -90,7 +96,7 @@ pub fn locate(
 /// no file exists at the default location.
 pub fn load_plan(
     cli: Option<PathBuf>,
-    env: &dyn Fn(&str) -> Option<String>,
+    env: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<(Plan, Origin), LoadError> {
     let location = locate(cli, env);
     let Some(location) = location else {

@@ -48,10 +48,6 @@ impl Scripted {
 }
 
 impl PendingSource for Scripted {
-    fn name(&self) -> &str {
-        self.name
-    }
-
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let mut script = self.script.lock().unwrap();
@@ -86,9 +82,13 @@ fn batch(id: &str) -> SourceBatch {
     }
 }
 
-fn spec(source: Arc<dyn PendingSource>, interval_secs: u64) -> SourceSpec {
+fn spec(source: Arc<Scripted>, interval_secs: u64) -> SourceSpec {
+    named_spec(source.name, source, interval_secs)
+}
+
+fn named_spec(name: &str, source: Arc<dyn PendingSource>, interval_secs: u64) -> SourceSpec {
     SourceSpec {
-        name: source.name().to_owned(),
+        name: name.to_owned(),
         source,
         lane: "Work".to_owned(),
         interval: Duration::from_secs(interval_secs),
@@ -241,10 +241,6 @@ struct Panicky {
 }
 
 impl PendingSource for Panicky {
-    fn name(&self) -> &str {
-        "panicky"
-    }
-
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         if call < self.panics {
@@ -264,7 +260,7 @@ async fn a_panicking_source_fails_and_keeps_being_refreshed() {
         calls: calls.clone(),
         panics: 1,
     });
-    let aggregator = Aggregator::start(vec![spec(source, 10)], TIMEOUT);
+    let aggregator = Aggregator::start(vec![named_spec("panicky", source, 10)], TIMEOUT);
 
     advance(1).await;
     let snapshot = aggregator.snapshot();

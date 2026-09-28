@@ -49,10 +49,6 @@ impl SampleSource {
 }
 
 impl PendingSource for SampleSource {
-    fn name(&self) -> &str {
-        Self::NAME
-    }
-
     fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
         Box::pin(std::future::ready(Ok(Self::batch(sample_time()))))
     }

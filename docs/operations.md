@@ -14,14 +14,14 @@
 
 ## Configuration
 
-The API reads a TOML file (see `config.example.toml`) from the first of:
+The API reads a TOML file (see `config.example.toml`). The path is the first of these that is set (it does not fall through to the next one when the file is missing):
 
 1. `--config <path>`;
 2. `$TASKS_PENDING_CONFIG`;
 3. `$XDG_CONFIG_HOME/tasks-pending/config.toml`;
 4. `~/.config/tasks-pending/config.toml`.
 
-An explicit path (1 or 2) that does not exist is an error. When no file exists at the default location (3 or 4), the API logs a warning and serves the built-in `sample` source. Syntax errors, unknown top-level keys, duplicate source names and zero intervals fail at startup, naming the file.
+An explicit path (1 or 2) that does not exist is an error. When no file exists at the default location (3 or 4), the API logs a warning and serves the built-in `sample` source. Syntax errors, unknown keys (top level or inside a source), duplicate source names and zero intervals fail at startup, naming the file. Empty variables and relative `XDG_CONFIG_HOME`/`HOME` values are ignored.
 
 Tokens are read from the environment by each source, never from the config file.
 

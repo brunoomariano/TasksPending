@@ -10,7 +10,6 @@ async fn sources_are_refreshed_through_a_shared_port() {
     let sources: Vec<Box<dyn PendingSource>> = vec![Box::new(SampleSource)];
 
     for source in &sources {
-        assert_eq!(source.name(), "sample");
         let batch = source.refresh().await.expect("sample never fails");
         assert!(!batch.items.is_empty());
         assert!(batch.items.iter().all(|item| !item.section.is_empty()));

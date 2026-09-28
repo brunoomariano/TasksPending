@@ -1,9 +1,17 @@
+use std::collections::HashSet;
+
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppConfig {
+    /// Default wait between refreshes of a source.
     #[serde(default = "default_refresh_seconds")]
     pub refresh_seconds: u64,
+    /// A refresh slower than this counts as a failure.
+    #[serde(default = "default_timeout_seconds")]
+    pub timeout_seconds: u64,
     #[serde(default)]
     pub sources: Vec<SourceConfig>,
 }
@@ -28,17 +36,60 @@ pub enum SourceKind {
     Sample,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ConfigError {
+    #[error("source name `{0}` is used more than once")]
+    DuplicateSourceName(String),
+    #[error("`{0}` must be greater than zero")]
+    Zero(String),
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             refresh_seconds: default_refresh_seconds(),
+            timeout_seconds: default_timeout_seconds(),
             sources: Vec::new(),
         }
     }
 }
 
+impl AppConfig {
+    /// Checks invariants serde cannot express.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.refresh_seconds == 0 {
+            return Err(ConfigError::Zero("refresh_seconds".to_owned()));
+        }
+        if self.timeout_seconds == 0 {
+            return Err(ConfigError::Zero("timeout_seconds".to_owned()));
+        }
+
+        let mut names = HashSet::new();
+        for source in &self.sources {
+            if !names.insert(source.name.as_str()) {
+                return Err(ConfigError::DuplicateSourceName(source.name.clone()));
+            }
+            if source.refresh_seconds == Some(0) {
+                return Err(ConfigError::Zero(format!(
+                    "sources.{}.refresh_seconds",
+                    source.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn refresh_seconds_for(&self, source: &SourceConfig) -> u64 {
+        source.refresh_seconds.unwrap_or(self.refresh_seconds)
+    }
+}
+
 fn default_refresh_seconds() -> u64 {
     300
+}
+
+fn default_timeout_seconds() -> u64 {
+    30
 }
 
 pub const DEFAULT_LANE: &str = "Inbox";
@@ -112,5 +163,78 @@ mod tests {
 
         assert_eq!(sources.sources[0].lane, "Work");
         assert_eq!(sources.sources[1].lane, "Inbox");
+    }
+
+    fn parse(text: &str) -> AppConfig {
+        toml::from_str(text).expect("valid toml")
+    }
+
+    /// A saúde das fontes é identificada pelo nome; dois nomes iguais tornariam
+    /// o dashboard ambíguo, então a configuração é recusada citando o nome.
+    #[test]
+    fn duplicate_source_names_are_rejected() {
+        let config = parse(
+            r#"
+            [[sources]]
+            name = "github"
+            kind = "github"
+
+            [[sources]]
+            name = "github"
+            kind = "sample"
+            "#,
+        );
+
+        let error = config.validate().expect_err("duplicate names");
+        assert!(error.to_string().contains("github"), "{error}");
+    }
+
+    /// Intervalo ou timeout zero faria o agregador consultar a fonte sem pausa
+    /// ou nunca dar tempo de resposta; a configuração é recusada.
+    #[test]
+    fn zero_intervals_and_timeouts_are_rejected() {
+        for text in [
+            "refresh_seconds = 0",
+            "timeout_seconds = 0",
+            "[[sources]]\nname = \"s\"\nkind = \"sample\"\nrefresh_seconds = 0",
+        ] {
+            let error = parse(text).validate().expect_err(text);
+            assert!(
+                error.to_string().contains("must be greater than zero"),
+                "{error}"
+            );
+        }
+    }
+
+    /// Cada fonte usa o próprio intervalo quando definido, senão o global; o
+    /// timeout de refresh tem padrão de 30 segundos.
+    #[test]
+    fn source_interval_falls_back_to_the_global_refresh() {
+        let config = parse(
+            r#"
+            refresh_seconds = 120
+
+            [[sources]]
+            name = "fast"
+            kind = "sample"
+            refresh_seconds = 30
+
+            [[sources]]
+            name = "default"
+            kind = "sample"
+            "#,
+        );
+
+        config.validate().expect("valid config");
+        assert_eq!(config.refresh_seconds_for(&config.sources[0]), 30);
+        assert_eq!(config.refresh_seconds_for(&config.sources[1]), 120);
+        assert_eq!(config.timeout_seconds, 30);
+    }
+
+    /// Um erro de digitação numa chave global é recusado em vez de ignorado.
+    #[test]
+    fn unknown_top_level_keys_are_rejected() {
+        let error = toml::from_str::<AppConfig>("refresh_secs = 10").expect_err("typo");
+        assert!(error.to_string().contains("refresh_secs"), "{error}");
     }
 }

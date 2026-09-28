@@ -1617,10 +1617,18 @@ dependencies = [
  "axum",
  "chrono",
  "pending-core",
+ "pending-http",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "pending-http"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
 ]
 
 [[package]]
@@ -1632,6 +1640,7 @@ dependencies = [
  "chrono-tz",
  "iana-time-zone",
  "pending-core",
+ "pending-http",
  "reqwest",
  "rrule",
  "tokio",
@@ -1644,6 +1653,7 @@ dependencies = [
  "axum",
  "chrono",
  "pending-core",
+ "pending-http",
  "reqwest",
  "serde",
  "serde_json",

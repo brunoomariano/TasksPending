@@ -12,6 +12,7 @@ chrono.workspace = true
 chrono-tz = "0.10"
 iana-time-zone = "0.1"
 pending-core = { path = "../pending-core" }
+pending-http = { path = "../pending-http" }
 reqwest.workspace = true
 rrule = "0.14"
 

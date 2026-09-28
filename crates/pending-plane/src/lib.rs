@@ -521,22 +521,6 @@ fn str_field<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
-/// The error and its causes, without the request URL.
 fn describe(error: reqwest::Error) -> String {
-    if error.is_timeout() {
-        return if error.is_connect() {
-            format!("connection timed out after {CONNECT_TIMEOUT:?}")
-        } else {
-            format!("timed out after {REQUEST_TIMEOUT:?}")
-        };
-    }
-    let error = error.without_url();
-    let mut message = error.to_string();
-    let mut source = std::error::Error::source(&error);
-    while let Some(cause) = source {
-        message.push_str(": ");
-        message.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    message
+    pending_http::describe_error(error, CONNECT_TIMEOUT, REQUEST_TIMEOUT)
 }

@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use pending_core::{AppConfig, ConfigError, DEFAULT_LANE, PendingSource, SampleSource, SourceKind};
 use pending_github::{DEFAULT_API_URL, GithubSource, gh_cli_token, resolve_token};
+use pending_ical::IcalSource;
 use pending_plane::{PlaneSettings, PlaneSource};
 use thiserror::Error;
 use tracing::info;
@@ -170,6 +171,10 @@ fn plan(
     for source in config.sources.iter().filter(|source| source.enabled) {
         let implementation: Arc<dyn PendingSource> = match source.kind {
             SourceKind::Sample => Arc::new(SampleSource),
+            SourceKind::Ical => {
+                let env = |key: &str| env(key).and_then(|value| value.into_string().ok());
+                Arc::new(IcalSource::from_env(&env))
+            }
             SourceKind::Plane => {
                 let env = |key: &str| env(key).and_then(|value| value.into_string().ok());
                 Arc::new(PlaneSource::new(PlaneSettings::from_env(&env)))

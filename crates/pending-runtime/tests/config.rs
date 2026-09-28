@@ -279,3 +279,23 @@ fn plane_sources_are_scheduled() {
     assert_eq!(plan.specs.len(), 1);
     assert_eq!(plan.specs[0].name, "plane");
 }
+
+/// Uma fonte `ical` na configuração vira uma fonte agendada; a URL secreta vem
+/// do ambiente, nunca do arquivo.
+#[test]
+fn ical_sources_are_scheduled() {
+    let path = scratch("ical").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "calendar"
+        kind = "ical"
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) = load_plan_with(Some(path), &env(&[]), &|| None).expect("ical is supported");
+
+    assert_eq!(plan.specs[0].name, "calendar");
+}

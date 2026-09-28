@@ -1,0 +1,20 @@
+[package]
+name = "pending-ical"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+chrono.workspace = true
+chrono-tz = "0.10"
+iana-time-zone = "0.1"
+pending-core = { path = "../pending-core" }
+reqwest.workspace = true
+rrule = "0.14"
+
+[dev-dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt"] }

@@ -5,6 +5,7 @@ TasksPending is organized around one shared model and several delivery surfaces.
 ## Layers
 
 - `pending-core`: domain objects, config, refresh/source contracts, and testable invariants.
+- `pending-ical`: iCal/Google Calendar source adapter.
 - `pending-plane`: Plane source adapter.
 - `pending-github`: GitHub source adapter; provider details stay here.
 - `pending-runtime`: refresh scheduling and the in-memory state of every source.

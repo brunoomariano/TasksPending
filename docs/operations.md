@@ -22,6 +22,12 @@ After every successful refresh, each source's cards are saved to `$XDG_STATE_HOM
 
 Missing variables make the source fail with their names. Sections follow the state group: "In progress" (started), "To do" (unstarted), "Backlog"; completed and cancelled items are left out. Assignee and state filters run locally, because some Plane deployments ignore them server-side. Urgent priority and a past target date make a card critical; high priority makes it a warning. A failing project becomes a warning naming its identifier; the other projects still show.
 
+## Calendar Source
+
+`kind = "ical"` reads an iCal feed from `TASKS_PENDING_ICAL_URL`. For Google Calendar, use the calendar's "Secret address in iCal format" (Settings → the calendar → Integrate calendar); no Google Cloud project or OAuth is needed. The URL grants read access to the calendar: keep it out of git and out of the config file. Errors never show it.
+
+It shows events that are not over yet, starting within 30 days, at most 25, soonest first, in the machine's time zone: "Now" (in progress), "Today", "Tomorrow", "Next 30 days". Events in progress or starting within an hour are warnings. Recurring events are expanded (RRULE, RDATE, EXDATE), moved or cancelled occurrences (RECURRENCE-ID) are respected, and cancelled events are hidden. Cards from a Google feed link to that day in Google Calendar. Entries with an unknown time zone or unreadable recurrence become a warning.
+
 ## TUI
 
 `pending-tui` runs the same aggregator as the API in-process, so it works without the API running. It reads the same config (`--config` or the default locations) and redraws every 250 ms.

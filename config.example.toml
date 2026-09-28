@@ -28,3 +28,11 @@ enabled = true
 # name = "plane"
 # kind = "plane"
 # lane = "Work"
+
+# Calendar (any iCal feed; for Google Calendar use the "secret address in
+# iCal format" from the calendar's settings). Needs TASKS_PENDING_ICAL_URL in
+# the environment; that URL is a secret, never put it in this file.
+# [[sources]]
+# name = "calendar"
+# kind = "ical"
+# lane = "Agenda"

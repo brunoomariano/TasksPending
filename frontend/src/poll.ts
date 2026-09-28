@@ -8,38 +8,65 @@ export interface PollingOptions {
   isHidden: () => boolean;
 }
 
+export interface Poller {
+  stop: () => void;
+  /** Loads right away (e.g. when the tab becomes visible again). */
+  pollNow: () => void;
+}
+
 /**
  * Loads now and then every `intervalMs` while the page is visible. `onState`
- * runs only when what the dashboard shows changes. Returns a stop function.
+ * runs only when what the dashboard shows changes. A failing `onState` does
+ * not stop polling.
  */
-export function startPolling(options: PollingOptions): () => void {
+export function startPolling(options: PollingOptions): Poller {
   let state: ViewState = { kind: "loading" };
   let shownKey = "";
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let inFlight = false;
   let stopped = false;
 
+  const schedule = (delayMs: number) => {
+    clearTimeout(timer);
+    timer = setTimeout(tick, delayMs);
+  };
+
   const tick = async () => {
-    if (!options.isHidden()) {
-      const result = await options.load();
-      if (stopped) {
-        return;
+    inFlight = true;
+    try {
+      if (!options.isHidden()) {
+        const result = await options.load();
+        if (stopped) {
+          return;
+        }
+        state = nextState(state, result, new Date());
+        const key = viewKey(state);
+        if (key !== shownKey) {
+          shownKey = key;
+          options.onState(state);
+        }
       }
-      state = nextState(state, result, new Date());
-      const key = viewKey(state);
-      if (key !== shownKey) {
-        shownKey = key;
-        options.onState(state);
+    } catch (error) {
+      console.error("dashboard update failed", error);
+    } finally {
+      inFlight = false;
+      if (!stopped) {
+        schedule(options.intervalMs);
       }
-    }
-    if (!stopped) {
-      timer = setTimeout(tick, options.intervalMs);
     }
   };
 
-  timer = setTimeout(tick, 0);
-  return () => {
-    stopped = true;
-    clearTimeout(timer);
+  schedule(0);
+  return {
+    stop: () => {
+      stopped = true;
+      clearTimeout(timer);
+    },
+    pollNow: () => {
+      if (!stopped && !inFlight) {
+        schedule(0);
+      }
+    },
   };
 }
 

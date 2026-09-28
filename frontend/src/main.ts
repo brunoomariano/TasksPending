@@ -8,12 +8,17 @@ const POLL_INTERVAL_MS = 15_000;
 const app = document.querySelector<HTMLElement>("#app");
 if (app) {
   app.innerHTML = renderApp({ kind: "loading" });
-  startPolling({
+  const poller = startPolling({
     load: () => loadSnapshot(),
     onState: (state) => {
       app.innerHTML = renderApp(state);
     },
     intervalMs: POLL_INTERVAL_MS,
     isHidden: () => document.hidden,
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      poller.pollNow();
+    }
   });
 }

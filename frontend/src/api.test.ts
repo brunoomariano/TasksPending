@@ -50,4 +50,18 @@ describe("loadSnapshot", () => {
       error: "unexpected snapshot shape",
     });
   });
+
+  /** Uma API que não responde vira erro depois do limite, em vez de travar. */
+  test("gives up on requests that hang", async () => {
+    const hanging = (_input: string, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () =>
+          reject(init.signal?.reason),
+        );
+      });
+
+    const result = await loadSnapshot(hanging, 20);
+
+    expect(result).toEqual({ ok: false, error: "request timed out" });
+  });
 });

@@ -3,13 +3,18 @@ import type { DashboardSnapshot } from "./contract.gen";
 export type SnapshotResult =
   { ok: true; snapshot: DashboardSnapshot } | { ok: false; error: string };
 
-type Fetch = (input: string) => Promise<Response>;
+type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export async function loadSnapshot(
-  fetchFn: Fetch = (input) => fetch(input),
+  fetchFn: Fetch = (input, init) => fetch(input, init),
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<SnapshotResult> {
   try {
-    const response = await fetchFn("/api/v1/snapshot");
+    const response = await fetchFn("/api/v1/snapshot", {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!response.ok) {
       return { ok: false, error: `HTTP ${response.status}` };
     }
@@ -19,6 +24,9 @@ export async function loadSnapshot(
     }
     return { ok: true, snapshot: body };
   } catch (error) {
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      return { ok: false, error: "request timed out" };
+    }
     return {
       ok: false,
       error: error instanceof Error ? error.message : String(error),

@@ -52,7 +52,7 @@ describe("startPolling", () => {
     const load = vi.fn(async () => results.shift()!);
     const states: ViewState[] = [];
 
-    const stop = startPolling({
+    const { stop } = startPolling({
       load,
       onState: (state) => states.push(state),
       intervalMs: 1000,
@@ -77,7 +77,7 @@ describe("startPolling", () => {
     const load = vi.fn(async () => results.shift()!);
     const states: ViewState[] = [];
 
-    const stop = startPolling({
+    const { stop } = startPolling({
       load,
       onState: (state) => states.push(state),
       intervalMs: 1000,
@@ -95,7 +95,7 @@ describe("startPolling", () => {
     const load = always({ ok: true, snapshot: snapshot("10:00") });
     let hidden = false;
 
-    const stop = startPolling({
+    const { stop } = startPolling({
       load,
       onState: () => {},
       intervalMs: 1000,
@@ -112,7 +112,7 @@ describe("startPolling", () => {
   /** Depois de parar, nenhuma consulta nova acontece. */
   test("stop cancels future polls", async () => {
     const load = always({ ok: true, snapshot: snapshot("10:00") });
-    const stop = startPolling({
+    const { stop } = startPolling({
       load,
       onState: () => {},
       intervalMs: 1000,
@@ -123,5 +123,56 @@ describe("startPolling", () => {
     await vi.advanceTimersByTimeAsync(5000);
 
     expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  /** Um erro ao desenhar não para as consultas seguintes. */
+  test("keeps polling when rendering throws", async () => {
+    const results: SnapshotResult[] = [
+      { ok: true, snapshot: snapshot("10:00") },
+      { ok: true, snapshot: snapshot("10:01", "changed") },
+    ];
+    const load = vi.fn(async () => results.shift()!);
+    let calls = 0;
+
+    const poller = startPolling({
+      load,
+      onState: () => {
+        calls += 1;
+        if (calls === 1) throw new Error("render bug");
+      },
+      intervalMs: 1000,
+      isHidden: () => false,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    poller.stop();
+
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(calls).toBe(2);
+  });
+
+  /**
+   * Quando a aba volta a ficar visível, o dashboard atualiza na hora, sem
+   * esperar o intervalo, e não duplica a consulta agendada.
+   */
+  test("pollNow refreshes immediately without doubling the schedule", async () => {
+    const load = always({ ok: true, snapshot: snapshot("10:00") });
+    const poller = startPolling({
+      load,
+      onState: () => {},
+      intervalMs: 1000,
+      isHidden: () => false,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    poller.pollNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(load).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(load).toHaveBeenCalledTimes(3);
+    poller.stop();
   });
 });

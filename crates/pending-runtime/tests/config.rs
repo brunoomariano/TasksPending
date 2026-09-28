@@ -401,3 +401,26 @@ fn invalid_column_filters_name_the_source_and_column() {
         );
     }
 }
+
+/// Uma coluna do GitHub precisa de exatamente uma origem: uma busca (`query`)
+/// ou a caixa de notificações (`notifications`).
+#[test]
+fn github_columns_need_a_query_or_notifications() {
+    let dir = scratch("gh-columns");
+    for (name, body) in [
+        ("neither.toml", ""),
+        ("both.toml", "query = \"is:pr\"\nnotifications = \"inbox\""),
+        ("bad-mode.toml", "notifications = \"done\""),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!("[[sources]]\nname = \"gh\"\nkind = \"github\"\n[[sources.columns]]\nname = \"N\"\n{body}\n"),
+        )
+        .unwrap();
+
+        let error =
+            load_plan_with(Some(path), &env(&[("GITHUB_TOKEN", "t")]), &|| None).expect_err(name);
+        assert!(error.to_string().contains("column `N`"), "{name}: {error}");
+    }
+}

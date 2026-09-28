@@ -30,17 +30,44 @@ const MAX_CONCURRENT_SEARCHES: usize = 3;
 pub struct GithubColumn {
     #[serde(skip)]
     pub name: String,
-    pub query: String,
-    /// Severity of the cards in this column (default `info`).
+    /// A search query (github.com search syntax). Set this or `notifications`.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// The notifications inbox instead of a search.
+    #[serde(default)]
+    pub notifications: Option<Notifications>,
+    /// Severity of the cards in this column (default `info`; unread
+    /// notifications are warnings).
     #[serde(default)]
     pub severity: Option<CardSeverity>,
+}
+
+/// Which notifications a column shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Notifications {
+    /// Everything not marked as done, read or unread.
+    Inbox,
+    /// Unread only.
+    Unread,
+}
+
+impl GithubColumn {
+    /// A column needs exactly one of `query` and `notifications`.
+    pub fn validate(&self) -> Result<(), String> {
+        match (&self.query, &self.notifications) {
+            (Some(_), None) | (None, Some(_)) => Ok(()),
+            _ => Err("set exactly one of `query` or `notifications`".to_owned()),
+        }
+    }
 }
 
 /// Columns used when the configuration declares none.
 pub fn default_columns() -> Vec<GithubColumn> {
     let column = |name: &str, query: &str, severity| GithubColumn {
         name: name.to_owned(),
-        query: query.to_owned(),
+        query: Some(query.to_owned()),
+        notifications: None,
         severity: Some(severity),
     };
     vec![
@@ -110,34 +137,22 @@ impl GithubSource {
         let mut results = Vec::with_capacity(self.columns.len());
         for chunk in self.columns.chunks(MAX_CONCURRENT_SEARCHES) {
             results.extend(
-                join_all(chunk.iter().map(|column| self.search(token, &column.query))).await,
+                join_all(chunk.iter().map(|column| self.column_items(token, column))).await,
             );
         }
 
         for (column, result) in self.columns.iter().zip(results) {
             match result {
-                Ok(page) => {
-                    if page.incomplete_results {
-                        batch.warnings.push(format!(
-                            "{}: GitHub reported incomplete results",
-                            column.name
-                        ));
-                    }
-                    if page.total_count > page.items.len() {
-                        batch.warnings.push(format!(
-                            "{}: showing {} of {} results",
-                            column.name,
-                            page.items.len(),
-                            page.total_count
-                        ));
-                    }
-                    let severity = column.severity.unwrap_or(CardSeverity::Info);
-                    for issue in page.items {
-                        batch.items.push(SourceItem {
-                            column: column.name.clone(),
-                            card: issue.into_card(severity, &self.api_url),
-                        });
-                    }
+                Ok((cards, warnings)) => {
+                    batch.warnings.extend(
+                        warnings
+                            .into_iter()
+                            .map(|warning| format!("{}: {warning}", column.name)),
+                    );
+                    batch.items.extend(cards.into_iter().map(|card| SourceItem {
+                        column: column.name.clone(),
+                        card,
+                    }));
                 }
                 Err(failure) => {
                     retry_at = retry_at.max(failure.retry_at);
@@ -160,19 +175,83 @@ impl GithubSource {
         Ok(batch)
     }
 
-    /// Returns a message safe to show and log: it never contains the token or
-    /// the request URL.
-    async fn search(&self, token: &str, query: &str) -> Result<SearchPage, SearchFailure> {
+    /// The cards of one column, plus warnings about them.
+    async fn column_items(
+        &self,
+        token: &str,
+        column: &GithubColumn,
+    ) -> Result<(Vec<PendingCard>, Vec<String>), SearchFailure> {
+        if let Some(mode) = column.notifications {
+            let all = match mode {
+                Notifications::Inbox => "true",
+                Notifications::Unread => "false",
+            };
+            let per_page = PAGE_SIZE.to_string();
+            let threads: Vec<Notification> = self
+                .get_json(
+                    token,
+                    "/notifications",
+                    &[("all", all), ("per_page", per_page.as_str())],
+                )
+                .await?;
+            let warnings = if threads.len() >= PAGE_SIZE {
+                vec![format!("showing the latest {PAGE_SIZE} notifications")]
+            } else {
+                Vec::new()
+            };
+            let cards = threads
+                .into_iter()
+                .map(|thread| thread.into_card(column.severity))
+                .collect();
+            return Ok((cards, warnings));
+        }
+
+        let query = column.query.as_deref().unwrap_or_default();
         let per_page = PAGE_SIZE.to_string();
+        let page: SearchPage = self
+            .get_json(
+                token,
+                "/search/issues",
+                &[
+                    ("q", query),
+                    ("per_page", per_page.as_str()),
+                    ("sort", "updated"),
+                    ("order", "desc"),
+                ],
+            )
+            .await?;
+        let mut warnings = Vec::new();
+        if page.incomplete_results {
+            warnings.push("GitHub reported incomplete results".to_owned());
+        }
+        if page.total_count > page.items.len() {
+            warnings.push(format!(
+                "showing {} of {} results",
+                page.items.len(),
+                page.total_count
+            ));
+        }
+        let severity = column.severity.unwrap_or(CardSeverity::Info);
+        let cards = page
+            .items
+            .into_iter()
+            .map(|issue| issue.into_card(severity, &self.api_url))
+            .collect();
+        Ok((cards, warnings))
+    }
+
+    /// GET `{api}{path}`. Returns a message safe to show and log: it never
+    /// contains the token or the request URL.
+    async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        token: &str,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<T, SearchFailure> {
         let response = self
             .client
-            .get(format!("{}/search/issues", self.api_url))
-            .query(&[
-                ("q", query),
-                ("per_page", per_page.as_str()),
-                ("sort", "updated"),
-                ("order", "desc"),
-            ])
+            .get(format!("{}{path}", self.api_url))
+            .query(query)
             .timeout(self.request_timeout)
             .bearer_auth(token)
             .header("accept", "application/vnd.github+json")
@@ -187,7 +266,7 @@ impl GithubSource {
 
         let status = response.status();
         if status.is_success() {
-            return response.json::<SearchPage>().await.map_err(|error| {
+            return response.json::<T>().await.map_err(|error| {
                 format!("unexpected GitHub response: {}", self.describe(error)).into()
             });
         }
@@ -325,6 +404,75 @@ pub fn gh_cli_token_with(program: &str, limit: Duration) -> Option<String> {
     std::io::Read::read_to_string(&mut child.stdout.take()?, &mut stdout).ok()?;
     let token = stdout.trim().to_owned();
     (!token.is_empty()).then_some(token)
+}
+
+/// One thread of the notifications inbox.
+#[derive(Deserialize)]
+struct Notification {
+    id: String,
+    unread: bool,
+    reason: String,
+    updated_at: DateTime<Utc>,
+    subject: NotificationSubject,
+    repository: NotificationRepository,
+}
+
+#[derive(Deserialize)]
+struct NotificationSubject {
+    title: String,
+    #[serde(rename = "type")]
+    kind: String,
+    /// API URL of the pull request or issue; absent for some kinds.
+    url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct NotificationRepository {
+    full_name: String,
+    html_url: String,
+}
+
+impl Notification {
+    fn into_card(self, severity: Option<CardSeverity>) -> PendingCard {
+        // `…/repos/o/r/pulls/7` → `https://github.com/o/r/pull/7`; issues keep
+        // `/issues/`; other kinds (releases, discussions…) link to the repo.
+        let link = self
+            .subject
+            .url
+            .as_deref()
+            .and_then(|url| url.split_once("/repos/"))
+            .and_then(|(_, rest)| {
+                // rest = "o/r/pulls/7"
+                let (repo_and_kind, number) = rest.rsplit_once('/')?;
+                let (repo, kind) = repo_and_kind.rsplit_once('/')?;
+                let kind = match kind {
+                    "pulls" => "pull",
+                    "issues" => "issues",
+                    _ => return None,
+                };
+                Some(format!("https://github.com/{repo}/{kind}/{number}"))
+            })
+            .unwrap_or(self.repository.html_url);
+        PendingCard {
+            id: format!("github:notification:{}", self.id),
+            title: self.subject.title,
+            body: format!(
+                "{} · {} · {}",
+                self.repository.full_name,
+                self.subject.kind,
+                self.reason.replace('_', " ")
+            ),
+            source: "github".to_owned(),
+            url: Some(link),
+            due_at: None,
+            severity: severity.unwrap_or(if self.unread {
+                CardSeverity::Warning
+            } else {
+                CardSeverity::Info
+            }),
+            updated_at: self.updated_at,
+        }
+    }
 }
 
 #[derive(Deserialize)]

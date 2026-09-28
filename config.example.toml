@@ -32,6 +32,10 @@ enabled = true
 #   severity = "warning"          # optional: info (default), warning, critical
 #
 #   [[sources.columns]]
+#   name = "Notifications"
+#   notifications = "inbox"       # not done; "unread" for unread only
+#
+#   [[sources.columns]]
 #   name = "My pull requests"
 #   query = "is:open is:pr archived:false author:@me"
 

@@ -45,6 +45,9 @@ struct Stub {
     /// Resposta por trecho da query (`review-requested`, `author`, `assignee`).
     replies: Arc<Mutex<HashMap<&'static str, Reply>>>,
     auth_headers: Arc<Mutex<Vec<String>>>,
+    /// Notifications served by `/notifications`, and the `all` param seen.
+    notifications: Arc<Mutex<Value>>,
+    notifications_all: Arc<Mutex<Vec<String>>>,
 }
 
 async fn search(
@@ -79,9 +82,29 @@ async fn search(
     response
 }
 
+async fn notifications(
+    State(stub): State<Stub>,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    stub.auth_headers.lock().unwrap().push(
+        headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_owned(),
+    );
+    stub.notifications_all
+        .lock()
+        .unwrap()
+        .push(params.get("all").cloned().unwrap_or_default());
+    axum::Json(stub.notifications.lock().unwrap().clone()).into_response()
+}
+
 async fn serve(stub: Stub) -> String {
     let app = Router::new()
         .route("/search/issues", get(search))
+        .route("/notifications", get(notifications))
         .with_state(stub);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -218,7 +241,8 @@ async fn configured_columns_run_their_own_queries() {
     let source = GithubSource::new(base, Some(TOKEN.to_owned())).with_columns(vec![
         pending_github::GithubColumn {
             name: "Acme reviews".to_owned(),
-            query: "is:open is:pr org:acme review-requested:@me".to_owned(),
+            query: Some("is:open is:pr org:acme review-requested:@me".to_owned()),
+            notifications: None,
             severity: Some(CardSeverity::Critical),
         },
     ]);
@@ -528,4 +552,119 @@ fn gh_cli_token_handles_success_failure_and_hangs() {
         started.elapsed() < Duration::from_secs(5),
         "gave up at the limit"
     );
+}
+
+fn notification(id: &str, kind: &str, api_url: Option<&str>, unread: bool) -> Value {
+    json!({
+        "id": id,
+        "unread": unread,
+        "reason": "review_requested",
+        "updated_at": "2026-09-28T10:00:00Z",
+        "subject": { "title": format!("{kind} {id}"), "type": kind, "url": api_url },
+        "repository": { "full_name": "o/api", "html_url": "https://github.com/o/api" },
+    })
+}
+
+/// Uma coluna de notificações mostra a caixa de entrada do GitHub (tudo que
+/// ainda não foi marcado como feito); cada card aponta para o PR, a issue ou,
+/// nos outros tipos, o repositório, e as não lidas aparecem como aviso.
+#[tokio::test]
+async fn notification_columns_show_the_inbox() {
+    use pending_github::{GithubColumn, Notifications};
+
+    let stub = Stub::default();
+    *stub.notifications.lock().unwrap() = json!([
+        notification(
+            "1",
+            "PullRequest",
+            Some("https://api.github.com/repos/o/api/pulls/7"),
+            true
+        ),
+        notification(
+            "2",
+            "Issue",
+            Some("https://api.github.com/repos/o/api/issues/9"),
+            false
+        ),
+        notification("3", "Release", None, false),
+    ]);
+    let seen_all = stub.notifications_all.clone();
+    let base = serve(stub).await;
+    let source = GithubSource::new(base, Some(TOKEN.to_owned())).with_columns(vec![GithubColumn {
+        name: "Notificações".to_owned(),
+        query: None,
+        notifications: Some(Notifications::Inbox),
+        severity: None,
+    }]);
+
+    let batch = source.refresh().await.expect("refresh succeeds");
+
+    assert_eq!(
+        seen_all.lock().unwrap().as_slice(),
+        ["true"],
+        "read ones too"
+    );
+    let cards: Vec<(&str, Option<&str>, CardSeverity)> = batch
+        .items
+        .iter()
+        .map(|i| {
+            (
+                i.card.title.as_str(),
+                i.card.url.as_deref(),
+                i.card.severity,
+            )
+        })
+        .collect();
+    assert_eq!(
+        cards,
+        vec![
+            (
+                "PullRequest 1",
+                Some("https://github.com/o/api/pull/7"),
+                CardSeverity::Warning
+            ),
+            (
+                "Issue 2",
+                Some("https://github.com/o/api/issues/9"),
+                CardSeverity::Info
+            ),
+            (
+                "Release 3",
+                Some("https://github.com/o/api"),
+                CardSeverity::Info
+            ),
+        ]
+    );
+    assert!(
+        batch.items[0].card.body.contains("o/api"),
+        "{}",
+        batch.items[0].card.body
+    );
+    assert!(
+        batch.items[0].card.body.contains("review requested"),
+        "{}",
+        batch.items[0].card.body
+    );
+    assert!(batch.items.iter().all(|i| i.column == "Notificações"));
+}
+
+/// `unread` pede só as não lidas.
+#[tokio::test]
+async fn unread_notification_columns_ask_only_for_unread() {
+    use pending_github::{GithubColumn, Notifications};
+
+    let stub = Stub::default();
+    *stub.notifications.lock().unwrap() = json!([]);
+    let seen_all = stub.notifications_all.clone();
+    let base = serve(stub).await;
+    let source = GithubSource::new(base, Some(TOKEN.to_owned())).with_columns(vec![GithubColumn {
+        name: "Não lidas".to_owned(),
+        query: None,
+        notifications: Some(Notifications::Unread),
+        severity: None,
+    }]);
+
+    source.refresh().await.expect("refresh succeeds");
+
+    assert_eq!(seen_all.lock().unwrap().as_slice(), ["false"]);
 }

@@ -196,15 +196,24 @@ fn plan(
                     Arc::new(SampleSource)
                 }
                 SourceKind::Ical => Arc::new(IcalSource::from_env(&env_string).with_columns(
-                    parse_columns(path, source, |c: &mut IcalColumn, name| c.name = name)?,
+                    parse_columns(path, source, |c: &mut IcalColumn, name| {
+                        c.name = name;
+                        Ok(())
+                    })?,
                 )),
                 SourceKind::Plane => Arc::new(
                     PlaneSource::new(PlaneSettings::from_env(&env_string)).with_columns(
-                        parse_columns(path, source, |c: &mut PlaneColumn, name| c.name = name)?,
+                        parse_columns(path, source, |c: &mut PlaneColumn, name| {
+                            c.name = name;
+                            Ok(())
+                        })?,
                     ),
                 ),
                 SourceKind::Todoist => Arc::new(TodoistSource::from_env(&env_string).with_columns(
-                    parse_columns(path, source, |c: &mut TodoistColumn, name| c.name = name)?,
+                    parse_columns(path, source, |c: &mut TodoistColumn, name| {
+                        c.name = name;
+                        Ok(())
+                    })?,
                 )),
                 SourceKind::Github => {
                     let token = github_token
@@ -219,7 +228,10 @@ fn plan(
                         GithubSource::new(DEFAULT_API_URL, token).with_columns(parse_columns(
                             path,
                             source,
-                            |c: &mut GithubColumn, name| c.name = name,
+                            |c: &mut GithubColumn, name| {
+                                c.name = name;
+                                c.validate()
+                            },
                         )?),
                     )
                 }
@@ -243,7 +255,7 @@ fn plan(
 fn parse_columns<T: DeserializeOwned>(
     path: &Path,
     source: &SourceConfig,
-    set_name: impl Fn(&mut T, String),
+    finish: impl Fn(&mut T, String) -> Result<(), String>,
 ) -> Result<Vec<T>, LoadError> {
     source
         .columns
@@ -254,7 +266,8 @@ fn parse_columns<T: DeserializeOwned>(
                 .map_err(|error: toml::de::Error| {
                     column_error(path, source, &column.name, error.message())
                 })?;
-            set_name(&mut parsed, column.name.clone());
+            finish(&mut parsed, column.name.clone())
+                .map_err(|message| column_error(path, source, &column.name, &message))?;
             Ok(parsed)
         })
         .collect()

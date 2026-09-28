@@ -6,6 +6,8 @@ import { renderApp } from "./render";
 const POLL_INTERVAL_MS = 15_000;
 /** Sources refresh in the background; read the result shortly after. */
 const AFTER_REFRESH_MS = 2_000;
+/** Matches the API cooldown; the button comes back even if nothing changed. */
+const REFRESH_COOLDOWN_MS = 10_000;
 
 const app = document.querySelector<HTMLElement>("#app");
 if (app) {
@@ -37,6 +39,10 @@ if (app) {
       : `Refresh (${result.error})`;
     if (result.ok) {
       setTimeout(() => poller.pollNow(), AFTER_REFRESH_MS);
+      setTimeout(() => {
+        button.disabled = false;
+        button.textContent = "Refresh";
+      }, REFRESH_COOLDOWN_MS);
     } else {
       button.disabled = false;
     }

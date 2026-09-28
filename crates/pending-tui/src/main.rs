@@ -18,13 +18,15 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Widget, Wrap};
 
 #[derive(Debug, Parser)]
-#[command(name = "pending-tui", about = "TasksPending terminal dashboard")]
-struct Cli {
-    #[arg(long, default_value_t = 1)]
-    refresh_secs: u64,
-}
+#[command(
+    name = "pending-tui",
+    about = "TasksPending terminal dashboard",
+    version
+)]
+struct Cli {}
 
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M UTC";
+const INPUT_POLL: Duration = Duration::from_millis(250);
 
 struct TerminalSession;
 
@@ -47,7 +49,7 @@ impl Drop for TerminalSession {
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    Cli::parse();
     let _session = TerminalSession::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).context("opening terminal")?;
@@ -58,7 +60,7 @@ fn main() -> anyhow::Result<()> {
             .draw(|frame| render(frame.area(), frame.buffer_mut(), &snapshot))
             .context("drawing TUI")?;
 
-        if event::poll(Duration::from_millis(cli.refresh_secs.clamp(1, 5) * 250))?
+        if event::poll(INPUT_POLL)?
             && matches!(event::read()?, Event::Key(key) if key.code == KeyCode::Char('q'))
         {
             break;

@@ -1,4 +1,4 @@
-//! Onde a configuração é procurada, como é lida e que fontes ela liga.
+//! Where the config is looked up, how it is read, and which sources it enables.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -24,9 +24,9 @@ fn scratch(test: &str) -> PathBuf {
     dir
 }
 
-/// O caminho vem, nesta ordem: flag da linha de comando, variável
-/// `TASKS_PENDING_CONFIG`, `$XDG_CONFIG_HOME/tasks-pending/config.toml` e
-/// `~/.config/tasks-pending/config.toml`. Só os dois primeiros são explícitos.
+/// The path comes, in this order, from: the command-line flag,
+/// `TASKS_PENDING_CONFIG`, `$XDG_CONFIG_HOME/tasks-pending/config.toml` and
+/// `~/.config/tasks-pending/config.toml`. Only the first two are explicit.
 #[test]
 fn config_path_follows_flag_env_xdg_home_precedence() {
     let all = [
@@ -66,8 +66,8 @@ fn config_path_follows_flag_env_xdg_home_precedence() {
     assert_eq!(locate(None, &env(&[])), None);
 }
 
-/// Na primeira execução, sem arquivo no local padrão, o app sobe com a fonte
-/// de exemplo e informa onde procurou.
+/// On first run, with no file at the default location, the app starts with
+/// the sample source and says where it looked.
 #[test]
 fn missing_default_config_starts_with_the_sample_source() {
     let dir = scratch("missing-default");
@@ -85,8 +85,8 @@ fn missing_default_config_starts_with_the_sample_source() {
     assert_eq!(plan.specs[0].name, "sample");
 }
 
-/// Um caminho pedido explicitamente que não existe é erro, citando o caminho,
-/// em vez de subir silenciosamente com dados de exemplo.
+/// An explicitly requested path that doesn't exist is an error naming the
+/// path, instead of silently starting with sample data.
 #[test]
 fn missing_explicit_config_is_an_error() {
     let path = scratch("missing-explicit").join("nope.toml");
@@ -100,8 +100,8 @@ fn missing_explicit_config_is_an_error() {
     assert!(error.to_string().contains("nope.toml"), "{error}");
 }
 
-/// Erros de sintaxe e de regra apontam o arquivo, para o usuário saber o que
-/// corrigir.
+/// Syntax and rule errors point at the file, so the user knows what to
+/// fix.
 #[test]
 fn invalid_config_errors_name_the_file() {
     let dir = scratch("invalid");
@@ -119,8 +119,8 @@ fn invalid_config_errors_name_the_file() {
     }
 }
 
-/// A configuração liga as fontes habilitadas, cada uma na lane e no
-/// intervalo configurados, com o timeout global.
+/// The config enables the enabled sources, each in its configured lane and
+/// interval, with the global timeout.
 #[test]
 fn config_file_turns_enabled_sources_into_scheduled_specs() {
     let path = scratch("valid").join("config.toml");
@@ -153,8 +153,8 @@ fn config_file_turns_enabled_sources_into_scheduled_specs() {
     assert_eq!(plan.specs[0].interval.as_secs(), 45);
 }
 
-/// O exemplo versionado no repositório é uma configuração válida; se o
-/// formato mudar sem atualizar o exemplo, o gate falha.
+/// The example checked into the repo is a valid config; if the format
+/// changes without updating the example, the gate fails.
 #[test]
 fn committed_example_config_is_valid() {
     let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config.example.toml");
@@ -164,8 +164,8 @@ fn committed_example_config_is_valid() {
     assert!(!plan.specs.is_empty());
 }
 
-/// Variáveis vazias ou com caminho relativo não contam: a busca segue para a
-/// próxima opção, como manda a especificação XDG.
+/// Empty or relative-path variables don't count: the lookup moves on to the
+/// next option, as the XDG spec says.
 #[test]
 fn empty_and_relative_env_paths_are_ignored() {
     assert_eq!(
@@ -185,8 +185,8 @@ fn empty_and_relative_env_paths_are_ignored() {
     assert_eq!(locate(None, &env(&[("HOME", "relative-home")])), None);
 }
 
-/// Uma fonte `github` na configuração vira uma fonte agendada com o nome e a
-/// lane configurados; o token vem do ambiente, nunca do arquivo.
+/// A `github` source in the config becomes a scheduled source with the
+/// configured name and lane; the token comes from the environment, never the file.
 #[test]
 fn github_sources_are_scheduled_with_the_token_from_the_environment() {
     let path = scratch("github").join("config.toml");
@@ -209,8 +209,8 @@ fn github_sources_are_scheduled_with_the_token_from_the_environment() {
     assert_eq!(plan.specs[0].board, "Work");
 }
 
-/// Sem token no ambiente, o `gh` é consultado uma vez só, mesmo com várias
-/// fontes GitHub, para não multiplicar a espera na subida.
+/// Without a token in the environment, `gh` is asked only once, even with
+/// several GitHub sources, so startup waits don't add up.
 #[test]
 fn gh_cli_is_asked_for_a_token_once_for_all_github_sources() {
     let path = scratch("github-gh").join("config.toml");
@@ -239,8 +239,8 @@ fn gh_cli_is_asked_for_a_token_once_for_all_github_sources() {
     assert_eq!(calls.get(), 1);
 }
 
-/// O cache fica em `$XDG_STATE_HOME/tasks-pending/cache.json`, ou em
-/// `~/.local/state/...`; caminhos relativos são ignorados.
+/// The cache lives at `$XDG_STATE_HOME/tasks-pending/cache.json`, or at
+/// `~/.local/state/...`; relative paths are ignored.
 #[test]
 fn cache_path_follows_xdg_state_home() {
     use pending_runtime::config::cache_path;
@@ -258,8 +258,8 @@ fn cache_path_follows_xdg_state_home() {
     assert_eq!(cache_path(&env(&[])), None);
 }
 
-/// Uma fonte `plane` na configuração vira uma fonte agendada; as credenciais
-/// vêm do ambiente, nunca do arquivo.
+/// A `plane` source in the config becomes a scheduled source; credentials
+/// come from the environment, never the file.
 #[test]
 fn plane_sources_are_scheduled() {
     let path = scratch("plane").join("config.toml");
@@ -280,8 +280,8 @@ fn plane_sources_are_scheduled() {
     assert_eq!(plan.specs[0].name, "plane");
 }
 
-/// Uma fonte `ical` na configuração vira uma fonte agendada; a URL secreta vem
-/// do ambiente, nunca do arquivo.
+/// An `ical` source in the config becomes a scheduled source; the secret URL
+/// comes from the environment, never the file.
 #[test]
 fn ical_sources_are_scheduled() {
     let path = scratch("ical").join("config.toml");
@@ -300,8 +300,8 @@ fn ical_sources_are_scheduled() {
     assert_eq!(plan.specs[0].name, "calendar");
 }
 
-/// Cada fonte declara as colunas dela na configuração, e a área (aba) onde
-/// aparece; `lane` continua aceito como nome antigo de `board`.
+/// Each source declares its columns in the config, and the area (tab) where
+/// it appears; `lane` is still accepted as the old name for `board`.
 #[test]
 fn sources_declare_board_and_columns() {
     let path = scratch("columns").join("config.toml");
@@ -311,29 +311,29 @@ fn sources_declare_board_and_columns() {
         [[sources]]
         name = "plane"
         kind = "plane"
-        board = "Trabalho"
+        board = "Work"
 
           [[sources.columns]]
-          name = "Minhas"
+          name = "Mine"
 
           [[sources.columns]]
-          name = "Inbox sem responsável"
+          name = "Unassigned inbox"
           assignee = "none"
           state = ["Inbox"]
 
         [[sources]]
         name = "todo"
         kind = "todoist"
-        lane = "Pessoal"
+        lane = "Personal"
 
           [[sources.columns]]
-          name = "Hoje"
+          name = "Today"
           filter = "today | overdue"
 
         [[sources]]
         name = "gh"
         kind = "github"
-        board = "Contribuições"
+        board = "Contributions"
 
           [[sources.columns]]
           name = "OSS reviews"
@@ -356,25 +356,25 @@ fn sources_declare_board_and_columns() {
         vec![
             (
                 "plane".to_owned(),
-                "Trabalho".to_owned(),
-                vec!["Minhas".to_owned(), "Inbox sem responsável".to_owned()]
+                "Work".to_owned(),
+                vec!["Mine".to_owned(), "Unassigned inbox".to_owned()]
             ),
             (
                 "todo".to_owned(),
-                "Pessoal".to_owned(),
-                vec!["Hoje".to_owned()]
+                "Personal".to_owned(),
+                vec!["Today".to_owned()]
             ),
             (
                 "gh".to_owned(),
-                "Contribuições".to_owned(),
+                "Contributions".to_owned(),
                 vec!["OSS reviews".to_owned()]
             ),
         ]
     );
 }
 
-/// Um filtro com chave errada ou valor inválido é recusado citando a fonte e
-/// a coluna, em vez de virar uma coluna que nunca mostra nada.
+/// A filter with a wrong key or invalid value is rejected naming the source
+/// and column, instead of becoming a column that never shows anything.
 #[test]
 fn invalid_column_filters_name_the_source_and_column() {
     let dir = scratch("bad-columns");
@@ -388,7 +388,7 @@ fn invalid_column_filters_name_the_source_and_column() {
         std::fs::write(
             &path,
             format!(
-                "[[sources]]\nname = \"plane\"\nkind = \"plane\"\n[[sources.columns]]\nname = \"Minhas\"\n{body}\n"
+                "[[sources]]\nname = \"plane\"\nkind = \"plane\"\n[[sources.columns]]\nname = \"Mine\"\n{body}\n"
             ),
         )
         .unwrap();
@@ -396,14 +396,14 @@ fn invalid_column_filters_name_the_source_and_column() {
         let error = load_plan_with(Some(path), &env(&[]), &|| None).expect_err(name);
         let message = error.to_string();
         assert!(
-            message.contains("plane") && message.contains("Minhas"),
+            message.contains("plane") && message.contains("Mine"),
             "{message}"
         );
     }
 }
 
-/// Uma coluna do GitHub precisa de exatamente uma origem: uma busca (`query`)
-/// ou a caixa de notificações (`notifications`).
+/// A GitHub column needs exactly one origin: a search (`query`) or the
+/// notifications inbox (`notifications`).
 #[test]
 fn github_columns_need_a_query_or_notifications() {
     let dir = scratch("gh-columns");
@@ -425,8 +425,8 @@ fn github_columns_need_a_query_or_notifications() {
     }
 }
 
-/// Uma fonte `google` usa a conta do GNOME Online Accounts; as colunas
-/// filtram faixas de tempo e agendas.
+/// A `google` source uses the GNOME Online Accounts account; columns filter
+/// time ranges and calendars.
 #[test]
 fn google_sources_are_scheduled_with_columns() {
     let path = scratch("google").join("config.toml");
@@ -436,14 +436,14 @@ fn google_sources_are_scheduled_with_columns() {
         [[sources]]
         name = "agenda"
         kind = "google"
-        board = "Pessoal"
+        board = "Personal"
 
           [[sources.columns]]
-          name = "Hoje"
+          name = "Today"
           when = ["now", "today"]
 
           [[sources.columns]]
-          name = "Time"
+          name = "Team"
           calendar = ["Team"]
         "#,
     )
@@ -451,5 +451,5 @@ fn google_sources_are_scheduled_with_columns() {
 
     let (plan, _) = load_plan_with(Some(path), &env(&[]), &|| None).expect("google is supported");
 
-    assert_eq!(plan.specs[0].source.columns(), vec!["Hoje", "Time"]);
+    assert_eq!(plan.specs[0].source.columns(), vec!["Today", "Team"]);
 }

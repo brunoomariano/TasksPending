@@ -1,4 +1,4 @@
-//! O agregador consulta cada fonte no próprio ritmo e mantém o último estado.
+//! The aggregator polls each source at its own pace and keeps the last state.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -14,7 +14,7 @@ use pending_runtime::{Aggregator, SourceSpec};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Fonte de teste: responde o roteiro em ordem e repete o último passo.
+/// Test source: replays the script in order and repeats the last step.
 struct Scripted {
     name: &'static str,
     delay: Duration,
@@ -124,8 +124,8 @@ async fn advance(secs: u64) {
     tokio::time::sleep(Duration::from_secs(secs)).await;
 }
 
-/// Enquanto a primeira consulta não volta, a fonte aparece como atualizando;
-/// quando volta, os cards aparecem e a fonte fica pronta.
+/// While the first poll hasn't returned, the source shows as refreshing;
+/// when it returns, the cards appear and the source is ready.
 #[tokio::test(start_paused = true)]
 async fn source_is_refreshing_until_its_first_result_arrives() {
     let aggregator = Aggregator::start(
@@ -144,8 +144,8 @@ async fn source_is_refreshing_until_its_first_result_arrives() {
     assert_eq!(card_ids(&snapshot), vec!["slow-card"]);
 }
 
-/// Cada fonte tem o próprio intervalo: uma fonte rápida não espera a lenta e a
-/// lenta não é consultada no ritmo da rápida.
+/// Each source has its own interval: a fast source doesn't wait for the slow
+/// one, and the slow one isn't polled at the fast one's pace.
 #[tokio::test(start_paused = true)]
 async fn each_source_refreshes_on_its_own_interval() {
     let (fast, fast_calls) = Scripted::new("fast", vec![Ok(batch("f"))]);
@@ -158,8 +158,8 @@ async fn each_source_refreshes_on_its_own_interval() {
     assert_eq!(slow_calls.load(Ordering::SeqCst), 2, "t=0,60");
 }
 
-/// Se o refresh falha depois de um sucesso, os últimos cards continuam na tela
-/// e a fonte fica degradada explicando a falha.
+/// If a refresh fails after a success, the last cards stay on screen and the
+/// source is degraded, explaining the failure.
 #[tokio::test(start_paused = true)]
 async fn failure_after_success_keeps_the_last_cards() {
     let (github, _) = Scripted::new(
@@ -183,7 +183,7 @@ async fn failure_after_success_keeps_the_last_cards() {
     );
 }
 
-/// Sem nenhum sucesso anterior, a falha aparece como falha, com o motivo.
+/// With no previous success, the failure shows as failed, with the reason.
 #[tokio::test(start_paused = true)]
 async fn failure_without_previous_success_is_failed() {
     let (github, _) = Scripted::new("github", vec![Err(SourceError::new("401 bad credentials"))]);
@@ -197,8 +197,8 @@ async fn failure_without_previous_success_is_failed() {
     assert_eq!(github.message.as_deref(), Some("401 bad credentials"));
 }
 
-/// Uma fonte que trava não segura o dashboard para sempre: depois do timeout o
-/// refresh conta como falha.
+/// A hung source doesn't hold the dashboard forever: after the timeout the
+/// refresh counts as a failure.
 #[tokio::test(start_paused = true)]
 async fn refresh_that_exceeds_the_timeout_fails() {
     let aggregator = Aggregator::start(
@@ -242,8 +242,8 @@ async fn a_source_timeout_overrides_the_global_one() {
     assert_eq!(health(&snapshot, "github").status, SourceStatus::Failed);
 }
 
-/// Quando o último handle do agregador é descartado, as fontes param de ser
-/// consultadas.
+/// Once the aggregator's last handle is dropped, the sources stop being
+/// polled.
 #[tokio::test(start_paused = true)]
 async fn dropping_the_aggregator_stops_refreshing() {
     let (github, calls) = Scripted::new("github", vec![Ok(batch("a"))]);
@@ -262,7 +262,7 @@ async fn dropping_the_aggregator_stops_refreshing() {
     assert_eq!(calls.load(Ordering::SeqCst), after_drop);
 }
 
-/// Fonte que entra em pânico nas primeiras consultas e depois responde.
+/// Source that panics on the first polls and then responds.
 struct Panicky {
     calls: Arc<AtomicUsize>,
     panics: usize,
@@ -282,9 +282,9 @@ impl PendingSource for Panicky {
     }
 }
 
-/// Um bug que faz a fonte entrar em pânico não pode congelar o status dela:
-/// o refresh conta como falha com o motivo, e a fonte continua sendo
-/// consultada no intervalo seguinte.
+/// A bug that makes the source panic can't freeze its status: the refresh
+/// counts as a failure with the reason, and the source is still polled at
+/// the next interval.
 #[tokio::test(start_paused = true)]
 async fn a_panicking_source_fails_and_keeps_being_refreshed() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -307,15 +307,15 @@ async fn a_panicking_source_fails_and_keeps_being_refreshed() {
         "{panicky:?}"
     );
 
-    // A falha dobra a espera: a nova consulta acontece em t=20.
+    // A failure doubles the wait: the next poll happens at t=20.
     advance(20).await;
     let snapshot = aggregator.snapshot();
     assert_eq!(health(&snapshot, "panicky").status, SourceStatus::Ready);
     assert_eq!(card_ids(&snapshot), vec!["recovered"]);
 }
 
-/// Falhas seguidas continuam mostrando o horário do último sucesso, e o
-/// primeiro sucesso depois delas deixa a fonte pronta de novo.
+/// Consecutive failures keep showing the time of the last success, and the
+/// first success after them makes the source ready again.
 #[tokio::test(start_paused = true)]
 async fn repeated_failures_keep_the_last_success_time_until_recovery() {
     let (github, _) = Scripted::new(
@@ -340,14 +340,14 @@ async fn repeated_failures_keep_the_last_success_time_until_recovery() {
     assert_eq!(github.last_refresh_at, success_at);
     assert_eq!(card_ids(&snapshot), vec!["old"]);
 
-    // Falhas em t=10 e t=30 (backoff de 20s e 40s); sucesso em t=70.
+    // Failures at t=10 and t=30 (backoff of 20s and 40s); success at t=70.
     advance(50).await;
     let snapshot = aggregator.snapshot();
     assert_eq!(health(&snapshot, "github").status, SourceStatus::Ready);
     assert_eq!(card_ids(&snapshot), vec!["new"]);
 }
 
-/// A mensagem de timeout mostra a duração real, mesmo abaixo de um segundo.
+/// The timeout message shows the real duration, even below one second.
 #[tokio::test(start_paused = true)]
 async fn timeout_message_shows_sub_second_durations() {
     let aggregator = Aggregator::start(
@@ -365,8 +365,8 @@ async fn timeout_message_shows_sub_second_durations() {
     assert!(message.contains("500ms"), "{message}");
 }
 
-/// Pedir atualização agora consulta todas as fontes sem esperar o intervalo, e
-/// o próximo refresh volta a contar a partir daí.
+/// Asking to refresh now polls every source without waiting for the
+/// interval, and the next refresh counts from there.
 #[tokio::test(start_paused = true)]
 async fn refresh_now_refreshes_every_source_immediately() {
     let (a, a_calls) = Scripted::new("a", vec![Ok(batch("a"))]);
@@ -392,9 +392,9 @@ async fn refresh_now_refreshes_every_source_immediately() {
     assert_eq!(a_calls.load(Ordering::SeqCst), 3);
 }
 
-/// Uma fonte que falha seguidas vezes é consultada cada vez menos (o dobro do
-/// intervalo a cada falha), para não martelar uma API fora do ar; o primeiro
-/// sucesso volta ao intervalo normal.
+/// A source that keeps failing is polled less and less often (double the
+/// interval per failure), so as not to hammer an API that is down; the first
+/// success returns to the normal interval.
 #[tokio::test(start_paused = true)]
 async fn failing_sources_back_off_and_recover() {
     let (github, calls) = Scripted::new(
@@ -407,7 +407,7 @@ async fn failing_sources_back_off_and_recover() {
     );
     let _aggregator = Aggregator::start(vec![spec(github, 10)], TIMEOUT);
 
-    // Falhas em t=0 e t=20 (espera 2x); sucesso em t=60 (espera 4x).
+    // Failures at t=0 and t=20 (2x wait); success at t=60 (4x wait).
     advance(1).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     advance(20).await;
@@ -417,13 +417,13 @@ async fn failing_sources_back_off_and_recover() {
     advance(10).await;
     assert_eq!(calls.load(Ordering::SeqCst), 3);
 
-    // Depois do sucesso, volta ao intervalo de 10s.
+    // After the success, back to the 10s interval.
     advance(10).await;
     assert_eq!(calls.load(Ordering::SeqCst), 4);
 }
 
-/// Quando a API diz até quando está limitando (rate limit), a fonte só volta a
-/// ser consultada depois desse horário.
+/// When the API says until when it is rate limiting, the source is only
+/// polled again after that time.
 #[tokio::test(start_paused = true)]
 async fn rate_limited_sources_wait_until_the_reset() {
     let retry_at = Utc::now() + chrono::Duration::seconds(300);
@@ -442,9 +442,9 @@ async fn rate_limited_sources_wait_until_the_reset() {
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
 
-/// Um refresh manual não fura o horário de liberação de uma API com limite de
-/// taxa: a fonte só é consultada depois dele; fontes sem limite atualizam na
-/// hora.
+/// A manual refresh doesn't bypass a rate-limited API's release time: that
+/// source is only polled after it; sources without a limit refresh right
+/// away.
 #[tokio::test(start_paused = true)]
 async fn refresh_now_respects_rate_limits() {
     let retry_at = Utc::now() + chrono::Duration::seconds(300);

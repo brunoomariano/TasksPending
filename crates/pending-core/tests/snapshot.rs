@@ -1,4 +1,4 @@
-//! Montagem do dashboard: áreas (abas) → grupos por fonte → colunas → cards.
+//! Dashboard assembly: areas (tabs) → groups per source → columns → cards.
 
 use chrono::{DateTime, TimeZone, Utc};
 use pending_core::{
@@ -50,7 +50,7 @@ fn fresh(items: Vec<SourceItem>) -> SourceOutcome {
     }
 }
 
-/// `Board/grupo/coluna: ids` para cada coluna, na ordem da tela.
+/// `Board/group/column: ids` for each column, in screen order.
 fn layout(snapshot: &DashboardSnapshot) -> Vec<String> {
     snapshot
         .boards
@@ -80,9 +80,9 @@ fn health<'a>(snapshot: &'a DashboardSnapshot, name: &str) -> &'a SourceHealth {
         .expect("source health present")
 }
 
-/// Cada fonte vira um grupo de colunas na área (aba) configurada; as áreas e
-/// os grupos seguem a ordem da configuração, e as colunas declaradas aparecem
-/// na ordem declarada, mesmo vazias.
+/// Each source becomes a group of columns in the configured area (tab);
+/// areas and groups follow config order, and declared columns appear in
+/// declared order, even when empty.
 #[test]
 fn sources_become_column_groups_inside_their_board() {
     let snapshot = build_snapshot(
@@ -121,7 +121,7 @@ fn sources_become_column_groups_inside_their_board() {
     assert_eq!(snapshot.generated_at, at(12));
 }
 
-/// Uma coluna que a fonte usa sem ter declarado é acrescentada no fim do grupo.
+/// A column the source uses without declaring it is appended to the group.
 #[test]
 fn undeclared_columns_are_appended() {
     let snapshot = build_snapshot(
@@ -140,8 +140,8 @@ fn undeclared_columns_are_appended() {
     );
 }
 
-/// Dentro de uma coluna, o mais grave vem primeiro; depois, o que tem data,
-/// do mais próximo ao mais distante; por fim, o mais recentemente atualizado.
+/// Within a column, the most severe comes first; then items with a date,
+/// soonest first; finally, the most recently updated.
 #[test]
 fn cards_are_ordered_by_severity_due_time_and_recency() {
     let due = |mut item: SourceItem, hour: u32| {
@@ -171,9 +171,9 @@ fn cards_are_ordered_by_severity_due_time_and_recency() {
     );
 }
 
-/// Colunas são filtros independentes: o mesmo item pode aparecer em várias
-/// colunas e em fontes diferentes; repetido dentro da mesma coluna, fica só
-/// uma vez e a fonte avisa.
+/// Columns are independent filters: the same item can appear in several
+/// columns and in different sources; repeated within the same column, it is
+/// kept once and the source warns.
 #[test]
 fn an_item_may_appear_in_several_columns_but_once_per_column() {
     let snapshot = build_snapshot(
@@ -215,7 +215,7 @@ fn an_item_may_appear_in_several_columns_but_once_per_column() {
     assert_eq!(health(&snapshot, "mirror").status, SourceStatus::Ready);
 }
 
-/// Uma fonte saudável aparece pronta, com o horário do refresh.
+/// A healthy source shows as ready, with the refresh time.
 #[test]
 fn healthy_source_is_ready() {
     let snapshot = build_snapshot(
@@ -234,8 +234,8 @@ fn healthy_source_is_ready() {
     assert_eq!(github.message, None);
 }
 
-/// Uma fonte que falha não derruba o dashboard: aparece como falha, com o
-/// motivo, com as colunas vazias; as outras fontes continuam visíveis.
+/// A failing source doesn't bring down the dashboard: it shows as failed,
+/// with the reason and empty columns; the other sources stay visible.
 #[test]
 fn failed_source_keeps_empty_columns_and_other_sources() {
     let snapshot = build_snapshot(
@@ -266,7 +266,7 @@ fn failed_source_keeps_empty_columns_and_other_sources() {
     assert_eq!(github.message.as_deref(), Some("401 bad credentials"));
 }
 
-/// Avisos da fonte (dados parciais) deixam a fonte degradada, com os cards.
+/// Source warnings (partial data) leave the source degraded, with its cards.
 #[test]
 fn source_warnings_degrade_the_source_but_keep_its_cards() {
     let mut outcome = fresh(vec![item("Review", "a", CardSeverity::Info, 1)]);
@@ -282,8 +282,8 @@ fn source_warnings_degrade_the_source_but_keep_its_cards() {
     assert_eq!(github.message.as_deref(), Some("o/private: 403"));
 }
 
-/// Links que não são http(s) nunca chegam à tela: o card é descartado e a
-/// fonte fica degradada nomeando-o.
+/// Non-http(s) links never reach the screen: the card is dropped and the
+/// source is degraded, naming it.
 #[test]
 fn cards_with_non_http_urls_are_dropped_and_degrade_the_source() {
     let snapshot = build_snapshot(
@@ -314,8 +314,8 @@ fn cards_with_non_http_urls_are_dropped_and_degrade_the_source() {
     );
 }
 
-/// Enquanto a primeira consulta não termina, a fonte aparece como atualizando,
-/// com as colunas vazias.
+/// Until the first poll finishes, the source shows as refreshing, with empty
+/// columns.
 #[test]
 fn pending_source_shows_as_refreshing() {
     let snapshot = build_snapshot(
@@ -334,8 +334,8 @@ fn pending_source_shows_as_refreshing() {
     assert_eq!(github.last_refresh_at, None);
 }
 
-/// Falha depois de um sucesso mantém os últimos cards, avisando que o dado é
-/// antigo e por quê, com o horário do último sucesso.
+/// A failure after a success keeps the last cards, warning that the data is
+/// stale and why, with the time of the last success.
 #[test]
 fn stale_source_keeps_last_known_cards_and_explains_the_failure() {
     let snapshot = build_snapshot(
@@ -365,8 +365,8 @@ fn stale_source_keeps_last_known_cards_and_explains_the_failure() {
     assert!(message.contains("o/private: 403"), "{message}");
 }
 
-/// Na subida, a fonte com dados da execução anterior mostra esses cards e fica
-/// como atualizando até a primeira consulta.
+/// At startup, a source with data from the previous run shows those cards
+/// and stays refreshing until the first poll.
 #[test]
 fn cached_source_shows_previous_cards_while_refreshing() {
     let snapshot = build_snapshot(

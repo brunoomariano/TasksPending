@@ -79,9 +79,9 @@ pub enum SourceStatus {
 mod tests {
     use super::*;
 
-    /// O frontend e integrações externas leem timestamps como RFC3339 e o link
-    /// do card como string ou null; o JSON do snapshot não pode mudar de forma
-    /// quando os tipos internos ficam mais fortes.
+    /// The frontend and external integrations read timestamps as RFC3339 and
+    /// the card link as a string or null; the snapshot JSON must not change
+    /// shape when the internal types get stronger.
     #[test]
     fn card_serializes_rfc3339_timestamp_and_optional_url() {
         let card = PendingCard {

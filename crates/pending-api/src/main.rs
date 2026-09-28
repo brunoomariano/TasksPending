@@ -92,11 +92,11 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Minimum wait between refreshes requested over HTTP; each one queries every
-/// source, and provider APIs rate-limit.
 /// How often the config file is checked for changes.
 const CONFIG_WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
+/// Minimum wait between refreshes requested over HTTP; each one queries every
+/// source, and provider APIs rate-limit.
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
 
 /// Header the dashboard sends with state-changing requests. Another site open
@@ -243,8 +243,8 @@ mod tests {
 
     use super::*;
 
-    /// A API serve o estado mantido pelo agregador: depois do primeiro
-    /// refresh, o snapshot traz os cards e a saúde da fonte configurada.
+    /// The API serves the aggregator's state: after the first refresh, the
+    /// snapshot carries the cards and health of the configured source.
     #[tokio::test(start_paused = true)]
     async fn snapshot_endpoint_serves_the_aggregated_state() {
         let aggregator = Aggregator::start(
@@ -294,8 +294,8 @@ mod tests {
         Aggregator::start(Vec::new(), Duration::from_secs(30))
     }
 
-    /// Com o frontend compilado disponível, a API serve a página, os assets e
-    /// continua respondendo as rotas da API.
+    /// With the built frontend available, the API serves the page and assets
+    /// and still answers the API routes.
     #[tokio::test]
     async fn serves_the_built_frontend_next_to_the_api() {
         let dir = std::env::temp_dir().join(format!("tasks-pending-static-{}", std::process::id()));
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(get(app, "/api/v1/snapshot").await.0, StatusCode::OK);
     }
 
-    /// Sem frontend configurado, só as rotas da API existem.
+    /// Without a frontend configured, only the API routes exist.
     #[tokio::test]
     async fn without_a_frontend_only_api_routes_exist() {
         let app = app(idle_aggregator(), None);
@@ -354,9 +354,9 @@ mod tests {
         (status, String::from_utf8_lossy(&body).into_owned())
     }
 
-    /// O botão de atualizar da web pede um refresh imediato de todas as
-    /// fontes; um segundo pedido logo em seguida é recusado com o tempo de
-    /// espera, para não estourar limites de taxa das APIs.
+    /// The web refresh button asks for an immediate refresh of every source; a
+    /// second request right after is refused with the wait time, so provider
+    /// rate limits aren't exceeded.
     #[tokio::test(start_paused = true)]
     async fn refresh_endpoint_wakes_sources_with_a_cooldown() {
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -387,8 +387,8 @@ mod tests {
         assert_eq!(status, StatusCode::ACCEPTED);
     }
 
-    /// Outro site aberto no navegador não consegue disparar o refresh: sem o
-    /// cabeçalho que só o dashboard envia, o pedido é recusado.
+    /// Another site open in the browser can't trigger a refresh: without the
+    /// header only the dashboard sends, the request is refused.
     #[tokio::test]
     async fn refresh_requires_the_dashboard_header() {
         let (status, _) = post(app(idle_aggregator(), None), "/api/v1/refresh", false).await;
@@ -396,8 +396,8 @@ mod tests {
         assert_eq!(status, StatusCode::FORBIDDEN);
     }
 
-    /// No bundle de release (`bin/` ao lado de `frontend/`), a API acha o
-    /// frontend sozinha; sem `index.html`, não serve nada; a flag vence.
+    /// In the release bundle (`bin/` next to `frontend/`), the API finds the
+    /// frontend on its own; without `index.html` it serves none; the flag wins.
     #[test]
     fn static_dir_comes_from_flag_or_release_bundle() {
         let bundle =
@@ -427,8 +427,8 @@ mod tests {
         .status()
     }
 
-    /// Só nomes locais chegam à API: um site que aponta o próprio domínio para
-    /// 127.0.0.1 (DNS rebinding) não lê o snapshot nem dispara refresh.
+    /// Only local host names reach the API: a site pointing its own domain at
+    /// 127.0.0.1 (DNS rebinding) can't read the snapshot or trigger a refresh.
     #[tokio::test]
     async fn only_local_host_names_are_served() {
         let app = app(idle_aggregator(), None);

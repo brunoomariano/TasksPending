@@ -322,37 +322,37 @@ mod tests {
         app(vec![
             fresh(
                 "plane",
-                "Trabalho",
-                &["Minhas", "Inbox"],
-                vec![card("Minhas", "API-1", "Fix login")],
+                "Work",
+                &["Mine", "Inbox"],
+                vec![card("Mine", "API-1", "Fix login")],
             ),
             fresh(
                 "github",
-                "Trabalho",
+                "Work",
                 &["Review"],
                 vec![card("Review", "gh-1", "Add cache")],
             ),
             SourceReport {
                 name: "calendar".to_owned(),
-                board: "Pessoal".to_owned(),
-                columns: vec!["Hoje".to_owned()],
+                board: "Personal".to_owned(),
+                columns: vec!["Today".to_owned()],
                 outcome: SourceOutcome::Failed(SourceError::new("feed returned 404")),
             },
         ])
     }
 
-    /// A tela mostra as áreas como abas, cada ferramenta como um grupo de
-    /// colunas com a contagem de cards, e a saúde das fontes.
+    /// The screen shows boards as tabs, each tool as a group of columns with
+    /// their card counts, and the health of the sources.
     #[test]
     fn boards_are_tabs_and_sources_are_groups_of_columns() {
         let screen = screen(&work(), 120, 24);
 
         for expected in [
-            "1 Trabalho",
-            "2 Pessoal",
+            "1 Work",
+            "2 Personal",
             " plane ",
             " github ",
-            "Minhas (1)",
+            "Mine (1)",
             "Inbox (0)",
             "Review (1)",
             "Fix login",
@@ -366,20 +366,20 @@ mod tests {
             );
         }
         assert!(
-            !screen.contains("Hoje"),
+            !screen.contains("Today"),
             "other boards stay hidden\n{screen}"
         );
     }
 
-    /// Com mais colunas do que cabem na largura, a área rola para o lado para
-    /// manter a coluna selecionada visível.
+    /// With more columns than fit the width, the board scrolls sideways to
+    /// keep the selected column visible.
     #[test]
     fn wide_boards_scroll_to_the_selected_column() {
         let names: Vec<String> = (0..8).map(|i| format!("Col{i}")).collect();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         let mut app = app(vec![fresh(
             "plane",
-            "Trabalho",
+            "Work",
             &names,
             vec![card("Col7", "last", "Last column card")],
         )]);
@@ -394,14 +394,14 @@ mod tests {
         assert!(!screen.contains("Col0"), "{screen}");
     }
 
-    /// Com mais cards do que cabem na altura, a coluna rola para manter o
-    /// card selecionado visível.
+    /// With more cards than fit the height, the column scrolls to keep the
+    /// selected card visible.
     #[test]
     fn long_columns_keep_the_selected_card_visible() {
         let items = (0..30)
-            .map(|i| card("Minhas", &format!("c{i}"), &format!("Card number {i}")))
+            .map(|i| card("Mine", &format!("c{i}"), &format!("Card number {i}")))
             .collect();
-        let mut app = app(vec![fresh("plane", "Trabalho", &["Minhas"], items)]);
+        let mut app = app(vec![fresh("plane", "Work", &["Mine"], items)]);
         for _ in 0..29 {
             app.handle_key(KeyEvent::from(KeyCode::Char('j')));
         }
@@ -412,7 +412,7 @@ mod tests {
         assert!(!screen.contains("Card number 0 "), "{screen}");
     }
 
-    /// Sem nenhuma fonte, a tela explica que não há fontes configuradas.
+    /// With no sources, the screen explains that none are configured.
     #[test]
     fn no_sources_is_explained() {
         let screen = screen(&app(Vec::new()), 80, 20);
@@ -420,7 +420,7 @@ mod tests {
         assert!(screen.contains("No sources configured"), "{screen}");
     }
 
-    /// Aviso informativo não aparece em vermelho; falha, sim.
+    /// Informational notices aren't red; failures are.
     #[test]
     fn footer_notices_use_error_color_only_for_failures() {
         let area = Rect::new(0, 0, 100, 20);
@@ -438,8 +438,8 @@ mod tests {
         assert_eq!(buf[(0, footer_y)].fg, ratatui::style::Color::Red);
     }
 
-    /// Um erro na configuração salva aparece no painel, avisando que a
-    /// anterior continua valendo.
+    /// An error in the saved config shows in the panel, saying the previous
+    /// one is still in effect.
     #[test]
     fn config_errors_are_shown() {
         let mut snapshot = build_snapshot(

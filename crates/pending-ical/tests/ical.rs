@@ -1,4 +1,4 @@
-//! Eventos do calendário (feed iCal) que ainda não terminaram viram cards.
+//! Calendar events (iCal feed) that have not ended yet become cards.
 
 use chrono::{DateTime, TimeZone, Utc};
 use pending_core::{CardSeverity, PendingSource, SourceItem};
@@ -34,8 +34,8 @@ fn summary(items: &[SourceItem]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Um evento de hoje vira card na seção de hoje, com horário, local, início
-/// como data do card e um id estável por ocorrência.
+/// An event today becomes a card in the today section, with time, location,
+/// its start as the card date and a stable id per occurrence.
 #[test]
 fn an_event_later_today_becomes_a_card() {
     let ics = calendar(&event(
@@ -62,8 +62,8 @@ fn an_event_later_today_becomes_a_card() {
     assert_eq!(card.severity, CardSeverity::Info);
 }
 
-/// Evento em andamento aparece em "Now" como aviso; o que começa em menos de
-/// uma hora também é aviso; eventos que já terminaram ficam de fora.
+/// An ongoing event shows under "Now" as a warning; one starting within an
+/// hour is also a warning; events already over are left out.
 #[test]
 fn ongoing_and_imminent_events_are_warnings_and_past_ones_are_hidden() {
     let ics = calendar(
@@ -100,7 +100,7 @@ fn ongoing_and_imminent_events_are_warnings_and_past_ones_are_hidden() {
     );
 }
 
-/// Evento de dia inteiro amanhã aparece em "Tomorrow" marcado como dia todo.
+/// An all-day event tomorrow shows under "Tomorrow" marked as all day.
 #[test]
 fn all_day_events_are_marked() {
     let ics = calendar(&event(
@@ -121,8 +121,8 @@ fn all_day_events_are_marked() {
     );
 }
 
-/// Um evento semanal no fuso de São Paulo gera uma ocorrência por semana na
-/// janela de 30 dias, sem a data excluída (EXDATE).
+/// A weekly event in the São Paulo zone yields one occurrence per week in the
+/// 30-day window, minus the excluded date (EXDATE).
 #[test]
 fn recurring_events_are_expanded_within_the_window() {
     let ics = calendar(&event(
@@ -150,7 +150,7 @@ EXDATE;TZID=America/Sao_Paulo:20261006T100000\r\n",
     assert_eq!(items[0].column, "Tomorrow");
 }
 
-/// A janela para em 25 eventos, mesmo que caibam mais em 30 dias.
+/// The window stops at 25 events, even if more fit in 30 days.
 #[test]
 fn at_most_25_events_are_shown() {
     let ics = calendar(&event(
@@ -163,8 +163,8 @@ fn at_most_25_events_are_shown() {
     assert_eq!(items.len(), 25);
 }
 
-/// Uma ocorrência movida (RECURRENCE-ID) aparece no novo horário, uma
-/// cancelada some, e eventos cancelados não aparecem.
+/// A moved occurrence (RECURRENCE-ID) shows at its new time, a cancelled one
+/// disappears, and cancelled events are not shown.
 #[test]
 fn moved_and_cancelled_occurrences_are_respected() {
     let ics = calendar(&[
@@ -207,7 +207,7 @@ DTSTART:20261001T140000Z\r\nDTEND:20261001T150000Z\r\n",
     );
 }
 
-/// Linhas dobradas e texto escapado do formato iCal são lidos corretamente.
+/// Folded lines and escaped text in the iCal format are read correctly.
 #[test]
 fn folded_lines_and_escaped_text_are_decoded() {
     let ics = calendar(&event(
@@ -220,7 +220,7 @@ fn folded_lines_and_escaped_text_are_decoded() {
     assert_eq!(items[0].card.title, "Review, plan and ship");
 }
 
-/// Num feed do Google, o card aponta para o dia no Google Calendar.
+/// In a Google feed, the card links to the day in Google Calendar.
 #[test]
 fn google_feeds_link_to_the_day() {
     let ics = calendar(&event(
@@ -243,7 +243,7 @@ fn google_feeds_link_to_the_day() {
     );
 }
 
-/// Sem a URL no ambiente, a fonte explica qual variável definir.
+/// Without the URL in the environment, the source says which variable to set.
 #[tokio::test]
 async fn missing_url_names_the_variable() {
     let error = IcalSource::from_env(&|_| None)
@@ -257,7 +257,8 @@ async fn missing_url_names_the_variable() {
     );
 }
 
-/// Uma URL que responde erro falha com o status, sem expor a URL secreta.
+/// A URL that responds with an error fails with the status, without exposing
+/// the secret URL.
 #[tokio::test]
 async fn http_errors_do_not_leak_the_secret_url() {
     let app = axum::Router::new().route(
@@ -281,9 +282,9 @@ async fn http_errors_do_not_leak_the_secret_url() {
     assert!(!message.contains("secret-token"), "{message}");
 }
 
-/// Séries com fim (UNTIL) em data, como o Google exporta eventos de dia
-/// inteiro, ou em horário sem fuso, são expandidas até o fim; não somem nem
-/// deixam a fonte degradada.
+/// Series ending (UNTIL) on a date, as Google exports all-day events, or at a
+/// floating time, are expanded up to the end; they neither vanish nor leave
+/// the source degraded.
 #[test]
 fn series_ending_on_a_date_or_floating_time_are_expanded() {
     let ics = calendar(
@@ -323,9 +324,9 @@ RRULE:FREQ=WEEKLY;UNTIL=20261014T100000\r\n",
     );
 }
 
-/// Uma série de dia inteiro ocupa o dia local todo, mesmo na ocorrência do
-/// dia em que o relógio muda (dia de 25 horas): continua na tela até a
-/// meia-noite local.
+/// An all-day series spans the whole local day, even on the occurrence where
+/// the clocks change (a 25-hour day): it stays on screen until local
+/// midnight.
 #[test]
 fn all_day_events_last_the_whole_local_day_across_dst() {
     let zone = chrono_tz::America::New_York;
@@ -334,12 +335,12 @@ fn all_day_events_last_the_whole_local_day_across_dst() {
         "SUMMARY:Long day\r\nDTSTART;VALUE=DATE:20261025\r\nDTEND;VALUE=DATE:20261026\r\n\
 RRULE:FREQ=WEEKLY\r\n",
     ));
-    // 23:30 de 01/11 em Nova York (04:30 UTC de 02/11), ainda no mesmo dia local.
+    // 23:30 on 11/01 in New York (04:30 UTC on 11/02), still the same local day.
     let late = Utc.with_ymd_and_hms(2026, 11, 2, 4, 30, 0).unwrap();
 
     let batch = occurrences(&ics, late, Window::default(), zone, None).unwrap();
 
-    // A ocorrência de 01/11 (meia-noite EDT = 04:00 UTC) ainda está na tela.
+    // The 11/01 occurrence (midnight EDT = 04:00 UTC) is still on screen.
     assert_eq!(
         batch.items[0].card.due_at.map(|at| at.to_rfc3339()),
         Some("2026-11-01T04:00:00+00:00".to_owned()),
@@ -347,8 +348,8 @@ RRULE:FREQ=WEEKLY\r\n",
     );
 }
 
-/// Num fuso em que a meia-noite não existe no dia da mudança de horário, o
-/// evento de dia inteiro começa no primeiro instante do dia.
+/// In a zone where midnight does not exist on the DST change day, the all-day
+/// event starts at the first instant of the day.
 #[test]
 fn all_day_events_on_a_day_without_midnight_are_read() {
     let zone = chrono_tz::America::Santiago;
@@ -364,7 +365,7 @@ fn all_day_events_on_a_day_without_midnight_are_read() {
     assert_eq!(batch.items.len(), 1);
 }
 
-/// Evento sem fim mostra só o horário de início.
+/// An event without an end shows only its start time.
 #[test]
 fn events_without_an_end_show_only_the_start() {
     let ics = calendar(&event(
@@ -386,10 +387,10 @@ fn events_without_an_end_show_only_the_start() {
     );
 }
 
-/// O fim da série (UNTIL) é lido no fuso dela: UNTIL em data num fuso com
-/// deslocamento inclui o último dia, e UNTIL sem fuso com início em outro fuso
-/// usa o fuso do início; UNTIL numa hora que não existe (mudança de horário)
-/// não descarta a série.
+/// The series end (UNTIL) is read in the series' zone: a date UNTIL in an
+/// offset zone includes the last day, a floating UNTIL with a start in another
+/// zone uses the start's zone, and an UNTIL at a nonexistent hour (DST change)
+/// does not drop the series.
 #[test]
 fn until_is_read_in_the_series_zone() {
     let sp = chrono_tz::America::Sao_Paulo;
@@ -430,9 +431,9 @@ DTEND;TZID=America/New_York:20260930T030000\r\nRRULE:FREQ=WEEKLY;UNTIL=20270314T
     );
 }
 
-/// Colunas configuradas agrupam as faixas de tempo: "Hoje" com o que está
-/// acontecendo e o resto do dia, "Depois" com amanhã e adiante; uma faixa que
-/// nenhuma coluna lista não aparece.
+/// Configured columns group the time buckets: "Today" holds what is ongoing
+/// and the rest of the day, "Week" what comes later; a bucket no column
+/// lists is not shown.
 #[test]
 fn configured_columns_group_time_buckets() {
     use pending_ical::{IcalColumn, When, assign_columns};
@@ -460,11 +461,11 @@ fn configured_columns_group_time_buckets() {
     );
     let columns = vec![
         IcalColumn {
-            name: "Hoje".to_owned(),
+            name: "Today".to_owned(),
             when: vec![When::Now, When::Today],
         },
         IcalColumn {
-            name: "Semana".to_owned(),
+            name: "Week".to_owned(),
             when: vec![When::Later],
         },
     ];
@@ -475,9 +476,9 @@ fn configured_columns_group_time_buckets() {
     assert_eq!(
         summary(&batch.items),
         vec![
-            ("Hoje".to_owned(), "Ongoing".to_owned()),
-            ("Hoje".to_owned(), "Afternoon".to_owned()),
-            ("Semana".to_owned(), "Friday".to_owned()),
+            ("Today".to_owned(), "Ongoing".to_owned()),
+            ("Today".to_owned(), "Afternoon".to_owned()),
+            ("Week".to_owned(), "Friday".to_owned()),
         ]
     );
 }

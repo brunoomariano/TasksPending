@@ -1,10 +1,10 @@
-//! O contrato de fonte: qualquer fonte é consultada pela mesma porta.
+//! The source contract: every source is polled through the same port.
 
 use pending_core::{PendingSource, SampleSource, SourceStatus, sample_snapshot};
 
-/// O agregador guarda fontes diferentes numa mesma lista e pede refresh a cada
-/// uma sem saber de qual provedor ela vem. A fonte de exemplo cumpre o
-/// contrato e entrega cards com seção definida.
+/// The aggregator keeps different sources in one list and asks each for a
+/// refresh without knowing which provider it comes from. The sample source
+/// honors the contract and delivers cards with a defined section.
 #[tokio::test]
 async fn sources_are_refreshed_through_a_shared_port() {
     let sources: Vec<Box<dyn PendingSource>> = vec![Box::new(SampleSource)];
@@ -17,8 +17,8 @@ async fn sources_are_refreshed_through_a_shared_port() {
     }
 }
 
-/// O snapshot de exemplo servido pela API e pela TUI é montado pelo mesmo
-/// caminho de uma fonte real, e a fonte aparece pronta.
+/// The sample snapshot served by the API and the TUI is built through the
+/// same path as a real source, and the source shows as ready.
 #[test]
 fn sample_snapshot_is_built_from_the_sample_source() {
     let snapshot = sample_snapshot();

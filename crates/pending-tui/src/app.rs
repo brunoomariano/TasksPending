@@ -339,7 +339,7 @@ mod tests {
         )
     }
 
-    /// Duas áreas: Work (plane com duas colunas + github) e Personal.
+    /// Two boards: Work (plane with two columns + github) and Personal.
     fn sample() -> DashboardSnapshot {
         snapshot(vec![
             report(
@@ -375,8 +375,8 @@ mod tests {
         app.selected_card().map(|c| c.id.as_str())
     }
 
-    /// h/l andam entre as colunas da área, passando de uma ferramenta para a
-    /// outra; j/k andam dentro da coluna; as pontas não dão a volta.
+    /// h/l move across the board's columns, crossing from one tool to the
+    /// next; j/k move within a column; the ends don't wrap.
     #[test]
     fn keys_move_across_columns_and_within_a_column() {
         let mut app = App::new(sample());
@@ -399,7 +399,7 @@ mod tests {
         assert_eq!(selected(&app), Some("p1"));
     }
 
-    /// Números e Tab trocam de área (aba); a seleção começa na primeira coluna.
+    /// Digits and Tab switch boards (tabs); the selection starts at the first column.
     #[test]
     fn digits_and_tab_switch_boards() {
         let mut app = App::new(sample());
@@ -425,8 +425,8 @@ mod tests {
         );
     }
 
-    /// Quando o snapshot atualiza, a seleção continua na mesma área, coluna e
-    /// card; se o card sumiu, fica na mesma posição dentro da coluna.
+    /// When the snapshot updates, the selection stays on the same board, column
+    /// and card; if the card is gone, it keeps the same position in the column.
     #[test]
     fn selection_follows_board_column_and_card_across_refreshes() {
         let mut app = App::new(sample());
@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(selected(&app), None);
     }
 
-    /// Enter abre o link do card selecionado; card sem link não faz nada.
+    /// Enter opens the selected card's link; a card without a link does nothing.
     #[test]
     fn enter_opens_the_selected_card_link() {
         let mut app = App::new(sample());
@@ -476,7 +476,7 @@ mod tests {
         );
     }
 
-    /// q, Esc e Ctrl-C saem.
+    /// q, Esc and Ctrl-C quit.
     #[test]
     fn quit_keys() {
         let mut app = App::new(sample());
@@ -490,8 +490,8 @@ mod tests {
         assert_eq!(app.handle_key(key(KeyCode::Char('c'))), Action::None);
     }
 
-    /// r pede atualização e avisa no rodapé; apertar de novo logo em seguida
-    /// não dispara outra rodada, e diz quanto falta esperar.
+    /// r requests a refresh and says so in the footer; pressing it again right
+    /// away doesn't start another round, and says how long to wait.
     #[test]
     fn refresh_is_acknowledged_and_debounced() {
         let mut app = App::new(sample());

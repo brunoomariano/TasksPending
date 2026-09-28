@@ -170,9 +170,8 @@ fn open_url(url: &str) -> io::Result<()> {
 mod tests {
     use super::*;
 
-    /// O terminal só é restaurado por pânico da thread da interface; o pânico
-    /// de uma fonte em outra thread é tratado pelo runtime e a TUI continua
-    /// usável.
+    /// Only a UI-thread panic restores the terminal; a source panicking on
+    /// another thread is handled by the runtime and the TUI stays usable.
     #[test]
     fn only_ui_thread_panics_restore_the_terminal() {
         let ui = std::thread::current().id();

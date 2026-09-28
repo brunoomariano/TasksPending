@@ -170,8 +170,8 @@ mod tests {
         assert_eq!(source.refresh_seconds, None);
     }
 
-    /// Um erro de digitação no tipo da fonte precisa falhar ao carregar a
-    /// configuração, não virar uma fonte que nunca produz cards.
+    /// A typo in the source kind must fail loading the config, not become a
+    /// source that never produces cards.
     #[test]
     fn unknown_source_kind_is_rejected() {
         let error = toml::from_str::<SourceConfig>(
@@ -185,8 +185,8 @@ mod tests {
         assert!(error.to_string().contains("gihtub"), "{error}");
     }
 
-    /// Cada fonte alimenta uma lane definida na configuração; sem lane
-    /// explícita, os cards vão para a lane "Inbox".
+    /// Each source feeds a lane defined in the config; without an explicit
+    /// lane, cards go to the "Inbox" lane.
     #[test]
     fn source_lane_comes_from_config_with_inbox_default() {
         let sources: AppConfig = toml::from_str(
@@ -211,8 +211,8 @@ mod tests {
         toml::from_str(text).expect("valid toml")
     }
 
-    /// A saúde das fontes é identificada pelo nome; dois nomes iguais tornariam
-    /// o dashboard ambíguo, então a configuração é recusada citando o nome.
+    /// Source health is keyed by name; two equal names would make the
+    /// dashboard ambiguous, so the config is rejected naming the duplicate.
     #[test]
     fn duplicate_source_names_are_rejected() {
         let config = parse(
@@ -231,8 +231,8 @@ mod tests {
         assert!(error.to_string().contains("github"), "{error}");
     }
 
-    /// Intervalo ou timeout zero faria o agregador consultar a fonte sem pausa
-    /// ou nunca dar tempo de resposta; a configuração é recusada.
+    /// A zero interval or timeout would make the aggregator poll the source
+    /// nonstop or never allow a response; the config is rejected.
     #[test]
     fn zero_intervals_and_timeouts_are_rejected() {
         for text in [
@@ -249,8 +249,8 @@ mod tests {
         }
     }
 
-    /// Cada fonte usa o próprio intervalo quando definido, senão o global; o
-    /// timeout de refresh tem padrão de 60 segundos.
+    /// Each source uses its own interval when set, otherwise the global one;
+    /// the refresh timeout defaults to 60 seconds.
     #[test]
     fn source_interval_falls_back_to_the_global_refresh() {
         let config = parse(
@@ -277,16 +277,15 @@ mod tests {
         assert_eq!(config.sources[1].timeout_seconds, None);
     }
 
-    /// Um erro de digitação numa chave global é recusado em vez de ignorado.
+    /// A typo in a global key is rejected instead of ignored.
     #[test]
     fn unknown_top_level_keys_are_rejected() {
         let error = toml::from_str::<AppConfig>("refresh_secs = 10").expect_err("typo");
         assert!(error.to_string().contains("refresh_secs"), "{error}");
     }
 
-    /// Um erro de digitação dentro de uma fonte (ex.: `enable` em vez de
-    /// `enabled`) é recusado citando a chave, em vez de ligar a fonte com o
-    /// valor padrão.
+    /// A typo inside a source (e.g. `enable` instead of `enabled`) is rejected
+    /// naming the key, instead of enabling the source with the default value.
     #[test]
     fn unknown_source_keys_are_rejected() {
         let error = toml::from_str::<AppConfig>(

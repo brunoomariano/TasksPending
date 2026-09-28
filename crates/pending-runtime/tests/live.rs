@@ -1,4 +1,4 @@
-//! O painel relê a configuração no refresh e quando o arquivo muda.
+//! The dashboard rereads the config on refresh and when the file changes.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -37,7 +37,7 @@ async fn settle() {
     tokio::time::sleep(Duration::from_millis(20)).await;
 }
 
-/// Mudou o arquivo e pediu refresh: a nova configuração entra na hora.
+/// File changed and refresh requested: the new config applies immediately.
 #[tokio::test]
 async fn refresh_reloads_a_changed_config() {
     let path = scratch("refresh").join("config.toml");
@@ -55,8 +55,8 @@ async fn refresh_reloads_a_changed_config() {
     assert_eq!(live.snapshot().config_error, None);
 }
 
-/// Refresh com a configuração igual não reconstrói as fontes (mantém o
-/// backoff e os limites de taxa delas).
+/// A refresh with an unchanged config doesn't rebuild the sources (keeping
+/// their backoff and rate limits).
 #[tokio::test]
 async fn refresh_with_an_unchanged_config_keeps_the_sources() {
     let path = scratch("unchanged").join("config.toml");
@@ -70,9 +70,9 @@ async fn refresh_with_an_unchanged_config_keeps_the_sources() {
     assert_eq!(live.generation(), before);
 }
 
-/// Um erro de digitação salvo no arquivo não derruba nada: a configuração
-/// anterior continua valendo e o erro aparece no painel; corrigido o
-/// arquivo, o erro some.
+/// A typo saved to the file breaks nothing: the previous config stays in
+/// effect and the error shows in the dashboard; once the file is fixed, the
+/// error goes away.
 #[tokio::test]
 async fn an_invalid_edit_keeps_the_previous_config_and_reports_it() {
     let path = scratch("invalid").join("config.toml");
@@ -94,8 +94,8 @@ async fn an_invalid_edit_keeps_the_previous_config_and_reports_it() {
     assert_eq!(live.snapshot().config_error, None);
 }
 
-/// Sem apertar nada: salvar o arquivo basta, a mudança é percebida em
-/// poucos segundos.
+/// Hands off: saving the file is enough, the change is picked up within a
+/// few seconds.
 #[tokio::test(start_paused = true)]
 async fn saving_the_file_reloads_it_automatically() {
     let path = scratch("watch").join("config.toml");

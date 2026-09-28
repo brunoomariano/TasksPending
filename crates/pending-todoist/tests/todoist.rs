@@ -1,4 +1,4 @@
-//! A fonte Todoist traz tarefas pelos filtros do próprio Todoist.
+//! The Todoist source fetches tasks through Todoist's own filters.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -106,9 +106,9 @@ fn ids(batch: &SourceBatch) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Sem colunas configuradas, aparecem "Today" (hoje e atrasadas) e "Next 7
-/// days"; cada card traz o projeto, o prazo e o link para a tarefa, e o token
-/// vai no cabeçalho de todas as chamadas.
+/// Without configured columns, "Today" (today and overdue) and "Next 7 days"
+/// appear; each card carries the project, the due date and the task link, and
+/// the token goes in the header of every call.
 #[tokio::test]
 async fn default_columns_show_today_and_the_next_days() {
     let stub = Stub::default();
@@ -164,7 +164,7 @@ async fn default_columns_show_today_and_the_next_days() {
     );
 }
 
-/// Tarefa atrasada é crítica; prioridade p1 (4 na API) é aviso.
+/// An overdue task is critical; priority p1 (4 in the API) is a warning.
 #[tokio::test]
 async fn overdue_tasks_are_critical_and_p1_is_a_warning() {
     let stub = Stub::default();
@@ -198,7 +198,7 @@ async fn overdue_tasks_are_critical_and_p1_is_a_warning() {
     assert!(late.card.body.contains("overdue"), "{}", late.card.body);
 }
 
-/// Colunas configuradas usam os filtros do Todoist; as páginas são seguidas.
+/// Configured columns use Todoist filters; pages are followed.
 #[tokio::test]
 async fn configured_columns_use_todoist_filters_across_pages() {
     let stub = Stub::default();
@@ -226,8 +226,8 @@ async fn configured_columns_use_todoist_filters_across_pages() {
     );
 }
 
-/// Token inválido falha com o status, sem expor o token; sem token, a fonte
-/// explica onde obtê-lo.
+/// An invalid token fails with the status without exposing the token; with no
+/// token, the source says where to get one.
 #[tokio::test]
 async fn auth_problems_are_explained_without_the_token() {
     let stub = Stub::default();
@@ -246,8 +246,8 @@ async fn auth_problems_are_explained_without_the_token() {
     assert!(error.to_string().contains("Integrations"), "{error}");
 }
 
-/// Prazos com fração de segundo ou em UTC exato são lidos; uma tarefa com
-/// horário que já passou hoje conta como atrasada.
+/// Due dates with fractional seconds or in plain UTC are read; a task whose
+/// time already passed today counts as overdue.
 #[tokio::test]
 async fn due_times_with_fractions_or_utc_are_read_and_past_times_are_overdue() {
     let stub = Stub::default();

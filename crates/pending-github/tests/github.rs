@@ -1,4 +1,4 @@
-//! A fonte GitHub traduz buscas da API em cards, sem vazar detalhes do provedor.
+//! The GitHub source turns API searches into cards without leaking provider details.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 const TOKEN: &str = "ghp_secret_test_token";
 
-/// Resposta programada por seção: status HTTP, cabeçalhos e corpo.
+/// Canned reply per section: HTTP status, headers and body.
 #[derive(Clone)]
 struct Reply {
     status: StatusCode,
@@ -42,7 +42,7 @@ impl Reply {
 
 #[derive(Clone, Default)]
 struct Stub {
-    /// Resposta por trecho da query (`review-requested`, `author`, `assignee`).
+    /// Reply per query fragment (`review-requested`, `author`, `assignee`).
     replies: Arc<Mutex<HashMap<&'static str, Reply>>>,
     auth_headers: Arc<Mutex<Vec<String>>>,
     /// Notifications served by `/notifications`, and the `all` param seen.
@@ -148,9 +148,9 @@ fn sections(batch: &SourceBatch) -> Vec<(String, String)> {
         .collect()
 }
 
-/// As pendências viram três seções: revisões pedidas a mim, meus PRs abertos e
-/// issues atribuídas a mim. Cada card traz link, repositório e número, e o
-/// pedido de revisão é destacado como aviso, porque bloqueia outra pessoa.
+/// Pending work becomes three sections: reviews requested from me, my open PRs
+/// and issues assigned to me. Each card carries link, repository and number,
+/// and a review request is highlighted as a warning, since it blocks someone else.
 #[tokio::test]
 async fn pending_github_work_becomes_cards_in_three_sections() {
     let batch = refresh(stub_with(vec![
@@ -192,7 +192,7 @@ async fn pending_github_work_becomes_cards_in_three_sections() {
     assert!(batch.warnings.is_empty());
 }
 
-/// O token vai no cabeçalho de autorização de todas as buscas.
+/// The token goes in the authorization header of every search.
 #[tokio::test]
 async fn every_search_is_authenticated_with_the_token() {
     let stub = Stub::default();
@@ -208,8 +208,8 @@ async fn every_search_is_authenticated_with_the_token() {
     );
 }
 
-/// Colunas são filtros independentes: o mesmo item achado por duas buscas
-/// aparece nas duas colunas.
+/// Columns are independent filters: the same item found by two searches shows
+/// up in both columns.
 #[tokio::test]
 async fn an_item_found_by_two_searches_appears_in_both_columns() {
     let shared = item("o/api", 7, "Add cache", true);
@@ -229,8 +229,8 @@ async fn an_item_found_by_two_searches_appears_in_both_columns() {
     );
 }
 
-/// Colunas da configuração substituem as padrão: cada uma é uma busca, com a
-/// gravidade escolhida.
+/// Configured columns replace the defaults: each one is a search with the
+/// chosen severity.
 #[tokio::test]
 async fn configured_columns_run_their_own_queries() {
     let stub = stub_with(vec![(
@@ -256,8 +256,8 @@ async fn configured_columns_run_their_own_queries() {
     assert_eq!(batch.items[0].card.severity, CardSeverity::Critical);
 }
 
-/// Se uma das buscas falha, as outras seções continuam na tela e o aviso diz
-/// qual seção ficou de fora e por quê.
+/// If one search fails, the other sections stay on screen and the warning says
+/// which section was left out and why.
 #[tokio::test]
 async fn one_failed_search_keeps_the_other_sections_with_a_warning() {
     let batch = refresh(stub_with(vec![
@@ -286,8 +286,8 @@ async fn one_failed_search_keeps_the_other_sections_with_a_warning() {
     assert!(batch.warnings[0].contains("502"), "{:?}", batch.warnings);
 }
 
-/// Quando todas as buscas falham, o refresh falha com o motivo da API, e a
-/// mensagem nunca contém o token.
+/// When every search fails, the refresh fails with the API's reason, and the
+/// message never contains the token.
 #[tokio::test]
 async fn all_searches_failing_is_an_error_without_the_token() {
     let bad = Reply::status(StatusCode::UNAUTHORIZED, "Bad credentials");
@@ -305,7 +305,7 @@ async fn all_searches_failing_is_an_error_without_the_token() {
     assert!(!message.contains(TOKEN), "{message}");
 }
 
-/// Limite de taxa estourado é explicado como tal, com o horário de liberação.
+/// An exceeded rate limit is explained as such, with the reset time.
 #[tokio::test]
 async fn rate_limit_is_reported_with_the_reset_time() {
     let mut limited = Reply::status(StatusCode::FORBIDDEN, "API rate limit exceeded");
@@ -331,8 +331,8 @@ async fn rate_limit_is_reported_with_the_reset_time() {
     );
 }
 
-/// Se a busca achou mais itens do que os carregados, a fonte avisa quantos
-/// ficaram de fora em vez de esconder isso.
+/// If the search found more items than were loaded, the source says how many
+/// were left out instead of hiding it.
 #[tokio::test]
 async fn truncated_results_are_reported() {
     let mut reply = Reply::items(vec![item("o/api", 1, "One", true)]);
@@ -352,7 +352,7 @@ async fn truncated_results_are_reported() {
     );
 }
 
-/// Sem token, a fonte não consulta nada e explica como configurar.
+/// Without a token, the source queries nothing and explains how to set one up.
 #[tokio::test]
 async fn missing_token_fails_with_a_setup_hint() {
     let base = serve(Stub::default()).await;
@@ -367,8 +367,8 @@ async fn missing_token_fails_with_a_setup_hint() {
     assert!(message.contains("gh auth login"), "{message}");
 }
 
-/// O token vem de `GITHUB_TOKEN`, depois `GH_TOKEN`, depois do `gh auth token`;
-/// valores vazios são ignorados.
+/// The token comes from `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token`;
+/// empty values are ignored.
 #[test]
 fn token_follows_env_then_gh_cli_precedence() {
     let gh = || Some("from-gh".to_owned());
@@ -394,8 +394,8 @@ fn token_follows_env_then_gh_cli_precedence() {
     assert_eq!(resolve_token(&env(&[]), &no_gh), None);
 }
 
-/// Com a API fora do ar, o erro diz o que aconteceu na conexão, sem URL e
-/// sem token.
+/// With the API down, the error says what happened on the connection, without
+/// URL or token.
 #[tokio::test]
 async fn transport_errors_explain_the_cause_without_url_or_token() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -413,8 +413,8 @@ async fn transport_errors_explain_the_cause_without_url_or_token() {
     assert!(!message.contains(TOKEN), "{message}");
 }
 
-/// Uma busca que trava não derruba as outras: ela vence o tempo limite
-/// próprio, vira aviso com o nome da seção, e as demais seções aparecem.
+/// A hanging search does not take down the others: it hits its own timeout,
+/// becomes a warning with the section name, and the other sections show.
 #[tokio::test]
 async fn a_hanging_search_times_out_without_losing_the_other_sections() {
     let app = Router::new().route(
@@ -456,8 +456,8 @@ async fn a_hanging_search_times_out_without_losing_the_other_sections() {
     );
 }
 
-/// Quando o próprio GitHub avisa que a busca ficou incompleta, a fonte
-/// repassa o aviso em vez de apresentar o resultado como completo.
+/// When GitHub itself reports the search as incomplete, the source passes the
+/// warning on instead of presenting the result as complete.
 #[tokio::test]
 async fn incomplete_search_results_are_reported() {
     let mut reply = Reply::items(vec![item("o/api", 1, "One", true)]);
@@ -476,7 +476,7 @@ async fn incomplete_search_results_are_reported() {
     );
 }
 
-/// PR em rascunho é marcado no card, para não parecer pronto para revisão.
+/// A draft PR is marked on the card, so it doesn't look ready for review.
 #[tokio::test]
 async fn draft_pull_requests_are_marked() {
     let mut draft = item("o/api", 7, "Add cache", true);
@@ -492,7 +492,7 @@ async fn draft_pull_requests_are_marked() {
     );
 }
 
-/// O id usa dono e repositório mesmo quando algum deles se chama `repos`.
+/// The id uses owner and repository even when one of them is named `repos`.
 #[tokio::test]
 async fn card_id_keeps_owner_and_repo_named_repos() {
     let batch = refresh(stub_with(vec![(
@@ -505,8 +505,8 @@ async fn card_id_keeps_owner_and_repo_named_repos() {
     assert_eq!(batch.items[0].card.id, "github:repos/repos#5");
 }
 
-/// Um token com espaço ou quebra de linha no fim (comum ao copiar de arquivo)
-/// é usado sem esses caracteres.
+/// A token with a trailing space or newline (common when copied from a file)
+/// is used without those characters.
 #[test]
 fn tokens_are_trimmed() {
     let env = |key: &str| (key == "GITHUB_TOKEN").then(|| "abc\n".to_owned());
@@ -524,8 +524,8 @@ fn fake_gh(name: &str, script: &str) -> std::path::PathBuf {
     path
 }
 
-/// O token vem da saída do `gh auth token`; saída com erro, vazia ou um `gh`
-/// que trava não viram token, e o travamento desiste no limite.
+/// The token comes from `gh auth token` output; failing or empty output, or a
+/// hanging `gh`, yields no token, and the hang gives up at the limit.
 #[cfg(unix)]
 #[test]
 fn gh_cli_token_handles_success_failure_and_hangs() {
@@ -565,9 +565,9 @@ fn notification(id: &str, kind: &str, api_url: Option<&str>, unread: bool) -> Va
     })
 }
 
-/// Uma coluna `all` mostra notificações lidas e não lidas; cada card aponta
-/// para o PR, a issue ou, nos outros tipos, o repositório, e as não lidas
-/// aparecem como aviso.
+/// An `all` column shows read and unread notifications; each card points to
+/// the PR, the issue or, for other types, the repository, and unread ones
+/// show as warnings.
 #[tokio::test]
 async fn notification_columns_show_the_inbox() {
     use pending_github::{GithubColumn, Notifications};
@@ -591,7 +591,7 @@ async fn notification_columns_show_the_inbox() {
     let seen_all = stub.notifications_all.clone();
     let base = serve(stub).await;
     let source = GithubSource::new(base, Some(TOKEN.to_owned())).with_columns(vec![GithubColumn {
-        name: "Notificações".to_owned(),
+        name: "Notifications".to_owned(),
         query: None,
         notifications: Some(Notifications::All),
         severity: None,
@@ -645,10 +645,10 @@ async fn notification_columns_show_the_inbox() {
         "{}",
         batch.items[0].card.body
     );
-    assert!(batch.items.iter().all(|i| i.column == "Notificações"));
+    assert!(batch.items.iter().all(|i| i.column == "Notifications"));
 }
 
-/// `unread` pede só as não lidas.
+/// `unread` asks for unread ones only.
 #[tokio::test]
 async fn unread_notification_columns_ask_only_for_unread() {
     use pending_github::{GithubColumn, Notifications};
@@ -658,7 +658,7 @@ async fn unread_notification_columns_ask_only_for_unread() {
     let seen_all = stub.notifications_all.clone();
     let base = serve(stub).await;
     let source = GithubSource::new(base, Some(TOKEN.to_owned())).with_columns(vec![GithubColumn {
-        name: "Não lidas".to_owned(),
+        name: "Unread".to_owned(),
         query: None,
         notifications: Some(Notifications::Unread),
         severity: None,

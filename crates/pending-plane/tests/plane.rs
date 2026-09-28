@@ -1,4 +1,4 @@
-//! A fonte Plane traz os itens abertos atribuídos ao usuário da API key.
+//! The Plane source brings the open items assigned to the API key's user.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -210,9 +210,9 @@ fn ids(batch: &SourceBatch) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Itens abertos atribuídos a mim viram cards por estado: em andamento, a
-/// fazer e backlog. Concluídos, cancelados e itens de outras pessoas ficam de
-/// fora, mesmo que o servidor ignore os filtros e mande tudo.
+/// Open items assigned to me become cards by state: in progress, to do and
+/// backlog. Completed, cancelled and other people's items stay out, even if
+/// the server ignores the filters and sends everything.
 #[tokio::test]
 async fn open_items_assigned_to_me_become_cards_by_state() {
     let stub = Stub::default();
@@ -253,8 +253,8 @@ async fn open_items_assigned_to_me_become_cards_by_state() {
     assert_eq!(card.updated_at.to_rfc3339(), "2026-09-28T10:00:00+00:00");
 }
 
-/// Prioridade urgente vira crítico e alta vira aviso; prazo vencido também é
-/// crítico e aparece no card.
+/// Urgent priority becomes critical and high becomes a warning; an overdue
+/// date is also critical and shows on the card.
 #[tokio::test]
 async fn priority_and_overdue_dates_set_severity() {
     let stub = Stub::default();
@@ -286,8 +286,8 @@ async fn priority_and_overdue_dates_set_severity() {
     assert!(late.card.body.contains("overdue"), "{}", late.card.body);
 }
 
-/// Estado e responsáveis podem vir como ids (sem expand) e a lista de
-/// projetos pode vir num envelope `results`; os dois formatos funcionam.
+/// State and assignees may come as ids (no expand) and the project list may
+/// come in a `results` envelope; both formats work.
 #[tokio::test]
 async fn unexpanded_fields_and_wrapped_projects_are_understood() {
     let stub = Stub::default();
@@ -312,8 +312,7 @@ async fn unexpanded_fields_and_wrapped_projects_are_understood() {
     );
 }
 
-/// Os itens de um projeto são lidos página a página enquanto o Plane indica
-/// que há mais.
+/// A project's items are read page by page while Plane says there are more.
 #[tokio::test]
 async fn issue_pages_are_followed() {
     let stub = Stub::default();
@@ -342,8 +341,8 @@ async fn issue_pages_are_followed() {
     assert_eq!(cursors.lock().unwrap().len(), 2, "stops when no more pages");
 }
 
-/// Um projeto com falha vira aviso com o identificador dele; os outros
-/// projetos continuam na tela.
+/// A failing project becomes a warning with its identifier; the other
+/// projects stay on screen.
 #[tokio::test]
 async fn a_failing_project_becomes_a_warning() {
     let stub = Stub::default();
@@ -378,8 +377,8 @@ async fn a_failing_project_becomes_a_warning() {
     );
 }
 
-/// Chave inválida falha com o status da API, sem a chave na mensagem; todas
-/// as chamadas mandam a chave no cabeçalho `x-api-key`.
+/// An invalid key fails with the API status, without the key in the message;
+/// every call sends the key in the `x-api-key` header.
 #[tokio::test]
 async fn bad_key_fails_without_leaking_it() {
     let stub = Stub::default();
@@ -398,7 +397,7 @@ async fn bad_key_fails_without_leaking_it() {
     assert!(keys.lock().unwrap().iter().all(|k| k == KEY));
 }
 
-/// Sem as variáveis de ambiente, a fonte explica quais faltam.
+/// Without the environment variables, the source says which are missing.
 #[tokio::test]
 async fn missing_settings_name_the_variables() {
     let env = |key: &str| (key == "PLANE_BASE_URL").then(|| "https://plane.example".to_owned());
@@ -414,8 +413,8 @@ async fn missing_settings_name_the_variables() {
     assert!(!message.contains("PLANE_BASE_URL"), "{message}");
 }
 
-/// Sem expand, o grupo do estado vem da lista de estados do projeto; itens
-/// concluídos continuam de fora, e estado desconhecido não vira backlog.
+/// Without expand, the state group comes from the project's state list;
+/// completed items stay out, and an unknown state does not become backlog.
 #[tokio::test]
 async fn unexpanded_completed_items_stay_hidden() {
     let stub = Stub::default();
@@ -441,7 +440,7 @@ async fn unexpanded_completed_items_stay_hidden() {
     );
 }
 
-/// A lista de projetos é lida página a página.
+/// The project list is read page by page.
 #[tokio::test]
 async fn project_pages_are_followed() {
     let stub = Stub::default();
@@ -466,7 +465,7 @@ async fn project_pages_are_followed() {
     assert_eq!(batch.items[0].card.id, "plane:WEB-1");
 }
 
-/// Um projeto lento vira aviso depois do limite dele; os outros aparecem.
+/// A slow project becomes a warning after its timeout; the others show up.
 #[tokio::test]
 async fn a_slow_project_becomes_a_warning() {
     let stub = Stub::default();
@@ -500,7 +499,7 @@ async fn a_slow_project_becomes_a_warning() {
     );
 }
 
-/// A chave nunca é enviada a outro servidor por redirecionamento.
+/// The key is never sent to another server through a redirect.
 #[tokio::test]
 async fn redirects_are_not_followed_with_the_key() {
     let elsewhere = Stub::default();
@@ -526,8 +525,8 @@ async fn redirects_are_not_followed_with_the_key() {
     );
 }
 
-/// No Plane Cloud a API fica em api.plane.so e o app em app.plane.so; os
-/// links dos cards apontam para o app. PLANE_WEB_URL permite outro endereço.
+/// On Plane Cloud the API lives at api.plane.so and the app at app.plane.so;
+/// card links point to the app. PLANE_WEB_URL allows another address.
 #[test]
 fn cloud_cards_link_to_the_web_app() {
     let env = |vars: &'static [(&'static str, &'static str)]| {
@@ -561,8 +560,8 @@ fn cloud_cards_link_to_the_web_app() {
     );
 }
 
-/// Os nomes usados por outras ferramentas (PLANE_TOKEN, PLANE_WORKSPACE)
-/// também servem; os nomes próprios têm precedência.
+/// The names other tools use (PLANE_TOKEN, PLANE_WORKSPACE) also work; the
+/// source's own names take precedence.
 #[test]
 fn common_alternative_variable_names_are_accepted() {
     let env = |key: &str| match key {
@@ -589,8 +588,8 @@ fn common_alternative_variable_names_are_accepted() {
 }
 
 /// Colunas configuradas filtram o workspace inteiro: itens meus, itens em
-/// Inbox sem responsável e itens em In Review de outras pessoas; um item que
-/// casa com duas colunas aparece nas duas.
+/// Unassigned inbox and other people's items In Review; an item that matches
+/// two columns shows in both.
 #[tokio::test]
 async fn configured_columns_filter_by_assignee_state_and_priority() {
     use pending_plane::{Assignee, PlaneColumn};
@@ -689,9 +688,8 @@ async fn configured_columns_filter_by_assignee_state_and_priority() {
     );
 }
 
-/// `state` sozinho não é restringido aos grupos abertos: uma coluna "Done"
-/// mostra itens concluídos; nomes de estado casam sem diferenciar maiúsculas,
-/// inclusive com acento.
+/// `state` alone is not limited to the open groups: a "Done" column shows
+/// completed items; state names match case-insensitively, accents included.
 #[tokio::test]
 async fn state_names_alone_select_any_group_and_ignore_case() {
     use pending_plane::{Assignee, PlaneColumn};
@@ -742,8 +740,8 @@ async fn state_names_alone_select_any_group_and_ignore_case() {
     );
 }
 
-/// Item de outra pessoa com estado desconhecido não deixa a fonte degradada
-/// quando nenhuma coluna mostraria itens dela.
+/// Another person's item with an unknown state does not degrade the source
+/// when no column would show their items.
 #[tokio::test]
 async fn unknown_states_of_items_no_column_shows_are_not_reported() {
     let stub = Stub::default();
@@ -756,9 +754,9 @@ async fn unknown_states_of_items_no_column_shows_are_not_reported() {
     assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
 }
 
-/// Servidor self-hosted: uma requisição por vez, sem `expand` (que deixa as
-/// respostas lentas), com estado e nomes de responsáveis resolvidos pelas
-/// listas de estados e de membros.
+/// Self-hosted server: one request at a time, no `expand` (which makes
+/// responses slow), with state and assignee names resolved from the state
+/// and member lists.
 #[tokio::test]
 async fn requests_run_one_at_a_time_without_expand() {
     use std::sync::atomic::Ordering;

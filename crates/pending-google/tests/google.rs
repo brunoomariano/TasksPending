@@ -1,5 +1,5 @@
-//! A fonte Google lê as agendas visíveis pela API do Calendar, com token do
-//! GNOME Online Accounts (aqui, um provedor falso).
+//! The Google source reads the visible calendars through the Calendar API, with
+//! a GNOME Online Accounts token (here, a fake provider).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -16,7 +16,7 @@ use pending_google::{GoogleColumn, GoogleSource, TokenProvider};
 use pending_ical::When;
 use serde_json::{Value, json};
 
-/// Tokens "t1", "t2"… a cada pedido; `refresh = true` conta à parte.
+/// Tokens "t1", "t2"… per request; `refresh = true` is counted separately.
 #[derive(Default)]
 struct FakeTokens {
     issued: AtomicUsize,
@@ -95,7 +95,7 @@ async fn serve(stub: Stub) -> String {
 }
 
 fn now() -> DateTime<Utc> {
-    // Segunda-feira, 28/09/2026, 12:00 UTC.
+    // Monday, 2026-09-28, 12:00 UTC.
     Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap()
 }
 
@@ -140,9 +140,9 @@ fn columns(batch: &SourceBatch) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Os eventos das agendas visíveis (primária e compartilhadas marcadas) viram
-/// cards por faixa de tempo, com link para o evento; agendas ocultas no Google
-/// ficam de fora. A API expande as recorrências (singleEvents).
+/// Events from visible calendars (primary and checked shared ones) become cards
+/// by time bucket, with a link to the event; calendars hidden in Google are
+/// left out. The API expands recurrences (singleEvents).
 #[tokio::test]
 async fn visible_calendars_become_time_bucket_columns() {
     let stub = stub();
@@ -211,7 +211,7 @@ async fn visible_calendars_become_time_bucket_columns() {
     );
 }
 
-/// Eventos cancelados ou que eu recusei não aparecem.
+/// Cancelled events, or ones I declined, don't show.
 #[tokio::test]
 async fn cancelled_and_declined_events_are_hidden() {
     let stub = stub();
@@ -257,8 +257,7 @@ async fn cancelled_and_declined_events_are_hidden() {
     );
 }
 
-/// Colunas configuradas agrupam faixas de tempo e podem filtrar agendas pelo
-/// nome.
+/// Configured columns group time buckets and can filter calendars by name.
 #[tokio::test]
 async fn configured_columns_filter_time_buckets_and_calendars() {
     let stub = stub();
@@ -285,12 +284,12 @@ async fn configured_columns_filter_time_buckets_and_calendars() {
     let batch = source(base, Arc::new(FakeTokens::default()))
         .with_columns(vec![
             GoogleColumn {
-                name: "Hoje".to_owned(),
+                name: "Today".to_owned(),
                 when: vec![When::Now, When::Today],
                 calendar: Vec::new(),
             },
             GoogleColumn {
-                name: "Time".to_owned(),
+                name: "Team".to_owned(),
                 when: Vec::new(),
                 calendar: vec!["team".to_owned()],
             },
@@ -302,15 +301,15 @@ async fn configured_columns_filter_time_buckets_and_calendars() {
     assert_eq!(
         columns(&batch),
         vec![
-            ("Hoje".to_owned(), "Team sync".to_owned()),
-            ("Time".to_owned(), "Team sync".to_owned()),
-            ("Hoje".to_owned(), "Mine".to_owned()),
+            ("Today".to_owned(), "Team sync".to_owned()),
+            ("Team".to_owned(), "Team sync".to_owned()),
+            ("Today".to_owned(), "Mine".to_owned()),
         ]
     );
 }
 
-/// Com o token expirado, a fonte pede credenciais novas ao GOA e tenta de
-/// novo, uma vez.
+/// With an expired token, the source asks GOA for fresh credentials and retries
+/// once.
 #[tokio::test]
 async fn an_expired_token_is_renewed_once() {
     let stub = stub();
@@ -335,8 +334,8 @@ async fn an_expired_token_is_renewed_once() {
     assert_eq!(tokens.refreshes.load(Ordering::SeqCst), 1);
 }
 
-/// Sem conta no GOA, a fonte explica o que fazer; uma agenda com erro vira
-/// aviso e as outras continuam.
+/// Without a GOA account, the source explains what to do; a calendar that errors
+/// becomes a warning and the others carry on.
 #[tokio::test]
 async fn missing_account_and_failing_calendars_are_explained() {
     let base = serve(stub()).await;
@@ -383,8 +382,8 @@ async fn missing_account_and_failing_calendars_are_explained() {
     let _ = CardSeverity::Info;
 }
 
-/// O limite de eventos vale por coluna: uma coluna filtrada por agenda não
-/// fica vazia só porque outras agendas têm muitos eventos antes.
+/// The event limit applies per column: a column filtered by calendar isn't left
+/// empty just because other calendars have many earlier events.
 #[tokio::test]
 async fn the_event_limit_applies_per_column_after_the_calendar_filter() {
     let stub = stub();
@@ -426,8 +425,8 @@ async fn the_event_limit_applies_per_column_after_the_calendar_filter() {
     );
 }
 
-/// Uma reunião presente na primária e numa agenda compartilhada aparece uma
-/// vez por coluna, e também na coluna filtrada pela agenda compartilhada.
+/// A meeting on both the primary and a shared calendar shows once per column,
+/// and also in the column filtered by the shared calendar.
 #[tokio::test]
 async fn a_shared_meeting_belongs_to_every_calendar_it_is_in() {
     let stub = stub();
@@ -474,8 +473,8 @@ async fn a_shared_meeting_belongs_to_every_calendar_it_is_in() {
     );
 }
 
-/// Uma reunião que recusei na minha agenda não volta pela cópia de outra
-/// agenda em que ela aparece.
+/// A meeting I declined on my calendar doesn't come back through another
+/// calendar's copy of it.
 #[tokio::test]
 async fn a_meeting_declined_in_my_calendar_stays_hidden_everywhere() {
     let stub = stub();
@@ -515,8 +514,8 @@ async fn a_meeting_declined_in_my_calendar_stays_hidden_everywhere() {
     assert!(batch.items.is_empty(), "{:?}", columns(&batch));
 }
 
-/// Um 403 de cota não é tratado como token inválido: a mensagem diz o motivo
-/// que o Google deu, sem mandar reconfigurar a conta.
+/// A quota 403 is not treated as an invalid token: the message gives Google's
+/// reason, without telling you to reconfigure the account.
 #[tokio::test]
 async fn quota_errors_are_not_reported_as_bad_tokens() {
     let app = Router::new().route(

@@ -424,3 +424,32 @@ fn github_columns_need_a_query_or_notifications() {
         assert!(error.to_string().contains("column `N`"), "{name}: {error}");
     }
 }
+
+/// Uma fonte `google` usa a conta do GNOME Online Accounts; as colunas
+/// filtram faixas de tempo e agendas.
+#[test]
+fn google_sources_are_scheduled_with_columns() {
+    let path = scratch("google").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "agenda"
+        kind = "google"
+        board = "Pessoal"
+
+          [[sources.columns]]
+          name = "Hoje"
+          when = ["now", "today"]
+
+          [[sources.columns]]
+          name = "Time"
+          calendar = ["Team"]
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) = load_plan_with(Some(path), &env(&[]), &|| None).expect("google is supported");
+
+    assert_eq!(plan.specs[0].source.columns(), vec!["Hoje", "Time"]);
+}

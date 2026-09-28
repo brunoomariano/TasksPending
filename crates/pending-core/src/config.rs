@@ -48,6 +48,7 @@ impl Eq for ColumnConfig {}
 #[serde(rename_all = "lowercase")]
 pub enum SourceKind {
     Github,
+    Google,
     Ical,
     Plane,
     Sample,

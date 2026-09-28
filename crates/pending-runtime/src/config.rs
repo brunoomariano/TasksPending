@@ -9,6 +9,7 @@ use pending_core::{
     AppConfig, ConfigError, DEFAULT_BOARD, PendingSource, SampleSource, SourceConfig, SourceKind,
 };
 use pending_github::{DEFAULT_API_URL, GithubColumn, GithubSource, gh_cli_token, resolve_token};
+use pending_google::{GoaTokens, GoogleColumn, GoogleSource};
 use pending_ical::{IcalColumn, IcalSource};
 use pending_plane::{PlaneColumn, PlaneSettings, PlaneSource};
 use pending_todoist::{TodoistColumn, TodoistSource};
@@ -195,6 +196,14 @@ fn plan(
                     }
                     Arc::new(SampleSource)
                 }
+                SourceKind::Google => Arc::new(
+                    GoogleSource::new(Arc::new(GoaTokens::from_env(&env_string))).with_columns(
+                        parse_columns(path, source, |c: &mut GoogleColumn, name| {
+                            c.name = name;
+                            Ok(())
+                        })?,
+                    ),
+                ),
                 SourceKind::Ical => Arc::new(IcalSource::from_env(&env_string).with_columns(
                     parse_columns(path, source, |c: &mut IcalColumn, name| {
                         c.name = name;

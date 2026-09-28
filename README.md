@@ -43,6 +43,7 @@ make frontend-dev
 - `crates/pending-runtime`: refresh scheduling and in-memory source state.
 - `crates/pending-github`: GitHub source adapter.
 - `crates/pending-plane`: Plane source adapter.
+- `crates/pending-google`: Google Calendar source adapter (GNOME Online Accounts).
 - `crates/pending-ical`: calendar (iCal) source adapter.
 - `crates/pending-todoist`: Todoist source adapter.
 - `crates/pending-api`: HTTP API over the shared dashboard snapshot.
@@ -52,4 +53,4 @@ make frontend-dev
 
 ## Current State
 
-The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. The dashboard is a kanban: boards (Work, Personal, …) are tabs, each source is a group of columns, and each column is a filter declared in the config. Sources available: `github` (search queries), `plane` (work item filters), `ical` (upcoming calendar events, e.g. Google Calendar), `todoist` (Todoist filters) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). The web dashboard polls the API every 15 seconds and shows source health; the API serves it from `--static-dir` or the release bundle's `frontend/`.
+The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. The dashboard is a kanban: boards (Work, Personal, …) are tabs, each source is a group of columns, and each column is a filter declared in the config. Sources available: `github` (search queries), `plane` (work item filters), `google` (Google Calendar via GNOME Online Accounts), `ical` (any iCal feed), `todoist` (Todoist filters) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). The web dashboard polls the API every 15 seconds and shows source health; the API serves it from `--static-dir` or the release bundle's `frontend/`.

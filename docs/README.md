@@ -7,6 +7,7 @@ TasksPending is organized around one shared model and several delivery surfaces.
 - `pending-core`: domain objects, config, refresh/source contracts, and testable invariants.
 - `pending-http`: HTTP helpers shared by source adapters (error text without URLs).
 - `pending-todoist`: Todoist source adapter.
+- `pending-google`: Google Calendar source adapter (GNOME Online Accounts).
 - `pending-ical`: iCal/Google Calendar source adapter.
 - `pending-plane`: Plane source adapter.
 - `pending-github`: GitHub source adapter; provider details stay here.

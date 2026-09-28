@@ -16,6 +16,7 @@ The dashboard is a kanban: each board (`board` in a source, formerly `lane`) is 
 |---|---|---|
 | `github` | `query` (search syntax) or `notifications` (`inbox`/`unread`), `severity` | Review requested, My pull requests, Assigned issues |
 | `plane` | `assignee` (me/none/others/any), `state_group`, `state`, `project`, `priority` | In progress, To do, Backlog (yours) |
+| `google` | `when` (now/today/tomorrow/later), `calendar` (names) | Now, Today, Tomorrow, Next 30 days |
 | `ical` | `when` (now/today/tomorrow/later) | Now, Today, Tomorrow, Next 30 days |
 | `todoist` | `filter` (Todoist filter query) | Today (today \| overdue), Next 7 days |
 | `sample` | none | Review, Next |
@@ -36,6 +37,18 @@ After every successful refresh, each source's cards are saved to `$XDG_STATE_HOM
 - `PLANE_WEB_URL` (optional): web app origin for card links; defaults to `PLANE_BASE_URL`, or `https://app.plane.so` when the API is Plane Cloud's.
 
 Missing variables make the source fail with their names. Column filters: `assignee` (`me` by default, `none`, `others`, `any`), `state_group` (`backlog`, `unstarted`, `started`, `completed`, `cancelled`), `state` (names such as `In Review`, compared without case, accents included), `project` (identifiers) and `priority` (`urgent`, `high`, `medium`, `low`, `none`). Without `state_group` and `state`, only open groups match; naming states selects them in any group (`state = ["Done"]` works). Invalid group or priority values fail at startup. Items whose state cannot be resolved are skipped, with a warning only when some column could have shown them. Cards show the assignees' names. Assignee and state filters run locally, because some Plane deployments ignore them server-side; when items come back without their state expanded, the project's states are fetched to find each group, and items whose state is still unknown are skipped with a warning. Urgent priority and a past target date make a card critical; high priority makes it a warning. "Overdue" uses the machine's local date. A refresh reads the user, the project list and every project (up to 20 s each, in parallel), so keep `timeout_seconds` at 60 (the default) or more; configs copied from older examples with 30 can time out the whole source. Projects and their work items are read page by page. Each project has 20 s; a failing or slow project becomes a warning naming its identifier, and the other projects still show.
+
+## Google Calendar Source
+
+`kind = "google"` reads Google Calendar through the Calendar API with an access token from GNOME Online Accounts (GOA), over the session D-Bus. There is no OAuth client of our own, no Google Cloud project and no token on disk: GOA owns the account and renews its tokens (the source asks for new credentials once when Google rejects a token).
+
+Setup (works outside GNOME, e.g. Hyprland):
+
+1. `sudo pacman -S gnome-online-accounts gnome-online-accounts-gtk` (needs a running secret service such as gnome-keyring);
+2. run `gnome-online-accounts-gtk`, add the Google account and keep **Calendar** enabled;
+3. `TASKS_PENDING_GOOGLE_ACCOUNT=<e-mail>` picks an account when there are several (default: the first Google account with Calendar enabled).
+
+It reads the calendars visible in Google Calendar (the primary one and the others ticked in its sidebar), with `singleEvents=true` so Google expands recurrences, and shows the same window and time buckets as the iCal source. Cancelled events and events you declined are hidden; a meeting present in several calendars shows once. Cards link to the event and show its calendar. Columns take `when` (time buckets) and `calendar` (calendar names, case-insensitive). A failing calendar becomes a warning; the others still show. A Google Workspace admin may block GNOME's OAuth client; then the account cannot be added in GOA.
 
 ## Calendar Source
 

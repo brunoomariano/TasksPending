@@ -61,6 +61,22 @@ enabled = true
 #   state = ["In Review"]
 #   # also: state_group = ["started"], project = ["API"], priority = ["urgent"]
 
+# Google Calendar through GNOME Online Accounts: install gnome-online-accounts
+# and gnome-online-accounts-gtk, add the Google account with Calendar enabled.
+# No token or URL here or in the environment.
+# [[sources]]
+# name = "agenda"
+# kind = "google"
+# board = "Personal"
+#
+#   [[sources.columns]]
+#   name = "Today"
+#   when = ["now", "today"]
+#
+#   [[sources.columns]]
+#   name = "Team"
+#   calendar = ["Team"]            # calendar names as shown in Google Calendar
+
 # Calendar (any iCal feed; for Google Calendar the "secret address in iCal
 # format"). Needs TASKS_PENDING_ICAL_URL; that URL is a secret.
 # [[sources]]

@@ -47,6 +47,7 @@ The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME
 ## Sources Available
 
 - `sample` (`pending-core`): fixed cards.
+- `google` (`pending-google`): Google Calendar API with tokens from GNOME Online Accounts over D-Bus (`zbus`); visible calendars, recurrences expanded by Google; cards and time buckets shared with `pending-ical` (`occurrence_items`).
 - `ical` (`pending-ical`): upcoming events from an iCal feed (Google Calendar's secret address); recurrences expanded with `rrule`. Cards set `due_at` to the event start.
 - `plane` (`pending-plane`): the workspace's work items, read per project and filtered locally per column; request shapes follow PlaneCockpit.
 - `todoist` (`pending-todoist`): one Todoist filter query per column (API v1).

@@ -1,0 +1,24 @@
+[package]
+name = "pending-google"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+chrono.workspace = true
+chrono-tz = "0.10"
+futures-util.workspace = true
+pending-core = { path = "../pending-core" }
+pending-http = { path = "../pending-http" }
+pending-ical = { path = "../pending-ical" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt"] }

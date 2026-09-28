@@ -35,11 +35,11 @@ The frontend types in `frontend/src/contract.gen.ts` are generated from these Ru
 - a failure after a success keeps the last batch as `stale`;
 - the loops stop when the last `Aggregator` handle is dropped.
 
-A source that fails waits longer before its next attempt: the interval doubled per consecutive failure, up to 16×, and never before the `retry_at` a source reports (the GitHub rate-limit reset). The first success returns to the normal interval.
+A source that fails waits longer before its next attempt: the interval doubled per consecutive failure, up to 16×, and never before the `retry_at` a source reports (the GitHub rate-limit reset), capped at an hour. `refresh_now` ignores both. The first success returns to the normal interval.
 
 `Aggregator::refresh_now` wakes every source waiting for its interval (the TUI's `r` key).
 
-The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME/tasks-pending/cache.json`, else `~/.local/state/...`) after each successful refresh, atomically (temp file + rename), since the API and the TUI may run at the same time. On start, a cached source shows those cards as `cached` (dashboard status `refreshing`, "showing data from the previous run") until its first refresh; a failure then keeps them as `stale`. A missing, corrupt or older-format cache is ignored and rewritten.
+The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME/tasks-pending/cache.json`, else `~/.local/state/...`) after each successful refresh. Saves are serialized in-process and merge into the file on disk, so an API and a TUI with different sources keep each other's entries; each write goes to a private (0600) temporary file that is renamed into place. Entries not refreshed for 30 days are dropped. On start, a cached source shows those cards as `cached` (dashboard status `refreshing`, "showing data from the previous run") until its first refresh; a failure then keeps them as `stale`. A missing, corrupt or older-format cache is ignored and rewritten.
 
 `pending_runtime::config` locates and loads the config file, validates it with `AppConfig::validate`, and turns each enabled source into a `SourceSpec`. The source's configured `name` is what source health shows.
 

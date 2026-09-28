@@ -223,14 +223,20 @@ async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared:
 /// Longest backoff, as a multiple of the source's interval.
 const MAX_BACKOFF_FACTOR: u32 = 16;
 
+/// Longest wait honoured from a source's `retry_at`, so a wrong local clock
+/// cannot park a source for days.
+const MAX_RETRY_WAIT: Duration = Duration::from_secs(60 * 60);
+
 /// Wait after the `failures`-th failure in a row: the interval doubled per
-/// failure, up to [`MAX_BACKOFF_FACTOR`] times, and never before `retry_at`.
+/// failure, up to [`MAX_BACKOFF_FACTOR`] times, and never before `retry_at`
+/// (capped at [`MAX_RETRY_WAIT`]).
 fn backoff(interval: Duration, failures: u32, retry_at: Option<DateTime<Utc>>) -> Duration {
     let factor = 2u32.saturating_pow(failures).min(MAX_BACKOFF_FACTOR);
     let wait = interval.saturating_mul(factor);
     let until_retry = retry_at
         .and_then(|at| (at - Utc::now()).to_std().ok())
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .min(MAX_RETRY_WAIT);
     wait.max(until_retry)
 }
 

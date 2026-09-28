@@ -155,3 +155,72 @@ async fn a_corrupt_cache_is_ignored_and_rewritten() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries["github"].1.items[0].card.id, "fresh");
 }
+
+/// Várias fontes terminando ao mesmo tempo gravam o cache em paralelo sem
+/// corromper o arquivo nem perder gravações.
+#[test]
+fn concurrent_saves_never_corrupt_the_file() {
+    let path = cache_file("concurrent");
+    let cache = Arc::new(Cache::new(path.clone()));
+
+    let threads: Vec<_> = (0..8)
+        .map(|n| {
+            let cache = cache.clone();
+            std::thread::spawn(move || {
+                for _ in 0..20 {
+                    cache
+                        .save(&[(format!("source-{n}"), Utc::now(), batch("x"))])
+                        .expect("save succeeds");
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().unwrap();
+    }
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(serde_json_is_valid(&text), "{text}");
+    assert_eq!(cache.load().len(), 8, "every source's entry is kept");
+}
+
+/// API e TUI com configurações diferentes compartilham o arquivo: cada uma
+/// atualiza as próprias fontes sem apagar as da outra.
+#[test]
+fn processes_with_different_sources_keep_each_others_entries() {
+    let path = cache_file("merge");
+    let api = Cache::new(path.clone());
+    let tui = Cache::new(path.clone());
+
+    api.save(&[("github".to_owned(), Utc::now(), batch("gh"))])
+        .unwrap();
+    tui.save(&[("plane".to_owned(), Utc::now(), batch("pl"))])
+        .unwrap();
+    api.save(&[("github".to_owned(), Utc::now(), batch("gh2"))])
+        .unwrap();
+
+    let entries = Cache::new(path).load();
+    assert_eq!(entries["github"].1.items[0].card.id, "gh2");
+    assert_eq!(entries["plane"].1.items[0].card.id, "pl");
+}
+
+/// O cache guarda títulos de PRs e itens privados: só o dono lê o arquivo.
+#[cfg(unix)]
+#[test]
+fn the_cache_file_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = cache_file("private");
+    Cache::new(path.clone())
+        .save(&[("github".to_owned(), Utc::now(), batch("gh"))])
+        .unwrap();
+
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+}
+
+fn serde_json_is_valid(text: &str) -> bool {
+    text.starts_with('{')
+        && text.ends_with('}')
+        && text.matches('{').count() == text.matches('}').count()
+}

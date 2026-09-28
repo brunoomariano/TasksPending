@@ -47,11 +47,16 @@ impl TerminalSession {
             return Err(error).context("entering alternate screen");
         }
 
-        // Restore the terminal before the panic message prints, so it is
-        // readable instead of lost with the alternate screen.
+        // Restore the terminal before a UI-thread panic message prints, so it
+        // is readable instead of lost with the alternate screen. Panics on
+        // other threads (a source bug) are handled by the runtime and must
+        // leave the TUI running.
+        let ui = std::thread::current().id();
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            restore_terminal();
+            if is_ui_thread(ui) {
+                restore_terminal();
+            }
             previous(info);
         }));
         Ok(Self)
@@ -62,6 +67,10 @@ impl Drop for TerminalSession {
     fn drop(&mut self) {
         restore_terminal();
     }
+}
+
+fn is_ui_thread(ui: std::thread::ThreadId) -> bool {
+    std::thread::current().id() == ui
 }
 
 fn restore_terminal() {
@@ -151,4 +160,21 @@ fn open_url(url: &str) -> io::Result<()> {
             std::thread::spawn(move || child.wait());
         })
         .map_err(|error| io::Error::new(error.kind(), format!("{opener}: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// O terminal só é restaurado por pânico da thread da interface; o pânico
+    /// de uma fonte em outra thread é tratado pelo runtime e a TUI continua
+    /// usável.
+    #[test]
+    fn only_ui_thread_panics_restore_the_terminal() {
+        let ui = std::thread::current().id();
+        assert!(is_ui_thread(ui));
+
+        let from_worker = std::thread::spawn(move || is_ui_thread(ui)).join().unwrap();
+        assert!(!from_worker);
+    }
 }

@@ -61,7 +61,10 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
     render_lanes(layout[2], buf, app);
 
     let footer = match app.notice() {
-        Some(notice) => Span::styled(notice, Style::default().fg(Color::Red)),
+        Some(notice) if app.notice_is_error() => {
+            Span::styled(notice, Style::default().fg(Color::Red))
+        }
+        Some(notice) => Span::styled(notice, Style::default().fg(Color::Cyan)),
         None => Span::styled(HELP, Style::default().fg(Color::DarkGray)),
     };
     Paragraph::new(footer).render(layout[3], buf);
@@ -357,5 +360,24 @@ mod tests {
         let screen = screen(&app, 80, 20);
 
         assert!(screen.contains("No sources configured"), "{screen}");
+    }
+
+    /// Aviso informativo (ex.: atualização pedida) não aparece em vermelho,
+    /// que fica reservado para falhas.
+    #[test]
+    fn informational_notices_are_not_styled_as_errors() {
+        let mut app = app();
+        app.set_info("refreshing all sources…");
+        let area = Rect::new(0, 0, 100, 20);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, "");
+
+        let footer_y = area.height - 1;
+        assert_ne!(buf[(0, footer_y)].fg, ratatui::style::Color::Red);
+
+        app.set_notice("could not open link: xdg-open not found");
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, "");
+        assert_eq!(buf[(0, footer_y)].fg, ratatui::style::Color::Red);
     }
 }

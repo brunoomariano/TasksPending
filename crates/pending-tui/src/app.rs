@@ -9,6 +9,11 @@ use pending_core::{DashboardSnapshot, PendingCard};
 /// provider APIs rate-limit (GitHub search: 30 requests per minute).
 pub const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
 
+struct Notice {
+    text: String,
+    is_error: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     None,
@@ -22,7 +27,7 @@ pub struct App {
     /// Index into `cards()`; `None` when there are no cards.
     selected: Option<usize>,
     /// Last action feedback, shown until the next key press.
-    notice: Option<String>,
+    notice: Option<Notice>,
     last_refresh: Option<Instant>,
 }
 
@@ -59,12 +64,28 @@ impl App {
         };
     }
 
+    /// Shows a failure in the footer until the next key press.
     pub fn set_notice(&mut self, notice: impl Into<String>) {
-        self.notice = Some(notice.into());
+        self.notice = Some(Notice {
+            text: notice.into(),
+            is_error: true,
+        });
+    }
+
+    /// Shows neutral feedback in the footer until the next key press.
+    pub fn set_info(&mut self, info: impl Into<String>) {
+        self.notice = Some(Notice {
+            text: info.into(),
+            is_error: false,
+        });
     }
 
     pub fn notice(&self) -> Option<&str> {
-        self.notice.as_deref()
+        self.notice.as_ref().map(|notice| notice.text.as_str())
+    }
+
+    pub fn notice_is_error(&self) -> bool {
+        self.notice.as_ref().is_some_and(|notice| notice.is_error)
     }
 
     pub fn selected_card(&self) -> Option<&PendingCard> {
@@ -107,12 +128,12 @@ impl App {
             let elapsed = now.saturating_duration_since(last);
             if elapsed < REFRESH_COOLDOWN {
                 let wait = (REFRESH_COOLDOWN - elapsed).as_secs().max(1);
-                self.notice = Some(format!("refresh already requested; wait {wait}s"));
+                self.set_info(format!("refresh already requested; wait {wait}s"));
                 return Action::None;
             }
         }
         self.last_refresh = Some(now);
-        self.notice = Some("refreshing all sources…".to_owned());
+        self.set_info("refreshing all sources…");
         Action::RefreshNow
     }
 

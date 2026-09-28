@@ -35,7 +35,7 @@ The frontend types in `frontend/src/contract.gen.ts` are generated from these Ru
 - a failure after a success keeps the last batch as `stale`;
 - the loops stop when the last `Aggregator` handle is dropped.
 
-A source that fails waits longer before its next attempt: the interval doubled per consecutive failure, up to 16×, and never before the `retry_at` a source reports (the GitHub rate-limit reset), capped at an hour. `refresh_now` ignores both. The first success returns to the normal interval.
+A source that fails waits longer before its next attempt: the interval doubled per consecutive failure, up to 16×, and never before the `retry_at` a source reports (the GitHub rate-limit reset), capped at an hour. `refresh_now` skips the ordinary backoff but still waits for a `retry_at`. The first success returns to the normal interval.
 
 `Aggregator::refresh_now` wakes every source waiting for its interval (the TUI's `r` key).
 

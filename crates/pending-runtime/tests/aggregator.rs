@@ -410,3 +410,34 @@ async fn rate_limited_sources_wait_until_the_reset() {
     advance(15).await;
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
+
+/// Um refresh manual não fura o horário de liberação de uma API com limite de
+/// taxa: a fonte só é consultada depois dele; fontes sem limite atualizam na
+/// hora.
+#[tokio::test(start_paused = true)]
+async fn refresh_now_respects_rate_limits() {
+    let retry_at = Utc::now() + chrono::Duration::seconds(300);
+    let (limited, limited_calls) = Scripted::new(
+        "limited",
+        vec![
+            Err(SourceError::new("rate limited").with_retry_at(retry_at)),
+            Ok(batch("a")),
+        ],
+    );
+    let (free, free_calls) = Scripted::new("free", vec![Ok(batch("b"))]);
+    let aggregator = Aggregator::start(vec![spec(limited, 10), spec(free, 60)], TIMEOUT);
+
+    advance(5).await;
+    aggregator.refresh_now();
+    tokio::time::sleep(Duration::from_millis(1)).await;
+
+    assert_eq!(free_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        limited_calls.load(Ordering::SeqCst),
+        1,
+        "still rate limited"
+    );
+
+    advance(300).await;
+    assert_eq!(limited_calls.load(Ordering::SeqCst), 2);
+}

@@ -188,6 +188,8 @@ async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared:
         }
 
         let succeeded = result.is_ok();
+        // A provider-announced retry time also holds back manual refreshes.
+        let mut hold_until = None;
         let wait = match &result {
             Ok(_) => {
                 failures = 0;
@@ -195,7 +197,11 @@ async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared:
             }
             Err(error) => {
                 failures = failures.saturating_add(1);
-                let wait = backoff(spec.interval, failures, error.retry_at());
+                let until_retry = until_retry(error.retry_at());
+                if !until_retry.is_zero() {
+                    hold_until = Some(Instant::now() + until_retry);
+                }
+                let wait = backoff(spec.interval, failures).max(until_retry);
                 warn!(source = %name, failures, next_in = ?wait, "backing off");
                 wait
             }
@@ -215,7 +221,14 @@ async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared:
 
         tokio::select! {
             () = tokio::time::sleep(wait) => {}
-            () = shared.wake.notified() => {}
+            () = shared.wake.notified() => {
+                // Rate limited: a manual refresh waits for the reset instead.
+                if let Some(hold) = hold_until
+                    && Instant::now() < hold
+                {
+                    tokio::time::sleep_until(hold).await;
+                }
+            }
         }
     }
 }
@@ -228,16 +241,18 @@ const MAX_BACKOFF_FACTOR: u32 = 16;
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(60 * 60);
 
 /// Wait after the `failures`-th failure in a row: the interval doubled per
-/// failure, up to [`MAX_BACKOFF_FACTOR`] times, and never before `retry_at`
-/// (capped at [`MAX_RETRY_WAIT`]).
-fn backoff(interval: Duration, failures: u32, retry_at: Option<DateTime<Utc>>) -> Duration {
+/// failure, up to [`MAX_BACKOFF_FACTOR`] times.
+fn backoff(interval: Duration, failures: u32) -> Duration {
     let factor = 2u32.saturating_pow(failures).min(MAX_BACKOFF_FACTOR);
-    let wait = interval.saturating_mul(factor);
-    let until_retry = retry_at
+    interval.saturating_mul(factor)
+}
+
+/// Time left until a source's `retry_at`, capped at [`MAX_RETRY_WAIT`].
+fn until_retry(retry_at: Option<DateTime<Utc>>) -> Duration {
+    retry_at
         .and_then(|at| (at - Utc::now()).to_std().ok())
         .unwrap_or_default()
-        .min(MAX_RETRY_WAIT);
-    wait.max(until_retry)
+        .min(MAX_RETRY_WAIT)
 }
 
 /// Runs one refresh in its own task so a panicking source becomes a failed

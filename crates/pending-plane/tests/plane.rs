@@ -27,6 +27,12 @@ struct Stub {
     /// Pages per project id, served in order following `cursor`.
     issues: Arc<Mutex<HashMap<String, Vec<Reply>>>>,
     keys: Arc<Mutex<Vec<String>>>,
+    /// Requests being served right now, and the most seen at once.
+    in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    max_in_flight: Arc<std::sync::atomic::AtomicUsize>,
+    issue_queries: Arc<Mutex<Vec<HashMap<String, String>>>>,
+    states_calls: Arc<std::sync::atomic::AtomicUsize>,
+    members: Arc<Mutex<Value>>,
     cursors: Arc<Mutex<Vec<String>>>,
 }
 
@@ -43,6 +49,30 @@ fn ok(body: Value) -> Reply {
     }
 }
 
+/// Counts a request as in flight until dropped.
+struct InFlight(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+async fn enter(stub: &Stub) -> InFlight {
+    use std::sync::atomic::Ordering;
+    let now = stub.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+    stub.max_in_flight.fetch_max(now, Ordering::SeqCst);
+    // Long enough for overlapping requests to be seen.
+    tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    InFlight(stub.in_flight.clone())
+}
+
+async fn members(State(stub): State<Stub>, headers: HeaderMap) -> Response {
+    let _guard = enter(&stub).await;
+    record_key(&stub, &headers);
+    axum::Json(stub.members.lock().unwrap().clone()).into_response()
+}
+
 fn record_key(stub: &Stub, headers: &HeaderMap) {
     stub.keys.lock().unwrap().push(
         headers
@@ -54,6 +84,7 @@ fn record_key(stub: &Stub, headers: &HeaderMap) {
 }
 
 async fn me(State(stub): State<Stub>, headers: HeaderMap) -> Response {
+    let _guard = enter(&stub).await;
     record_key(&stub, &headers);
     let reply = stub
         .me
@@ -69,6 +100,7 @@ async fn projects(
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
+    let _guard = enter(&stub).await;
     record_key(&stub, &headers);
     if params.get("cursor").map(String::as_str) == Some("1") {
         let page = stub
@@ -83,6 +115,9 @@ async fn projects(
 }
 
 async fn states(State(stub): State<Stub>, headers: HeaderMap) -> Response {
+    let _guard = enter(&stub).await;
+    stub.states_calls
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     record_key(&stub, &headers);
     axum::Json(stub.states.lock().unwrap().clone()).into_response()
 }
@@ -93,7 +128,9 @@ async fn issues(
     Path((_slug, project)): Path<(String, String)>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
+    let _guard = enter(&stub).await;
     record_key(&stub, &headers);
+    stub.issue_queries.lock().unwrap().push(params.clone());
     if stub.slow.lock().unwrap().contains(&project) {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
     }
@@ -121,6 +158,7 @@ async fn serve(stub: Stub) -> String {
             "/api/v1/workspaces/{slug}/projects/{project}/states/",
             get(states),
         )
+        .route("/api/v1/workspaces/{slug}/members/", get(members))
         .with_state(stub);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -446,7 +484,7 @@ async fn a_slow_project_becomes_a_warning() {
     let base = serve(stub).await;
 
     let batch = source(base)
-        .with_project_budget(std::time::Duration::from_millis(300))
+        .with_request_timeout(std::time::Duration::from_millis(300))
         .refresh()
         .await
         .expect("fast project still shows");
@@ -716,4 +754,67 @@ async fn unknown_states_of_items_no_column_shows_are_not_reported() {
     let batch = refresh(stub).await.expect("refresh succeeds");
 
     assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
+}
+
+/// Servidor self-hosted: uma requisição por vez, sem `expand` (que deixa as
+/// respostas lentas), com estado e nomes de responsáveis resolvidos pelas
+/// listas de estados e de membros.
+#[tokio::test]
+async fn requests_run_one_at_a_time_without_expand() {
+    use std::sync::atomic::Ordering;
+
+    let stub = Stub::default();
+    *stub.projects.lock().unwrap() = json!([
+        { "id": "p1", "identifier": "API", "name": "Backend" },
+        { "id": "p2", "identifier": "WEB", "name": "Frontend" },
+        { "id": "p3", "identifier": "OPS", "name": "Ops" }
+    ]);
+    *stub.states.lock().unwrap() =
+        json!([{ "id": "s-doing", "name": "Doing", "group": "started" }]);
+    *stub.members.lock().unwrap() = json!([{ "id": ME, "display_name": "bruno" }]);
+    let raw = |id: &str, seq: u64| {
+        let mut value = issue(id, seq, id, "started", ME);
+        value["state"] = json!("s-doing");
+        value["assignees"] = json!([ME]);
+        value
+    };
+    for (project, id) in [("p1", "i1"), ("p2", "i2"), ("p3", "i3")] {
+        stub.issues.lock().unwrap().insert(
+            project.to_owned(),
+            vec![ok(json!({ "results": [raw(id, 1)] }))],
+        );
+    }
+    let max = stub.max_in_flight.clone();
+    let queries = stub.issue_queries.clone();
+    let states_calls = stub.states_calls.clone();
+    let base = serve(stub).await;
+    let source = source(base);
+
+    let batch = source.refresh().await.expect("refresh succeeds");
+
+    assert_eq!(max.load(Ordering::SeqCst), 1, "never two requests at once");
+    assert!(
+        queries
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|q| !q.contains_key("expand")),
+        "no expand"
+    );
+    assert_eq!(batch.items.len(), 3);
+    assert!(
+        batch.items[0].card.body.contains("Doing"),
+        "{}",
+        batch.items[0].card.body
+    );
+    assert!(
+        batch.items[0].card.body.contains("@bruno"),
+        "{}",
+        batch.items[0].card.body
+    );
+
+    // States are remembered across refreshes.
+    let after_first = states_calls.load(Ordering::SeqCst);
+    source.refresh().await.expect("second refresh");
+    assert_eq!(states_calls.load(Ordering::SeqCst), after_first);
 }

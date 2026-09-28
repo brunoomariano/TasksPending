@@ -60,6 +60,8 @@ pub struct SourceSpec {
     pub board: String,
     /// Wait between the end of one refresh and the start of the next.
     pub interval: Duration,
+    /// Replaces the aggregator's timeout for this source.
+    pub timeout: Option<Duration>,
 }
 
 impl std::fmt::Debug for SourceSpec {
@@ -200,6 +202,7 @@ impl Aggregator {
 
 async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared: Arc<Shared>) {
     let name = spec.name.clone();
+    let timeout = spec.timeout.unwrap_or(timeout);
     let mut failures: u32 = 0;
     loop {
         let started = Instant::now();

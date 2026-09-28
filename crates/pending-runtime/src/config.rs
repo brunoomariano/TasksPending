@@ -250,6 +250,7 @@ fn plan(
             source: implementation,
             board: source.board.clone(),
             interval: Duration::from_secs(config.refresh_seconds_for(source)),
+            timeout: source.timeout_seconds.map(Duration::from_secs),
         });
     }
 
@@ -299,6 +300,7 @@ fn sample_plan() -> Plan {
             source: Arc::new(SampleSource),
             board: DEFAULT_BOARD.to_owned(),
             interval: Duration::from_secs(defaults.refresh_seconds),
+            timeout: None,
         }],
         timeout: Duration::from_secs(defaults.timeout_seconds),
     }

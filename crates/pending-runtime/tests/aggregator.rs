@@ -97,6 +97,7 @@ fn named_spec(name: &str, source: Arc<dyn PendingSource>, interval_secs: u64) ->
         source,
         board: "Work".to_owned(),
         interval: Duration::from_secs(interval_secs),
+        timeout: None,
     }
 }
 
@@ -218,6 +219,27 @@ async fn refresh_that_exceeds_the_timeout_fails() {
             .contains("timed out"),
         "{github:?}"
     );
+}
+
+/// A slow source can get more time than the global timeout without raising
+/// it for every other source.
+#[tokio::test(start_paused = true)]
+async fn a_source_timeout_overrides_the_global_one() {
+    let mut patient = spec(Scripted::slow("plane", Duration::from_secs(30)), 600);
+    patient.timeout = Some(Duration::from_secs(60));
+    let aggregator = Aggregator::start(
+        vec![
+            patient,
+            spec(Scripted::slow("github", Duration::from_secs(30)), 600),
+        ],
+        Duration::from_secs(5),
+    );
+
+    advance(31).await;
+
+    let snapshot = aggregator.snapshot();
+    assert_eq!(health(&snapshot, "plane").status, SourceStatus::Ready);
+    assert_eq!(health(&snapshot, "github").status, SourceStatus::Failed);
 }
 
 /// Quando o último handle do agregador é descartado, as fontes param de ser

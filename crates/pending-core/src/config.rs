@@ -28,6 +28,9 @@ pub struct SourceConfig {
     pub enabled: bool,
     #[serde(default)]
     pub refresh_seconds: Option<u64>,
+    /// Overrides the global `timeout_seconds` for this source.
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
     /// Columns (filters) of this source; empty means the source's defaults.
     /// Filter keys depend on `kind` and are checked when the source is built.
     #[serde(default)]
@@ -104,11 +107,13 @@ impl AppConfig {
                     });
                 }
             }
-            if source.refresh_seconds == Some(0) {
-                return Err(ConfigError::Zero(format!(
-                    "sources.{}.refresh_seconds",
-                    source.name
-                )));
+            for (key, value) in [
+                ("refresh_seconds", source.refresh_seconds),
+                ("timeout_seconds", source.timeout_seconds),
+            ] {
+                if value == Some(0) {
+                    return Err(ConfigError::Zero(format!("sources.{}.{key}", source.name)));
+                }
             }
         }
         Ok(())
@@ -234,6 +239,7 @@ mod tests {
             "refresh_seconds = 0",
             "timeout_seconds = 0",
             "[[sources]]\nname = \"s\"\nkind = \"sample\"\nrefresh_seconds = 0",
+            "[[sources]]\nname = \"s\"\nkind = \"sample\"\ntimeout_seconds = 0",
         ] {
             let error = parse(text).validate().expect_err(text);
             assert!(
@@ -255,6 +261,7 @@ mod tests {
             name = "fast"
             kind = "sample"
             refresh_seconds = 30
+            timeout_seconds = 180
 
             [[sources]]
             name = "default"
@@ -266,6 +273,8 @@ mod tests {
         assert_eq!(config.refresh_seconds_for(&config.sources[0]), 30);
         assert_eq!(config.refresh_seconds_for(&config.sources[1]), 120);
         assert_eq!(config.timeout_seconds, 60);
+        assert_eq!(config.sources[0].timeout_seconds, Some(180));
+        assert_eq!(config.sources[1].timeout_seconds, None);
     }
 
     /// Um erro de digitação numa chave global é recusado em vez de ignorado.

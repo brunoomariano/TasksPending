@@ -4,7 +4,7 @@
 
 # Default wait between refreshes of a source, in seconds.
 refresh_seconds = 300
-# A refresh slower than this counts as a failure (Plane needs about 60).
+# A refresh slower than this counts as a failure; sources may override it.
 timeout_seconds = 60
 
 # Each source is a group of kanban columns inside a board (tab). Boards and
@@ -16,6 +16,7 @@ kind = "sample"      # built-in fixed cards
 board = "Inbox"      # tab that shows this source (default "Inbox")
 enabled = true
 # refresh_seconds = 60   # overrides the default above
+# timeout_seconds = 120  # overrides the default timeout above
 
 # --- Examples (uncomment and adapt) ---------------------------------------
 
@@ -46,6 +47,7 @@ enabled = true
 # name = "plane"
 # kind = "plane"
 # board = "Work"
+# timeout_seconds = 180   # one request at a time: slow on big workspaces
 #
 #   [[sources.columns]]
 #   name = "Assigned to me"       # assignee defaults to "me", open states

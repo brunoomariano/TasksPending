@@ -3,8 +3,15 @@
 //!
 //! Filters are applied locally: some Plane deployments ignore the `assignees`
 //! and `state_group` query parameters (observed by PlaneCockpit).
+//!
+//! Requests go out one at a time, each waiting for the previous one, so a
+//! self-hosted server is never hit by a burst. Work items are listed without
+//! `expand` (which makes responses several times slower); state and assignee
+//! names come from the project's states and the workspace's members, kept in
+//! memory across refreshes and fetched again only for unknown ids.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
@@ -15,13 +22,10 @@ use reqwest::Client;
 use reqwest::redirect::Policy;
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::task::JoinSet;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Per request; a project whose request times out becomes a warning.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// Time one project may take (all its pages); past it the project becomes a
-/// warning instead of failing the whole refresh.
-const DEFAULT_PROJECT_BUDGET: Duration = Duration::from_secs(20);
 const PAGE_SIZE: &str = "100";
 /// Pages read per list before giving up with a warning.
 const MAX_PAGES: usize = 20;
@@ -255,8 +259,18 @@ impl PlaneSettings {
 pub struct PlaneSource {
     client: Client,
     settings: Result<PlaneSettings, String>,
-    project_budget: Duration,
+    request_timeout: Duration,
     columns: Vec<PlaneColumn>,
+    known: Known,
+}
+
+/// Names learned from the server, kept across refreshes.
+#[derive(Clone, Default)]
+struct Known {
+    /// Project id → its states.
+    states: Arc<Mutex<HashMap<String, States>>>,
+    /// Member id → display name.
+    members: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl PlaneSource {
@@ -264,7 +278,6 @@ impl PlaneSource {
     pub fn new(settings: Result<PlaneSettings, String>) -> Self {
         let client = Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
             // The API key is a custom header, which reqwest would forward to
             // whatever host a redirect points at.
             .redirect(Policy::none())
@@ -277,8 +290,9 @@ impl PlaneSource {
                 s.web_url = s.web_url.trim_end_matches('/').to_owned();
                 s
             }),
-            project_budget: DEFAULT_PROJECT_BUDGET,
+            request_timeout: REQUEST_TIMEOUT,
             columns: default_columns(),
+            known: Known::default(),
         }
     }
 
@@ -290,8 +304,8 @@ impl PlaneSource {
         self
     }
 
-    pub fn with_project_budget(mut self, budget: Duration) -> Self {
-        self.project_budget = budget;
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
         self
     }
 }
@@ -308,10 +322,10 @@ impl PendingSource for PlaneSource {
                     let api = Api {
                         client: self.client.clone(),
                         settings: settings.clone(),
+                        timeout: self.request_timeout,
+                        known: self.known.clone(),
                     };
-                    api.refresh(self.project_budget, &self.columns)
-                        .await
-                        .map_err(SourceError::new)
+                    api.refresh(&self.columns).await.map_err(SourceError::new)
                 }
                 Err(message) => Err(SourceError::new(message.clone())),
             }
@@ -319,10 +333,11 @@ impl PendingSource for PlaneSource {
     }
 }
 
-#[derive(Clone)]
 struct Api {
     client: Client,
     settings: PlaneSettings,
+    timeout: Duration,
+    known: Known,
 }
 
 struct Project {
@@ -331,7 +346,7 @@ struct Project {
     name: String,
 }
 
-/// State id → (group, name), for work items returned without `expand`.
+/// State id → (group, name).
 type States = HashMap<String, (String, String)>;
 
 struct ProjectItems {
@@ -340,12 +355,12 @@ struct ProjectItems {
     states: States,
 }
 
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl Api {
-    async fn refresh(
-        self,
-        project_budget: Duration,
-        columns: &[PlaneColumn],
-    ) -> Result<SourceBatch, String> {
+    async fn refresh(self, columns: &[PlaneColumn]) -> Result<SourceBatch, String> {
         let me = self.get("/users/me/", &[]).await?;
         let me = me
             .get("id")
@@ -368,29 +383,13 @@ impl Api {
             })
             .collect();
 
-        let mut tasks = JoinSet::new();
-        let mut task_index = HashMap::new();
-        for (index, project) in projects.iter().enumerate() {
-            let api = self.clone();
+        // One project at a time: the server never sees two requests at once.
+        let mut per_project = Vec::with_capacity(projects.len());
+        for project in &projects {
             let path = format!("{workspace}/projects/{}", project.id);
-            let handle = tasks.spawn(async move {
-                match tokio::time::timeout(project_budget, api.project_items(&path)).await {
-                    Ok(result) => result,
-                    Err(_) => Err(format!("timed out after {project_budget:?}")),
-                }
-            });
-            task_index.insert(handle.id(), index);
+            per_project.push(self.project_items(&project.id, &path).await);
         }
-        let mut per_project: Vec<Option<Result<ProjectItems, String>>> =
-            (0..projects.len()).map(|_| None).collect();
-        while let Some(joined) = tasks.join_next_with_id().await {
-            // A panicking project becomes a failure of that project only.
-            let (id, result) = match joined {
-                Ok((id, result)) => (id, result),
-                Err(error) => (error.id(), Err(format!("project task failed: {error}"))),
-            };
-            per_project[task_index[&id]] = Some(result);
-        }
+        let members = self.members(&workspace, &per_project).await;
 
         let today = Local::now().date_naive();
         let mut batch = SourceBatch::default();
@@ -400,8 +399,14 @@ impl Api {
             ));
         }
         let mut failures = Vec::new();
+        if let Err(message) = &members {
+            batch
+                .warnings
+                .push(format!("assignee names unavailable: {message}"));
+        }
+        let members = members.unwrap_or_default();
         for (project, result) in projects.iter().zip(per_project) {
-            match result.expect("every project task reports") {
+            match result {
                 Ok(found) => {
                     if found.truncated {
                         batch.warnings.push(format!(
@@ -411,7 +416,7 @@ impl Api {
                     }
                     let mut unknown_state = 0usize;
                     for issue in &found.issues {
-                        match self.describe_issue(issue, project, &found.states, today) {
+                        match self.describe_issue(issue, project, &found.states, &members, today) {
                             Described::Card(facts, card) => {
                                 for column in columns.iter().filter(|c| c.matches(&facts, &me)) {
                                     batch.items.push(SourceItem {
@@ -453,39 +458,85 @@ impl Api {
         Ok(batch)
     }
 
-    /// Work items of one project, plus its states when items came back
-    /// without `expand`.
-    async fn project_items(&self, project_path: &str) -> Result<ProjectItems, String> {
-        let (issues, truncated) = self
-            .pages(
-                &format!("{project_path}/issues/"),
-                &[("expand", "state,assignees")],
-            )
-            .await?;
+    /// Work items of one project and its states, read from memory unless an
+    /// item has a state not seen before.
+    async fn project_items(
+        &self,
+        project_id: &str,
+        project_path: &str,
+    ) -> Result<ProjectItems, String> {
+        let (issues, truncated) = self.pages(&format!("{project_path}/issues/"), &[]).await?;
 
-        let mut states = States::new();
-        if issues
-            .iter()
-            .any(|issue| issue.get("state").is_some_and(Value::is_string))
-        {
+        let mut states = lock(&self.known.states)
+            .get(project_id)
+            .cloned()
+            .unwrap_or_default();
+        let unknown = issues.iter().any(|issue| {
+            issue
+                .get("state")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !states.contains_key(id))
+        });
+        if unknown {
             let (list, _) = self.pages(&format!("{project_path}/states/"), &[]).await?;
-            for state in list {
-                if let (Some(id), Some(group)) = (
-                    state.get("id").and_then(Value::as_str),
-                    state.get("group").and_then(Value::as_str),
-                ) {
-                    states.insert(
-                        id.to_owned(),
-                        (group.to_owned(), str_field(&state, "name").to_owned()),
-                    );
-                }
-            }
+            states = list
+                .iter()
+                .filter_map(|state| {
+                    Some((
+                        state.get("id")?.as_str()?.to_owned(),
+                        (
+                            state.get("group")?.as_str()?.to_owned(),
+                            str_field(state, "name").to_owned(),
+                        ),
+                    ))
+                })
+                .collect();
+            lock(&self.known.states).insert(project_id.to_owned(), states.clone());
         }
         Ok(ProjectItems {
             issues,
             truncated,
             states,
         })
+    }
+
+    /// Display names of the workspace's members, from memory unless an
+    /// assignee is not known yet.
+    async fn members(
+        &self,
+        workspace: &str,
+        per_project: &[Result<ProjectItems, String>],
+    ) -> Result<HashMap<String, String>, String> {
+        let known = lock(&self.known.members).clone();
+        let unknown = per_project
+            .iter()
+            .flatten()
+            .flat_map(|found| &found.issues)
+            .filter_map(|issue| issue.get("assignees").and_then(Value::as_array))
+            .flatten()
+            .filter_map(Value::as_str)
+            .any(|id| !known.contains_key(id));
+        if !unknown {
+            return Ok(known);
+        }
+        // A bare array, or members nested under `member`.
+        let list = results(self.get(&format!("{workspace}/members/"), &[]).await?);
+        let fetched: HashMap<String, String> = list
+            .iter()
+            .filter_map(|entry| {
+                let member = entry
+                    .get("member")
+                    .filter(|m| m.is_object())
+                    .unwrap_or(entry);
+                let name = member
+                    .get("display_name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty())?;
+                Some((member.get("id")?.as_str()?.to_owned(), name.to_owned()))
+            })
+            .collect();
+        *lock(&self.known.members) = fetched.clone();
+        Ok(fetched)
     }
 
     /// Every page of a list endpoint; `true` when pages were left unread.
@@ -532,6 +583,7 @@ impl Api {
         issue: &Value,
         project: &Project,
         states: &States,
+        members: &HashMap<String, String>,
         today: NaiveDate,
     ) -> Described {
         // Expanded state object, or a state id looked up in the project's states.
@@ -565,7 +617,10 @@ impl Api {
             .collect();
         let assignee_names: Vec<&str> = assignees
             .iter()
-            .filter_map(|a| a.get("display_name").and_then(Value::as_str))
+            .filter_map(|a| match a {
+                Value::String(id) => members.get(id).map(String::as_str),
+                _ => a.get("display_name").and_then(Value::as_str),
+            })
             .collect();
 
         let reference = format!("{}-{sequence}", project.identifier);
@@ -656,11 +711,12 @@ impl Api {
             .client
             .get(format!("{}/api/v1{path}", self.settings.base_url))
             .query(query)
+            .timeout(self.timeout)
             .header("x-api-key", &self.settings.api_key)
             .header("accept", "application/json")
             .send()
             .await
-            .map_err(describe)?;
+            .map_err(|error| self.describe(error))?;
 
         let status = response.status();
         if status.is_redirection() {
@@ -672,7 +728,7 @@ impl Api {
             return response
                 .json::<Value>()
                 .await
-                .map_err(|error| format!("unexpected Plane response: {}", describe(error)));
+                .map_err(|error| format!("unexpected Plane response: {}", self.describe(error)));
         }
         let body = response.json::<Value>().await.unwrap_or_default();
         let detail = ["detail", "error", "message"]
@@ -682,6 +738,10 @@ impl Api {
         Err(format!("Plane API returned {status}: {detail}")
             .trim_end_matches([':', ' '])
             .to_owned())
+    }
+
+    fn describe(&self, error: reqwest::Error) -> String {
+        pending_http::describe_error(error, CONNECT_TIMEOUT, self.timeout)
     }
 }
 
@@ -707,8 +767,4 @@ fn results(value: Value) -> Vec<Value> {
 
 fn str_field<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or_default()
-}
-
-fn describe(error: reqwest::Error) -> String {
-    pending_http::describe_error(error, CONNECT_TIMEOUT, REQUEST_TIMEOUT)
 }

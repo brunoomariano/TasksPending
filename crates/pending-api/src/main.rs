@@ -253,6 +253,7 @@ mod tests {
                 source: Arc::new(SampleSource),
                 board: "Inbox".to_owned(),
                 interval: Duration::from_secs(300),
+                timeout: None,
             }],
             Duration::from_secs(30),
         );
@@ -365,6 +366,7 @@ mod tests {
                 source: Arc::new(Counting(calls.clone())),
                 board: "Inbox".to_owned(),
                 interval: Duration::from_secs(300),
+                timeout: None,
             }],
             Duration::from_secs(30),
         );

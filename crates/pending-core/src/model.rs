@@ -2,8 +2,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::snapshot::{PlacedCard, assemble};
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct DashboardSnapshot {
     pub generated_at: DateTime<Utc>,
@@ -59,64 +57,9 @@ pub enum SourceStatus {
     Failed,
 }
 
-pub fn sample_snapshot() -> DashboardSnapshot {
-    let at = DateTime::parse_from_rfc3339("2026-09-25T00:00:00Z")
-        .expect("valid sample timestamp")
-        .with_timezone(&Utc);
-    let card = |id: &str, title: &str, body: &str, severity| PendingCard {
-        id: id.to_owned(),
-        title: title.to_owned(),
-        body: body.to_owned(),
-        source: "sample".to_owned(),
-        url: None,
-        severity,
-        updated_at: at,
-    };
-
-    assemble(
-        at,
-        [
-            PlacedCard {
-                lane: "Work".to_owned(),
-                section: "Review".to_owned(),
-                card: card(
-                    "sample:review:1",
-                    "Design the first real source contract",
-                    "Define refresh, cache, and error semantics before binding to GitHub.",
-                    CardSeverity::Info,
-                ),
-            },
-            PlacedCard {
-                lane: "Personal".to_owned(),
-                section: "Next".to_owned(),
-                card: card(
-                    "sample:personal:1",
-                    "Choose the first frontend interaction",
-                    "Start with cards by lane and section, then add filters.",
-                    CardSeverity::Warning,
-                ),
-            },
-        ],
-        vec![SourceHealth {
-            name: "sample".to_owned(),
-            status: SourceStatus::Ready,
-            last_refresh_at: Some(at),
-            message: None,
-        }],
-    )
-    .expect("sample card ids are unique")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sample_snapshot_has_lanes_and_sources() {
-        let snapshot = sample_snapshot();
-        assert!(!snapshot.lanes.is_empty());
-        assert!(!snapshot.sources.is_empty());
-    }
 
     /// O frontend e integrações externas leem timestamps como RFC3339 e o link
     /// do card como string ou null; o JSON do snapshot não pode mudar de forma

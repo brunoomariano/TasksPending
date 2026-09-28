@@ -14,15 +14,23 @@ The shared model starts in `pending-core`:
 - `PendingCard`: an actionable pending item.
 - `SourceStatus`: source health and refresh metadata.
 
-Sources produce `PlacedCard`s (a card plus its lane and section). `assemble` groups them into a snapshot: lanes and sections keep first-seen order, cards sort by severity then most recent update, and duplicate card ids are rejected.
+## Sources
+
+Every source implements the `PendingSource` port: `refresh()` returns a `SourceBatch` (cards with their section, plus warnings for partial data) or a `SourceError`. The lane comes from the source's configuration (`lane`, default `Inbox`), never from the source itself.
+
+`build_snapshot` turns one `SourceReport` per source into the dashboard. A bad source never takes the dashboard down:
+
+- a failed source shows as `failed` with its error and contributes no cards;
+- warnings make the source `degraded`;
+- cards with a non-http(s) url, or an id already used by an earlier source, are dropped, and their source shows as `degraded` naming them;
+- lanes and sections keep first-seen order; cards sort by severity, then most recent update.
 
 The frontend types in `frontend/src/contract.gen.ts` are generated from these Rust types with `make contract`.
 
 ## First-Cut Runtime
 
-The current runtime returns a sample snapshot. The next iteration should introduce:
+The current runtime returns the snapshot of the built-in `SampleSource`. The next iteration should introduce:
 
-- a `PendingSource` trait or equivalent async port;
 - source refresh scheduling;
 - cache/persistence boundaries;
 - GitHub as the first concrete source, borrowing ideas from `ghpending`.

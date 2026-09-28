@@ -12,6 +12,9 @@ pub struct AppConfig {
 pub struct SourceConfig {
     pub name: String,
     pub kind: SourceKind,
+    /// Dashboard lane that receives this source's cards.
+    #[serde(default = "default_lane")]
+    pub lane: String,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     #[serde(default)]
@@ -36,6 +39,12 @@ impl Default for AppConfig {
 
 fn default_refresh_seconds() -> u64 {
     300
+}
+
+pub const DEFAULT_LANE: &str = "Inbox";
+
+fn default_lane() -> String {
+    DEFAULT_LANE.to_owned()
 }
 
 fn default_enabled() -> bool {
@@ -81,5 +90,27 @@ mod tests {
         .expect_err("unknown kind");
 
         assert!(error.to_string().contains("gihtub"), "{error}");
+    }
+
+    /// Cada fonte alimenta uma lane definida na configuração; sem lane
+    /// explícita, os cards vão para a lane "Inbox".
+    #[test]
+    fn source_lane_comes_from_config_with_inbox_default() {
+        let sources: AppConfig = toml::from_str(
+            r#"
+            [[sources]]
+            name = "github"
+            kind = "github"
+            lane = "Work"
+
+            [[sources]]
+            name = "sample"
+            kind = "sample"
+            "#,
+        )
+        .expect("valid config");
+
+        assert_eq!(sources.sources[0].lane, "Work");
+        assert_eq!(sources.sources[1].lane, "Inbox");
     }
 }

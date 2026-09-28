@@ -39,4 +39,4 @@ make frontend-dev
 
 ## Current State
 
-This is a bootstrap commit: the app renders a sample snapshot while the source ingestion layer is designed. The next product decisions are the source contract, persistence/cache strategy, and the first real GitHub source.
+The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The app still renders the built-in sample source. Next: refresh scheduling and cache, config loading, and the first real GitHub source.

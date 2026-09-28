@@ -91,7 +91,13 @@ impl Cache {
 
         let mut merged = self.load();
         for (name, refreshed_at, batch) in entries {
-            merged.insert(name.clone(), (*refreshed_at, batch.clone()));
+            // A save that lost a race must not replace newer data.
+            let newer_on_disk = merged
+                .get(name)
+                .is_some_and(|(on_disk, _)| on_disk > refreshed_at);
+            if !newer_on_disk {
+                merged.insert(name.clone(), (*refreshed_at, batch.clone()));
+            }
         }
         let oldest = Utc::now() - MAX_AGE;
         let file = File {
@@ -123,11 +129,14 @@ impl Cache {
         options.write(true).create_new(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let mut out = options.open(&tmp)?;
-        out.write_all(&serde_json::to_vec(&file)?)?;
-        drop(out);
-        std::fs::rename(&tmp, &self.path).inspect_err(|_| {
-            let _ = std::fs::remove_file(&tmp);
-        })
+        let written = options.open(&tmp).and_then(|mut out| {
+            out.write_all(&serde_json::to_vec(&file)?)?;
+            Ok(())
+        });
+        written
+            .and_then(|()| std::fs::rename(&tmp, &self.path))
+            .inspect_err(|_| {
+                let _ = std::fs::remove_file(&tmp);
+            })
     }
 }

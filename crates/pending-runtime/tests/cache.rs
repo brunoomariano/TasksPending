@@ -224,3 +224,22 @@ fn serde_json_is_valid(text: &str) -> bool {
         && text.ends_with('}')
         && text.matches('{').count() == text.matches('}').count()
 }
+
+/// Uma gravação atrasada com dados mais antigos não apaga a entrada mais nova
+/// que outra gravação já deixou no arquivo.
+#[test]
+fn a_late_save_with_older_data_does_not_win() {
+    let path = cache_file("newest-wins");
+    let cache = Cache::new(path.clone());
+    let newer = Utc::now();
+    let older = newer - chrono::Duration::minutes(5);
+
+    cache
+        .save(&[("github".to_owned(), newer, batch("new"))])
+        .unwrap();
+    cache
+        .save(&[("github".to_owned(), older, batch("old"))])
+        .unwrap();
+
+    assert_eq!(cache.load()["github"].1.items[0].card.id, "new");
+}

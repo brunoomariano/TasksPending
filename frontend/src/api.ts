@@ -13,11 +13,27 @@ export async function loadSnapshot(
     if (!response.ok) {
       return { ok: false, error: `HTTP ${response.status}` };
     }
-    return { ok: true, snapshot: (await response.json()) as DashboardSnapshot };
+    const body: unknown = await response.json();
+    if (!isSnapshot(body)) {
+      return { ok: false, error: "unexpected snapshot shape" };
+    }
+    return { ok: true, snapshot: body };
   } catch (error) {
     return {
       ok: false,
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function isSnapshot(value: unknown): value is DashboardSnapshot {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.generated_at === "string" &&
+    Array.isArray(candidate.lanes) &&
+    Array.isArray(candidate.sources)
+  );
 }

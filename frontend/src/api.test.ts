@@ -13,4 +13,41 @@ describe("loadSnapshot", () => {
 
     expect(result).toEqual({ ok: false, error: "HTTP 503" });
   });
+
+  /** Com a API respondendo, o dashboard recebe o snapshot como veio. */
+  test("returns the snapshot when the API answers", async () => {
+    const snapshot = {
+      generated_at: "2026-09-28T10:00:00Z",
+      lanes: [],
+      sources: [],
+    };
+    const ok = async () => Response.json(snapshot);
+
+    expect(await loadSnapshot(ok)).toEqual({ ok: true, snapshot });
+  });
+
+  /** Falha de rede vira erro visível com a mensagem original. */
+  test("reports network failures", async () => {
+    const offline = async (): Promise<Response> => {
+      throw new TypeError("Failed to fetch");
+    };
+
+    expect(await loadSnapshot(offline)).toEqual({
+      ok: false,
+      error: "Failed to fetch",
+    });
+  });
+
+  /**
+   * Um 200 que não tem forma de snapshot (proxy, versão errada da API) vira
+   * erro visível em vez de quebrar a renderização e deixar a página em branco.
+   */
+  test("reports responses that are not a snapshot", async () => {
+    const wrongShape = async () => Response.json({ hello: "world" });
+
+    expect(await loadSnapshot(wrongShape)).toEqual({
+      ok: false,
+      error: "unexpected snapshot shape",
+    });
+  });
 });

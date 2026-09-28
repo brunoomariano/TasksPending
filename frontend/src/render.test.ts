@@ -54,4 +54,42 @@ describe("renderApp", () => {
     expect(html).not.toContain("<script>");
     expect(html).toContain('href="https://github.com/o/r/pull/1"');
   });
+
+  /**
+   * Um link com esquema diferente de http(s) nunca vira `href`: o título
+   * aparece como texto, sem link clicável.
+   */
+  test("does not link card urls that are not http", () => {
+    const html = renderApp({
+      ok: true,
+      snapshot: {
+        generated_at: "2026-09-28T10:00:00Z",
+        sources: [],
+        lanes: [
+          {
+            name: "Work",
+            sections: [
+              {
+                name: "Review",
+                cards: [
+                  {
+                    id: "x",
+                    title: "Suspicious",
+                    body: "",
+                    source: "test",
+                    url: "javascript:alert(1)",
+                    severity: "info",
+                    updated_at: "2026-09-28T09:00:00Z",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(html).toContain("Suspicious");
+    expect(html).not.toContain("href=");
+  });
 });

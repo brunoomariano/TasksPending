@@ -15,13 +15,15 @@ pub struct PlacedCard {
 pub enum AssembleError {
     #[error("duplicate card id `{0}`")]
     DuplicateCardId(String),
+    #[error("card `{0}` has a url that is not http(s)")]
+    UnsafeCardUrl(String),
 }
 
 /// Groups placed cards into lanes and sections.
 ///
 /// Lanes and sections keep first-seen order. Cards inside a section are sorted
 /// by severity (critical first), then by most recent `updated_at`. Card ids must
-/// be unique across the whole snapshot.
+/// be unique across the whole snapshot, and card urls must be http(s).
 pub fn assemble(
     generated_at: DateTime<Utc>,
     cards: impl IntoIterator<Item = PlacedCard>,
@@ -38,6 +40,9 @@ pub fn assemble(
     {
         if !seen_ids.insert(card.id.clone()) {
             return Err(AssembleError::DuplicateCardId(card.id));
+        }
+        if card.url.as_deref().is_some_and(|url| !is_http_url(url)) {
+            return Err(AssembleError::UnsafeCardUrl(card.id));
         }
 
         let lane = match lanes.iter().position(|l| l.name == lane) {
@@ -74,4 +79,9 @@ pub fn assemble(
         lanes,
         sources,
     })
+}
+
+fn is_http_url(url: &str) -> bool {
+    let lower = url.trim_start().to_ascii_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://")
 }

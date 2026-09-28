@@ -62,9 +62,10 @@ function renderSection(section: Section): string {
 }
 
 function renderCard(card: PendingCard): string {
-  const title = card.url
-    ? `<a href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">${escapeHtml(card.title)}</a>`
-    : escapeHtml(card.title);
+  const title =
+    card.url && isHttpUrl(card.url)
+      ? `<a href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">${escapeHtml(card.title)}</a>`
+      : escapeHtml(card.title);
 
   return `
     <article class="card severity-${card.severity}">
@@ -76,6 +77,15 @@ function renderCard(card: PendingCard): string {
       <footer>${escapeHtml(card.source)} · ${escapeHtml(card.updated_at)}</footer>
     </article>
   `;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function severityLabel(severity: CardSeverity): string {

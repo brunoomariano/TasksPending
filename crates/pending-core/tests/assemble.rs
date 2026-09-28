@@ -100,3 +100,23 @@ fn rejects_duplicate_card_ids() {
         Err(AssembleError::DuplicateCardId("dup".to_owned()))
     );
 }
+
+/// O link do card vira `href` no frontend; um esquema como `javascript:` vindo
+/// de uma fonte executaria código ao clicar. A montagem só aceita http(s) e
+/// nomeia o card com link inseguro.
+#[test]
+fn rejects_card_urls_that_are_not_http() {
+    let mut card = placed("Work", "Review", "bad-link", CardSeverity::Info, 1);
+    card.card.url = Some("javascript:alert(1)".to_owned());
+    let mut ok = placed("Work", "Review", "good-link", CardSeverity::Info, 1);
+    ok.card.url = Some("HTTPS://github.com/o/r/pull/1".to_owned());
+
+    assert_eq!(
+        assemble(at(12), [ok.clone()], Vec::new()).map(|_| ()),
+        Ok(())
+    );
+    assert_eq!(
+        assemble(at(12), [ok, card], Vec::new()),
+        Err(AssembleError::UnsafeCardUrl("bad-link".to_owned()))
+    );
+}

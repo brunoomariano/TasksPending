@@ -175,4 +175,29 @@ describe("startPolling", () => {
     expect(load).toHaveBeenCalledTimes(3);
     poller.stop();
   });
+
+  /**
+   * Se desenhar falhou, a próxima consulta tenta de novo mesmo com os mesmos
+   * dados, em vez de considerar a tela atualizada.
+   */
+  test("retries rendering the same data after a render failure", async () => {
+    const load = always({ ok: true, snapshot: snapshot("10:00") });
+    let calls = 0;
+
+    const poller = startPolling({
+      load,
+      onState: () => {
+        calls += 1;
+        if (calls === 1) throw new Error("render bug");
+      },
+      intervalMs: 1000,
+      isHidden: () => false,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    poller.stop();
+
+    expect(calls).toBe(2);
+  });
 });

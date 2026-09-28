@@ -42,8 +42,9 @@ export function startPolling(options: PollingOptions): Poller {
         state = nextState(state, result, new Date());
         const key = viewKey(state);
         if (key !== shownKey) {
-          shownKey = key;
           options.onState(state);
+          // Only after a successful render, so a failed one is retried.
+          shownKey = key;
         }
       }
     } catch (error) {

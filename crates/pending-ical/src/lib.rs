@@ -278,6 +278,10 @@ pub fn occurrences(
             } else {
                 start + duration
             };
+            // Cheap pre-filter; `occurrence_items` applies the full rule.
+            if start >= end || finish < now {
+                continue;
+            }
             let day = start.with_timezone(&zone).date_naive();
             found.push(Occurrence {
                 id: format!("ical:{}:{}", event.uid, start.to_rfc3339()),
@@ -630,7 +634,7 @@ fn parse_time(prop: &Prop, zone: Tz) -> Option<(DateTime<Utc>, bool)> {
 
 /// The first instant of `date` in `zone`. On days whose midnight does not
 /// exist (clocks jump forward at 00:00), the first minute that does.
-fn local_midnight(date: NaiveDate, zone: Tz) -> Option<DateTime<Utc>> {
+pub fn local_midnight(date: NaiveDate, zone: Tz) -> Option<DateTime<Utc>> {
     first_valid(date.and_hms_opt(0, 0, 0)?, zone)
 }
 

@@ -442,15 +442,15 @@ impl Notification {
             .as_deref()
             .and_then(|url| url.split_once("/repos/"))
             .and_then(|(_, rest)| {
-                // rest = "o/r/pulls/7"
+                // rest = "o/r/pulls/7"; the link keeps the repository's host.
                 let (repo_and_kind, number) = rest.rsplit_once('/')?;
-                let (repo, kind) = repo_and_kind.rsplit_once('/')?;
+                let (_, kind) = repo_and_kind.rsplit_once('/')?;
                 let kind = match kind {
                     "pulls" => "pull",
                     "issues" => "issues",
                     _ => return None,
                 };
-                Some(format!("https://github.com/{repo}/{kind}/{number}"))
+                Some(format!("{}/{kind}/{number}", self.repository.html_url))
             })
             .unwrap_or(self.repository.html_url);
         PendingCard {

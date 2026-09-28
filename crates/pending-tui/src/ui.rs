@@ -112,6 +112,7 @@ fn render_lanes(area: Rect, buf: &mut Buffer, app: &App) {
         let mut items = Vec::new();
         let mut state = ListState::default();
         for section in &lane.sections {
+            let header = items.len();
             items.push(ListItem::new(Line::from(Span::styled(
                 section.name.as_str(),
                 Style::default()
@@ -128,6 +129,9 @@ fn render_lanes(area: Rect, buf: &mut Buffer, app: &App) {
                 let title_style = if app.is_selected(card) {
                     // Scrolls the lane so the selected card stays visible.
                     state.select(Some(items.len()));
+                    // Start at the card's section title so it stays in view;
+                    // ratatui scrolls further when the card would not fit.
+                    *state.offset_mut() = header;
                     Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
@@ -381,5 +385,53 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(area, &mut buf, &app, "");
         assert_eq!(buf[(0, footer_y)].fg, ratatui::style::Color::Red);
+    }
+
+    /// Ao chegar ao primeiro card de uma seção, a tela mostra o título dela e
+    /// os cards seguintes da mesma seção, em vez de deixar o card selecionado
+    /// colado no rodapé.
+    #[test]
+    fn selecting_a_card_shows_its_section_from_the_title() {
+        let at = Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap();
+        let items = (0..24)
+            .map(|i| SourceItem {
+                section: format!("Section {}", i / 4),
+                card: PendingCard {
+                    id: format!("card-{i}"),
+                    title: format!("Card number {i}"),
+                    body: String::new(),
+                    source: "github".to_owned(),
+                    url: None,
+                    due_at: None,
+                    severity: CardSeverity::Info,
+                    updated_at: at,
+                },
+            })
+            .collect();
+        let mut app = App::new(build_snapshot(
+            at,
+            vec![SourceReport {
+                name: "github".to_owned(),
+                lane: "Work".to_owned(),
+                outcome: SourceOutcome::Fresh {
+                    batch: SourceBatch {
+                        items,
+                        warnings: Vec::new(),
+                    },
+                    refreshed_at: at,
+                },
+            }],
+        ));
+        for _ in 0..20 {
+            app.handle_key(crossterm::event::KeyEvent::from(
+                crossterm::event::KeyCode::Char('j'),
+            ));
+        }
+
+        let screen = screen(&app, 80, 20);
+
+        assert!(screen.contains("Section 5"), "{screen}");
+        assert!(screen.contains("Card number 20"), "{screen}");
+        assert!(screen.contains("Card number 23"), "{screen}");
     }
 }

@@ -144,14 +144,28 @@ pub fn occurrences(
         if event.cancelled() {
             continue;
         }
+        // Counted above; showing it too would duplicate the original instance.
+        if event
+            .recurrence_id
+            .as_ref()
+            .is_some_and(|id| parse_time(id, zone).is_none())
+        {
+            continue;
+        }
         let Some((start, all_day)) = parse_time(event.start_prop(), zone) else {
             unreadable += 1;
             continue;
         };
         let duration = event.duration(start, all_day, zone);
+        // All-day events span whole local days, whatever their length in hours.
+        let days = ((duration.num_minutes() as f64) / (24.0 * 60.0))
+            .round()
+            .max(1.0) as u64;
 
         let starts = if event.recurrence_id.is_none() && event.recurs() {
-            match expand(event, zone, now - duration, end) {
+            // A day of slack: a day longer than `duration` (DST) must still
+            // be expanded; finished occurrences are dropped below.
+            match expand(event, zone, now - duration - chrono::Duration::days(1), end) {
                 Some(starts) => starts
                     .into_iter()
                     .filter(|at| !overridden.contains_key(&(event.uid.clone(), *at)))
@@ -166,7 +180,16 @@ pub fn occurrences(
         };
 
         for start in starts {
-            let finish = start + duration;
+            let finish = if all_day {
+                start
+                    .with_timezone(&zone)
+                    .date_naive()
+                    .checked_add_days(Days::new(days))
+                    .and_then(|day| local_midnight(day, zone))
+                    .unwrap_or(start + duration)
+            } else {
+                start + duration
+            };
             let not_over = finish > now || (duration.is_zero() && start >= now);
             if not_over && start < end {
                 found.push((start, finish, all_day, event));
@@ -221,6 +244,8 @@ fn card(
 
     let mut body = if all_day {
         format!("{} · all day", local_start.format("%a %d %b"))
+    } else if finish == start {
+        local_start.format("%a %d %b %H:%M").to_string()
     } else {
         format!(
             "{}–{}",
@@ -475,10 +500,7 @@ fn parse_time(prop: &Prop, zone: Tz) -> Option<(DateTime<Utc>, bool)> {
         || value.len() == 8
     {
         let date = NaiveDate::parse_from_str(value, "%Y%m%d").ok()?;
-        let midnight = zone
-            .from_local_datetime(&date.and_hms_opt(0, 0, 0)?)
-            .earliest()?;
-        return Some((midnight.with_timezone(&Utc), true));
+        return Some((local_midnight(date, zone)?, true));
     }
     if let Some(utc) = value.strip_suffix('Z') {
         let naive = NaiveDateTime::parse_from_str(utc, "%Y%m%dT%H%M%S").ok()?;
@@ -491,6 +513,17 @@ fn parse_time(prop: &Prop, zone: Tz) -> Option<(DateTime<Utc>, bool)> {
     };
     let local = tz.from_local_datetime(&naive).earliest()?;
     Some((local.with_timezone(&Utc), false))
+}
+
+/// The first instant of `date` in `zone`. On days whose midnight does not
+/// exist (clocks jump forward at 00:00), the first minute that does.
+fn local_midnight(date: NaiveDate, zone: Tz) -> Option<DateTime<Utc>> {
+    (0..=120).find_map(|minute| {
+        let time = date.and_hms_opt(0, 0, 0)? + chrono::Duration::minutes(minute);
+        zone.from_local_datetime(&time)
+            .earliest()
+            .map(|at| at.with_timezone(&Utc))
+    })
 }
 
 /// `P1D`, `PT1H30M`, `P1W`, `-PT15M` (negative durations count as zero).
@@ -533,9 +566,13 @@ fn expand(
     before: DateTime<Utc>,
 ) -> Option<Vec<DateTime<Utc>>> {
     let mut block = vec![rule_line(event.start_prop(), zone)?];
+    let start_tz = match event.start_prop().param("TZID") {
+        Some(name) => Tz::from_str(name).ok()?,
+        None => zone,
+    };
     for prop in &event.recurrence {
         block.push(match prop.name.as_str() {
-            "RRULE" => format!("RRULE:{}", prop.value),
+            "RRULE" => format!("RRULE:{}", utc_until(&prop.value, start_tz)?),
             // Several comma-separated values share the same parameters.
             _ => prop
                 .value
@@ -566,6 +603,31 @@ fn expand(
             .map(|at| at.with_timezone(&Utc))
             .collect(),
     )
+}
+
+/// The RRULE with `UNTIL` in UTC, which `rrule` requires once DTSTART has a
+/// zone. A DATE `UNTIL` (all-day series) means the end of that local day; a
+/// floating one is read in the series' zone.
+fn utc_until(rule: &str, zone: Tz) -> Option<String> {
+    rule.split(';')
+        .map(|part| match part.split_once('=') {
+            Some((key, value)) if key.eq_ignore_ascii_case("UNTIL") && !value.ends_with('Z') => {
+                let until = if value.len() == 8 {
+                    let day = NaiveDate::parse_from_str(value, "%Y%m%d").ok()?;
+                    local_midnight(day.checked_add_days(Days::new(1))?, zone)?
+                        - chrono::Duration::seconds(1)
+                } else {
+                    let naive = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
+                    zone.from_local_datetime(&naive)
+                        .earliest()?
+                        .with_timezone(&Utc)
+                };
+                Some(format!("UNTIL={}", until.format("%Y%m%dT%H%M%SZ")))
+            }
+            _ => Some(part.to_owned()),
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|parts| parts.join(";"))
 }
 
 /// A DTSTART/EXDATE/RDATE line in a form `rrule` accepts: dates and floating

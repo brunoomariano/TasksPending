@@ -280,3 +280,108 @@ async fn http_errors_do_not_leak_the_secret_url() {
     assert!(message.contains("404"), "{message}");
     assert!(!message.contains("secret-token"), "{message}");
 }
+
+/// Séries com fim (UNTIL) em data, como o Google exporta eventos de dia
+/// inteiro, ou em horário sem fuso, são expandidas até o fim; não somem nem
+/// deixam a fonte degradada.
+#[test]
+fn series_ending_on_a_date_or_floating_time_are_expanded() {
+    let ics = calendar(
+        &[
+            event(
+                "allday",
+                "SUMMARY:Gym\r\nDTSTART;VALUE=DATE:20260901\r\nDTEND;VALUE=DATE:20260902\r\n\
+RRULE:FREQ=WEEKLY;UNTIL=20261013\r\n",
+            ),
+            event(
+                "floating",
+                "SUMMARY:Class\r\nDTSTART:20260930T100000\r\nDTEND:20260930T110000\r\n\
+RRULE:FREQ=WEEKLY;UNTIL=20261014T100000\r\n",
+            ),
+        ]
+        .concat(),
+    );
+
+    let batch = occurrences(&ics, now(), Window::default(), chrono_tz::UTC, None).unwrap();
+    let starts: Vec<(String, String)> = batch
+        .items
+        .iter()
+        .map(|i| (i.card.title.clone(), i.card.due_at.unwrap().to_rfc3339()))
+        .collect();
+
+    assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
+    assert_eq!(
+        starts,
+        vec![
+            ("Gym".to_owned(), "2026-09-29T00:00:00+00:00".to_owned()),
+            ("Class".to_owned(), "2026-09-30T10:00:00+00:00".to_owned()),
+            ("Gym".to_owned(), "2026-10-06T00:00:00+00:00".to_owned()),
+            ("Class".to_owned(), "2026-10-07T10:00:00+00:00".to_owned()),
+            ("Gym".to_owned(), "2026-10-13T00:00:00+00:00".to_owned()),
+            ("Class".to_owned(), "2026-10-14T10:00:00+00:00".to_owned()),
+        ]
+    );
+}
+
+/// Uma série de dia inteiro ocupa o dia local todo, mesmo na ocorrência do
+/// dia em que o relógio muda (dia de 25 horas): continua na tela até a
+/// meia-noite local.
+#[test]
+fn all_day_events_last_the_whole_local_day_across_dst() {
+    let zone = chrono_tz::America::New_York;
+    let ics = calendar(&event(
+        "fallback",
+        "SUMMARY:Long day\r\nDTSTART;VALUE=DATE:20261025\r\nDTEND;VALUE=DATE:20261026\r\n\
+RRULE:FREQ=WEEKLY\r\n",
+    ));
+    // 23:30 de 01/11 em Nova York (04:30 UTC de 02/11), ainda no mesmo dia local.
+    let late = Utc.with_ymd_and_hms(2026, 11, 2, 4, 30, 0).unwrap();
+
+    let batch = occurrences(&ics, late, Window::default(), zone, None).unwrap();
+
+    // A ocorrência de 01/11 (meia-noite EDT = 04:00 UTC) ainda está na tela.
+    assert_eq!(
+        batch.items[0].card.due_at.map(|at| at.to_rfc3339()),
+        Some("2026-11-01T04:00:00+00:00".to_owned()),
+        "still today at 23:30 local"
+    );
+}
+
+/// Num fuso em que a meia-noite não existe no dia da mudança de horário, o
+/// evento de dia inteiro começa no primeiro instante do dia.
+#[test]
+fn all_day_events_on_a_day_without_midnight_are_read() {
+    let zone = chrono_tz::America::Santiago;
+    let ics = calendar(&event(
+        "spring",
+        "SUMMARY:Spring forward\r\nDTSTART;VALUE=DATE:20260906\r\nDTEND;VALUE=DATE:20260907\r\n",
+    ));
+    let morning = Utc.with_ymd_and_hms(2026, 9, 6, 12, 0, 0).unwrap();
+
+    let batch = occurrences(&ics, morning, Window::default(), zone, None).unwrap();
+
+    assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
+    assert_eq!(batch.items.len(), 1);
+}
+
+/// Evento sem fim mostra só o horário de início.
+#[test]
+fn events_without_an_end_show_only_the_start() {
+    let ics = calendar(&event(
+        "instant",
+        "SUMMARY:Reminder\r\nDTSTART:20260928T150000Z\r\n",
+    ));
+
+    let items = items(&ics);
+
+    assert!(
+        items[0].card.body.contains("15:00"),
+        "{}",
+        items[0].card.body
+    );
+    assert!(
+        !items[0].card.body.contains("15:00–"),
+        "{}",
+        items[0].card.body
+    );
+}

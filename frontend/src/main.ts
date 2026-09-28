@@ -1,5 +1,6 @@
 import "./styles.css";
 import { loadSnapshot, requestRefresh } from "./api";
+import { startClock } from "./clock";
 import { startPolling } from "./poll";
 import { DEFAULT_VIEW, renderApp, type View } from "./render";
 import type { ViewState } from "./state";
@@ -64,6 +65,11 @@ function flip(set: ReadonlySet<string>, key: string): Set<string> {
     next.add(key);
   }
   return next;
+}
+
+const clock = document.querySelector<HTMLElement>("#clock");
+if (clock) {
+  startClock(clock);
 }
 
 const app = document.querySelector<HTMLElement>("#app");

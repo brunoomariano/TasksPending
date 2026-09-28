@@ -558,3 +558,33 @@ button {
   background: var(--surface-2);
   color: var(--text);
 }
+
+/* Big clock above the dashboard, in clock-tui's block style. */
+.clock {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 28px 28px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.clock-date {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.clock-digits {
+  display: block;
+  width: min(100%, 880px);
+  height: auto;
+  fill: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .clock {
+    padding: 20px 16px 16px;
+  }
+}

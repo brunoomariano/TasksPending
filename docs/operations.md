@@ -68,6 +68,8 @@ Keys: `1`–`9` or `Tab`/`Shift+Tab` switch boards; `h`/`l` or left/right move b
 
 ## Web Dashboard
 
+A big clock sits at the top of the page: the date, then the local time as `HH:MM:SS` in block digits (the "bricks" font of clock-tui), redrawn each second on its own, without touching the dashboard below.
+
 The page shows the groups of every board side by side, each labelled with its board; the filter at the top (All, or one board) is optional and remembered per browser. The top bar counts the pending cards shown. Empty columns are hidden: a button at the right of the group header tells how many there are and shows them, with the source's last fetch time. Columns show their first five cards, with a button for the rest. Cards show the title (a link when the source has one) and at most two lines of the details the source writes, which include the due or event time (the full text is in the tooltip); the time of the last data fetch is at the top. Each group shows its source's `icon`, falling back to a generic one.
 
 Source health is behind the **Sources** button, which opens a dialog with each source's board, status, last fetch and failure reason, plus a config error when the saved config was not reloaded. The button shows a warning icon when any source is degraded or failed, or the config has an error.

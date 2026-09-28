@@ -30,7 +30,7 @@ thiserror = "2.0"
 tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal"] }
 toml = "0.9"
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "12", features = ["chrono-impl"] }

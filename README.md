@@ -25,7 +25,13 @@ curl http://127.0.0.1:8080/api/v1/snapshot
 
 Configure sources by copying `config.example.toml` to `~/.config/tasks-pending/config.toml`; without it the API serves a built-in sample source. See [docs/operations.md](docs/operations.md).
 
-Run the frontend dev server:
+Run the API and the built web dashboard together, then open http://127.0.0.1:8080:
+
+```sh
+make serve
+```
+
+Or run the frontend dev server (proxies `/api` to `make up`):
 
 ```sh
 make frontend-dev
@@ -43,4 +49,4 @@ make frontend-dev
 
 ## Current State
 
-The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Sources available: `github` (review requests, your pull requests, assigned issues) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). Next: frontend polling and the API serving the built frontend.
+The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Sources available: `github` (review requests, your pull requests, assigned issues) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). The web dashboard polls the API every 15 seconds and shows source health; the API serves it from `--static-dir` or the release bundle's `frontend/`.

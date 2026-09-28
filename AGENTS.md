@@ -20,6 +20,7 @@ Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Lane`, `Secti
 - `make ci`: format, then run the verification gate.
 - `make test`: Rust tests.
 - `make up`: run the API on `127.0.0.1:8080`.
+- `make serve`: build the frontend and run the API serving it on `127.0.0.1:8080`.
 - `make tui`: run the TUI.
 - `make contract`: regenerate `frontend/src/contract.gen.ts` from the `pending-core` model.
 - `make frontend-dev`: run the frontend dev server.

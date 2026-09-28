@@ -3,6 +3,7 @@
 ## Local Commands
 
 - API: `make up`
+- API + web dashboard: `make serve`
 - TUI: `make tui`
 - Frontend: `make frontend-dev`
 - Verification: `make ci-check`
@@ -13,10 +14,17 @@
 
 Keys: `j`/`k` or arrows move the selection, `Enter` opens the selected card's link (`xdg-open`, or `open` on macOS), `r` refreshes every source now, `q`/`Esc`/`Ctrl-C` quit. The Sources panel shows each source's status and failure reason; action failures show in the footer.
 
+## Web Dashboard
+
+The frontend polls `/api/v1/snapshot` every 15 seconds while the tab is visible and redraws only when cards or source health change. It shows each source's status and failure reason. If the API stops answering after a successful load, the last cards stay on screen under a warning with the time of the last good response.
+
+`pending-api` serves the built frontend at `/` from `--static-dir <dir>`, or from `../frontend` next to the binary when it has an `index.html` (release bundle layout). Without either it serves only the API. An explicit `--static-dir` without `index.html` fails at startup.
+
 ## HTTP Endpoints
 
 - `GET /healthz`: process health and version.
 - `GET /api/v1/snapshot`: dashboard snapshot.
+- `GET /*`: built frontend, when a static directory is available.
 
 ## Configuration
 

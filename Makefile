@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := ci-check
 
-.PHONY: bootstrap doctor ci ci-check test fmt lint build up down logs tui contract frontend-dev frontend-build frontend-test release-local
+.PHONY: bootstrap doctor ci ci-check test fmt lint build up serve down logs tui contract frontend-dev frontend-build frontend-test release-local
 
 bootstrap:
 	cargo fetch --locked
@@ -37,6 +37,9 @@ build:
 
 up:
 	cargo run -p pending-api -- --listen 127.0.0.1:8080
+
+serve: frontend-build
+	cargo run -p pending-api -- --listen 127.0.0.1:8080 --static-dir frontend/dist
 
 down:
 	@echo "No background services are managed yet."

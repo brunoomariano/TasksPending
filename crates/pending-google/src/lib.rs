@@ -6,15 +6,15 @@
 //! `singleEvents=true`, so Google expands recurrences; cards and time buckets
 //! are shared with the iCal source.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use chrono_tz::Tz;
 use futures_util::future::join_all;
 use pending_core::{BoxFuture, PendingSource, SourceBatch, SourceError, SourceItem};
-use pending_ical::{Occurrence, When, Window, local_zone, occurrence_items};
+use pending_ical::{Occurrence, When, Window, local_midnight, local_zone, occurrence_items};
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use serde_json::Value;
@@ -118,33 +118,66 @@ impl GoogleSource {
             }
             other => other,
         }
-        .map_err(|failure| failure.message())?;
+        .map_err(Failure::message)?;
 
         let now = (self.now)();
         let until = now + chrono::Duration::days(self.window.days as i64);
-        let results = join_all(
-            calendars
-                .iter()
-                .map(|calendar| self.events(&token, &calendar.id, now, until)),
-        )
-        .await;
+        let fetch_all = |token: String, wanted: Vec<usize>| {
+            let calendars = &calendars;
+            async move {
+                let results = join_all(
+                    wanted
+                        .iter()
+                        .map(|&index| self.events(&token, &calendars[index].id, now, until)),
+                )
+                .await;
+                wanted.into_iter().zip(results).collect::<Vec<_>>()
+            }
+        };
+        let mut results = fetch_all(token.clone(), (0..calendars.len()).collect()).await;
+        let rejected: Vec<usize> = results
+            .iter()
+            .filter(|(_, result)| matches!(result, Err(Failure::Auth)))
+            .map(|(index, _)| *index)
+            .collect();
+        if !rejected.is_empty() {
+            let token = self.tokens.token(true).await?;
+            let retried = fetch_all(token, rejected).await;
+            for (index, result) in retried {
+                if let Some(slot) = results.iter_mut().find(|(i, _)| *i == index) {
+                    slot.1 = result;
+                }
+            }
+        }
 
-        let mut batch = SourceBatch::default();
+        // One entry per meeting (iCalUID + start), with every visible
+        // calendar it appears in. Declining in your own (primary) calendar
+        // hides it everywhere.
+        let mut entries: Vec<Entry> = Vec::new();
+        let mut index_of: HashMap<(String, DateTime<Utc>), usize> = HashMap::new();
         let mut failures = Vec::new();
-        let mut occurrences = Vec::new();
-        let mut calendar_of: HashMap<String, String> = HashMap::new();
-        // The same meeting shows in several calendars you can see.
-        let mut seen: HashSet<(String, DateTime<Utc>)> = HashSet::new();
-        for (calendar, result) in calendars.iter().zip(results) {
+        for (index, result) in results {
+            let calendar = &calendars[index];
             match result {
                 Ok(events) => {
                     for event in events {
-                        let Some((key, occurrence)) = self.occurrence(&calendar.id, event) else {
+                        let Some(copy) = self.copy(&calendar.id, event) else {
                             continue;
                         };
-                        if seen.insert((key, occurrence.start)) {
-                            calendar_of.insert(occurrence.id.clone(), calendar.summary.clone());
-                            occurrences.push(occurrence);
+                        let key = (copy.key.clone(), copy.occurrence.start);
+                        let slot = *index_of.entry(key).or_insert_with(|| {
+                            entries.push(Entry {
+                                occurrence: copy.occurrence.clone(),
+                                calendars: Vec::new(),
+                                hidden: false,
+                            });
+                            entries.len() - 1
+                        });
+                        let entry = &mut entries[slot];
+                        if copy.declined {
+                            entry.hidden |= calendar.primary;
+                        } else {
+                            entry.calendars.push(calendar.summary.clone());
                         }
                     }
                 }
@@ -159,29 +192,57 @@ impl GoogleSource {
                 failures.join("; ")
             ));
         }
+        entries.retain(|entry| !entry.hidden && !entry.calendars.is_empty());
+        let calendars_of: HashMap<String, Vec<String>> = entries
+            .iter()
+            .map(|e| (e.occurrence.id.clone(), e.calendars.clone()))
+            .collect();
 
-        for mut item in occurrence_items(occurrences, now, self.window, self.zone) {
-            let calendar = calendar_of.get(&item.card.id).cloned().unwrap_or_default();
-            item.card.body.push_str(&format!(" · {calendar}"));
-            let bucket = When::ALL
+        // The event limit applies per column, after its calendar filter.
+        let mut batch = SourceBatch::default();
+        let mut per_column: Vec<Vec<SourceItem>> = Vec::with_capacity(self.columns.len());
+        for column in &self.columns {
+            let wanted: Vec<Occurrence> = entries
+                .iter()
+                .filter(|entry| {
+                    column.calendar.is_empty()
+                        || entry.calendars.iter().any(|calendar| {
+                            column
+                                .calendar
+                                .iter()
+                                .any(|name| name.to_lowercase() == calendar.to_lowercase())
+                        })
+                })
+                .map(|entry| entry.occurrence.clone())
+                .collect();
+            let items = occurrence_items(wanted, now, self.window, self.zone)
                 .into_iter()
-                .find(|when| when.default_name() == item.column);
-            for column in &self.columns {
-                let when_ok =
-                    column.when.is_empty() || bucket.is_some_and(|b| column.when.contains(&b));
-                let calendar_ok = column.calendar.is_empty()
-                    || column
-                        .calendar
-                        .iter()
-                        .any(|name| name.to_lowercase() == calendar.to_lowercase());
-                if when_ok && calendar_ok {
-                    batch.items.push(SourceItem {
-                        column: column.name.clone(),
-                        card: item.card.clone(),
-                    });
-                }
-            }
+                .filter(|item| {
+                    let bucket = When::ALL
+                        .into_iter()
+                        .find(|when| when.default_name() == item.column);
+                    column.when.is_empty() || bucket.is_some_and(|b| column.when.contains(&b))
+                })
+                .map(|mut item| {
+                    let calendars = calendars_of
+                        .get(&item.card.id)
+                        .map(|c| c.join(", "))
+                        .unwrap_or_default();
+                    item.card.body.push_str(&format!(" · {calendars}"));
+                    item.column = column.name.clone();
+                    item
+                })
+                .collect();
+            per_column.push(items);
         }
+        // Soonest first across columns, so a meeting's cards sit together.
+        let mut merged: Vec<(usize, SourceItem)> = per_column
+            .into_iter()
+            .enumerate()
+            .flat_map(|(column, items)| items.into_iter().map(move |item| (column, item)))
+            .collect();
+        merged.sort_by(|(ca, a), (cb, b)| a.card.due_at.cmp(&b.card.due_at).then(ca.cmp(cb)));
+        batch.items = merged.into_iter().map(|(_, item)| item).collect();
         batch.warnings.extend(failures);
         Ok(batch)
     }
@@ -234,12 +295,13 @@ impl GoogleSource {
         Ok(list.items)
     }
 
-    /// An event instance as an occurrence, plus a key identifying the same
-    /// meeting across calendars. `None` for cancelled or declined events.
-    fn occurrence(&self, calendar: &str, event: Value) -> Option<(String, Occurrence)> {
+    /// One calendar's copy of an event instance. `None` for cancelled or
+    /// unreadable events.
+    fn copy(&self, calendar: &str, event: Value) -> Option<Copy> {
         if event.get("status").and_then(Value::as_str) == Some("cancelled") {
             return None;
         }
+        // `self` is the owner of the calendar this copy was read from.
         let declined = event
             .get("attendees")
             .and_then(Value::as_array)
@@ -249,18 +311,15 @@ impl GoogleSource {
                         && a.get("responseStatus").and_then(Value::as_str) == Some("declined")
                 })
             });
-        if declined {
-            return None;
-        }
 
         let (start, all_day) = self.when(event.get("start")?)?;
         let (finish, _) = self.when(event.get("end")?).unwrap_or((start, all_day));
         let text = |key: &str| event.get(key).and_then(Value::as_str).map(str::to_owned);
         let id = text("id")?;
-        let key = text("iCalUID").unwrap_or_else(|| id.clone());
-        Some((
-            key,
-            Occurrence {
+        Some(Copy {
+            key: text("iCalUID").unwrap_or_else(|| id.clone()),
+            declined,
+            occurrence: Occurrence {
                 id: format!("google:{calendar}:{id}"),
                 title: text("summary").unwrap_or_default(),
                 location: text("location"),
@@ -272,7 +331,7 @@ impl GoogleSource {
                     .and_then(|at| DateTime::parse_from_rfc3339(&at).ok())
                     .map(|at| at.with_timezone(&Utc)),
             },
-        ))
+        })
     }
 
     /// `{ "dateTime": … }` or an all-day `{ "date": … }` (local midnight).
@@ -303,12 +362,19 @@ impl GoogleSource {
             .await
             .map_err(|error| Failure::Other(describe(error)))?;
         let status = response.status();
-        if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+        if status == StatusCode::UNAUTHORIZED {
             return Err(Failure::Auth);
         }
         if !status.is_success() {
+            // 403 covers quota and permission errors; the reason tells which.
+            let body = response.json::<Value>().await.unwrap_or_default();
+            let reason = body
+                .pointer("/error/errors/0/reason")
+                .and_then(Value::as_str)
+                .map(|reason| format!(" ({reason})"))
+                .unwrap_or_default();
             return Err(Failure::Other(format!(
-                "Google Calendar API returned {status}"
+                "Google Calendar API returned {status}{reason}"
             )));
         }
         response.json::<T>().await.map_err(|error| {
@@ -327,8 +393,25 @@ impl PendingSource for GoogleSource {
     }
 }
 
+/// A meeting, with the visible calendars it appears in.
+struct Entry {
+    occurrence: Occurrence,
+    calendars: Vec<String>,
+    /// Declined in your own calendar.
+    hidden: bool,
+}
+
+/// One calendar's copy of an event instance.
+struct Copy {
+    /// Identifies the same meeting across calendars.
+    key: String,
+    /// Declined by the owner of the calendar the copy came from.
+    declined: bool,
+    occurrence: Occurrence,
+}
+
 enum Failure {
-    /// 401/403: the token was rejected.
+    /// 401: the token was rejected.
     Auth,
     Other(String),
 }
@@ -367,15 +450,6 @@ struct Calendar {
 struct EventList {
     #[serde(default)]
     items: Vec<Value>,
-}
-
-fn local_midnight(date: NaiveDate, zone: Tz) -> Option<DateTime<Utc>> {
-    (0..=120).find_map(|minute| {
-        let time = date.and_hms_opt(0, 0, 0)? + chrono::Duration::minutes(minute);
-        zone.from_local_datetime(&time)
-            .earliest()
-            .map(|at| at.with_timezone(&Utc))
-    })
 }
 
 /// Calendar ids are e-mail-like (`a@b.com`, `…#holiday@group.v.calendar…`).
@@ -496,10 +570,12 @@ impl GoaTokens {
             let account = proxy("org.gnome.OnlineAccounts.Account")
                 .await
                 .map_err(unavailable)?;
-            let _: i32 = account
-                .call("EnsureCredentials", &())
-                .await
-                .map_err(|e| format!("GNOME Online Accounts could not renew credentials: {e}"))?;
+            let _: i32 = account.call("EnsureCredentials", &()).await.map_err(|e| {
+                format!(
+                    "GNOME Online Accounts could not renew credentials ({e}); sign in again in \
+                     gnome-online-accounts-gtk"
+                )
+            })?;
         }
         let oauth2 = proxy("org.gnome.OnlineAccounts.OAuth2Based")
             .await
@@ -512,8 +588,19 @@ impl GoaTokens {
     }
 }
 
+/// Longest wait for GOA; renewing credentials goes to the network.
+const GOA_TIMEOUT: Duration = Duration::from_secs(15);
+
 impl TokenProvider for GoaTokens {
     fn token(&self, refresh: bool) -> BoxFuture<'_, Result<String, String>> {
-        Box::pin(self.fetch(refresh))
+        Box::pin(async move {
+            tokio::time::timeout(GOA_TIMEOUT, self.fetch(refresh))
+                .await
+                .unwrap_or_else(|_| {
+                    Err(format!(
+                        "GNOME Online Accounts did not answer within {GOA_TIMEOUT:?}"
+                    ))
+                })
+        })
     }
 }

@@ -17,6 +17,7 @@ pending-ical = { path = "../pending-ical" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["time"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]

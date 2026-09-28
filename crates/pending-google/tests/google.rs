@@ -382,3 +382,168 @@ async fn missing_account_and_failing_calendars_are_explained() {
     );
     let _ = CardSeverity::Info;
 }
+
+/// O limite de eventos vale por coluna: uma coluna filtrada por agenda não
+/// fica vazia só porque outras agendas têm muitos eventos antes.
+#[tokio::test]
+async fn the_event_limit_applies_per_column_after_the_calendar_filter() {
+    let stub = stub();
+    let busy: Vec<Value> = (0..30)
+        .map(|i| {
+            let start = format!("2026-09-{:02}T13:00:00Z", 28 + i % 3);
+            let end = format!("2026-09-{:02}T13:30:00Z", 28 + i % 3);
+            timed(&format!("b{i}"), &format!("Busy {i}"), &start, &end)
+        })
+        .collect();
+    stub.events
+        .lock()
+        .unwrap()
+        .insert("me@acme.com".to_owned(), json!(busy));
+    stub.events.lock().unwrap().insert(
+        "team@acme.com".to_owned(),
+        json!([timed(
+            "t",
+            "Team late",
+            "2026-10-20T13:00:00Z",
+            "2026-10-20T14:00:00Z"
+        )]),
+    );
+    let base = serve(stub).await;
+
+    let batch = source(base, Arc::new(FakeTokens::default()))
+        .with_columns(vec![GoogleColumn {
+            name: "Team".to_owned(),
+            when: Vec::new(),
+            calendar: vec!["Team".to_owned()],
+        }])
+        .refresh()
+        .await
+        .expect("refresh succeeds");
+
+    assert_eq!(
+        columns(&batch),
+        vec![("Team".to_owned(), "Team late".to_owned())]
+    );
+}
+
+/// Uma reunião presente na primária e numa agenda compartilhada aparece uma
+/// vez por coluna, e também na coluna filtrada pela agenda compartilhada.
+#[tokio::test]
+async fn a_shared_meeting_belongs_to_every_calendar_it_is_in() {
+    let stub = stub();
+    let mut shared = timed(
+        "m",
+        "Shared",
+        "2026-09-28T15:00:00Z",
+        "2026-09-28T16:00:00Z",
+    );
+    shared["iCalUID"] = json!("meeting-1@google.com");
+    stub.events
+        .lock()
+        .unwrap()
+        .insert("me@acme.com".to_owned(), json!([shared.clone()]));
+    stub.events
+        .lock()
+        .unwrap()
+        .insert("team@acme.com".to_owned(), json!([shared]));
+    let base = serve(stub).await;
+
+    let batch = source(base, Arc::new(FakeTokens::default()))
+        .with_columns(vec![
+            GoogleColumn {
+                name: "Tudo".to_owned(),
+                when: Vec::new(),
+                calendar: Vec::new(),
+            },
+            GoogleColumn {
+                name: "Team".to_owned(),
+                when: Vec::new(),
+                calendar: vec!["team".to_owned()],
+            },
+        ])
+        .refresh()
+        .await
+        .expect("refresh succeeds");
+
+    assert_eq!(
+        columns(&batch),
+        vec![
+            ("Tudo".to_owned(), "Shared".to_owned()),
+            ("Team".to_owned(), "Shared".to_owned()),
+        ]
+    );
+}
+
+/// Uma reunião que recusei na minha agenda não volta pela cópia de outra
+/// agenda em que ela aparece.
+#[tokio::test]
+async fn a_meeting_declined_in_my_calendar_stays_hidden_everywhere() {
+    let stub = stub();
+    let mut mine = timed(
+        "m",
+        "Declined",
+        "2026-09-28T15:00:00Z",
+        "2026-09-28T16:00:00Z",
+    );
+    mine["iCalUID"] = json!("meeting-2@google.com");
+    mine["attendees"] =
+        json!([{ "email": "me@acme.com", "self": true, "responseStatus": "declined" }]);
+    let mut theirs = timed(
+        "m",
+        "Declined",
+        "2026-09-28T15:00:00Z",
+        "2026-09-28T16:00:00Z",
+    );
+    theirs["iCalUID"] = json!("meeting-2@google.com");
+    theirs["attendees"] =
+        json!([{ "email": "team@acme.com", "self": true, "responseStatus": "accepted" }]);
+    stub.events
+        .lock()
+        .unwrap()
+        .insert("me@acme.com".to_owned(), json!([mine]));
+    stub.events
+        .lock()
+        .unwrap()
+        .insert("team@acme.com".to_owned(), json!([theirs]));
+    let base = serve(stub).await;
+
+    let batch = source(base, Arc::new(FakeTokens::default()))
+        .refresh()
+        .await
+        .expect("refresh succeeds");
+
+    assert!(batch.items.is_empty(), "{:?}", columns(&batch));
+}
+
+/// Um 403 de cota não é tratado como token inválido: a mensagem diz o motivo
+/// que o Google deu, sem mandar reconfigurar a conta.
+#[tokio::test]
+async fn quota_errors_are_not_reported_as_bad_tokens() {
+    let app = Router::new().route(
+        "/users/me/calendarList",
+        get(|| async {
+            (
+                StatusCode::FORBIDDEN,
+                axum::Json(json!({ "error": { "code": 403, "errors": [{ "reason": "rateLimitExceeded" }] } })),
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let tokens = Arc::new(FakeTokens::default());
+
+    let error = source(base, tokens.clone())
+        .refresh()
+        .await
+        .expect_err("quota");
+
+    let message = error.to_string();
+    assert!(message.contains("rateLimitExceeded"), "{message}");
+    assert!(!message.contains("rejected the access token"), "{message}");
+    assert_eq!(
+        tokens.refreshes.load(Ordering::SeqCst),
+        0,
+        "no credential renewal"
+    );
+}

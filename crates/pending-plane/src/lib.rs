@@ -450,9 +450,11 @@ impl Api {
                         "{}/{}/projects/{}/issues/{id}",
                         settings.web_url, settings.workspace_slug, project.id
                     )),
+                    // Local midnight, matching how "overdue" is decided.
                     due_at: due
                         .and_then(|due| due.and_hms_opt(0, 0, 0))
-                        .map(|due| due.and_utc()),
+                        .and_then(|due| due.and_local_timezone(Local).earliest())
+                        .map(|due| due.with_timezone(&Utc)),
                     severity,
                     updated_at: timestamp("updated_at")
                         .or_else(|| timestamp("created_at"))

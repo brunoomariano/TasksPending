@@ -195,8 +195,10 @@ impl TodoistSource {
                 all.extend(items.iter().cloned());
             }
             match next {
-                Some(next) if cursor.as_ref() != Some(&next) => cursor = Some(next),
-                _ => return Ok((all, false)),
+                // A repeated cursor would loop; report the list as cut short.
+                Some(next) if cursor.as_ref() == Some(&next) => return Ok((all, true)),
+                Some(next) => cursor = Some(next),
+                None => return Ok((all, false)),
             }
         }
         Ok((all, true))
@@ -254,7 +256,7 @@ fn due(task: &Value) -> Option<(DateTime<Utc>, NaiveDate, bool)> {
         let at = at.with_timezone(&Utc);
         return Some((at, at.with_timezone(&Local).date_naive(), false));
     }
-    let naive = NaiveDateTime::parse_from_str(date, "%Y-%m-%dT%H:%M:%S").ok()?;
+    let naive = NaiveDateTime::parse_from_str(date, "%Y-%m-%dT%H:%M:%S%.f").ok()?;
     let at = naive
         .and_local_timezone(Local)
         .earliest()?
@@ -269,7 +271,14 @@ fn to_card(
 ) -> Option<PendingCard> {
     let id = task.get("id")?.as_str()?;
     let due = due(task);
-    let overdue = due.is_some_and(|(_, day, _)| day < today);
+    // Timed tasks are late once their time passes; all-day ones the next day.
+    let overdue = due.is_some_and(|(at, day, all_day)| {
+        if all_day {
+            day < today
+        } else {
+            at < Utc::now()
+        }
+    });
     // The API's 4 is the app's p1.
     let priority = task.get("priority").and_then(Value::as_u64).unwrap_or(1);
 

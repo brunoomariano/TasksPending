@@ -8,7 +8,7 @@ use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use chrono::{NaiveDate, TimeZone, Utc};
+use chrono::NaiveDate;
 use pending_core::{CardSeverity, PendingSource, SourceBatch};
 use pending_todoist::{TodoistColumn, TodoistSource};
 use serde_json::{Value, json};
@@ -149,6 +149,13 @@ async fn default_columns_show_today_and_the_next_days() {
         Some("https://app.todoist.com/app/task/t1")
     );
     assert!(card.due_at.is_some());
+    let dentist = &batch.items[1].card;
+    assert!(dentist.due_at.is_some(), "floating due time is read");
+    assert!(
+        dentist.body.contains("2026-10-01 14:30"),
+        "{}",
+        dentist.body
+    );
     assert!(
         auth.lock()
             .unwrap()
@@ -237,5 +244,36 @@ async fn auth_problems_are_explained_without_the_token() {
         .expect_err("no token");
     assert!(error.to_string().contains("TODOIST_API_TOKEN"), "{error}");
     assert!(error.to_string().contains("Integrations"), "{error}");
-    let _ = Utc.timestamp_opt(0, 0);
+}
+
+/// Prazos com fração de segundo ou em UTC exato são lidos; uma tarefa com
+/// horário que já passou hoje conta como atrasada.
+#[tokio::test]
+async fn due_times_with_fractions_or_utc_are_read_and_past_times_are_overdue() {
+    let stub = Stub::default();
+    stub.tasks.lock().unwrap().insert(
+        "today | overdue".to_owned(),
+        vec![json!([
+            task("frac", "Fractional", 1, Some("2026-10-02T09:00:00.000000")),
+            task("utc", "Exact", 1, Some("2026-10-02T12:00:00Z")),
+            task("past", "Earlier", 1, Some("2020-01-01T09:00:00")),
+        ])],
+    );
+    let base = serve(stub).await;
+
+    let batch = source(base).refresh().await.expect("refresh succeeds");
+
+    let get = |id: &str| {
+        batch
+            .items
+            .iter()
+            .find(|i| i.card.id == format!("todoist:{id}"))
+            .unwrap()
+    };
+    assert!(get("frac").card.due_at.is_some());
+    assert_eq!(
+        get("utc").card.due_at.map(|at| at.to_rfc3339()),
+        Some("2026-10-02T12:00:00+00:00".to_owned())
+    );
+    assert_eq!(get("past").card.severity, CardSeverity::Critical);
 }

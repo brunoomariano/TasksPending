@@ -58,7 +58,8 @@ impl std::fmt::Debug for PlaneSettings {
 }
 
 impl PlaneSettings {
-    /// Reads `PLANE_BASE_URL`, `PLANE_WORKSPACE_SLUG`, `PLANE_API_KEY` and the
+    /// Reads `PLANE_BASE_URL`, `PLANE_WORKSPACE_SLUG` (or `PLANE_WORKSPACE`),
+    /// `PLANE_API_KEY` (or `PLANE_TOKEN`) and the
     /// optional `PLANE_WEB_URL` (defaults to the API origin, or
     /// `https://app.plane.so` for Plane Cloud). The error names the missing
     /// variables.
@@ -69,8 +70,9 @@ impl PlaneSettings {
                 .filter(|v| !v.is_empty())
         };
         let base_url = read("PLANE_BASE_URL");
-        let workspace_slug = read("PLANE_WORKSPACE_SLUG");
-        let api_key = read("PLANE_API_KEY");
+        // PLANE_WORKSPACE / PLANE_TOKEN are the names other Plane tools use.
+        let workspace_slug = read("PLANE_WORKSPACE_SLUG").or_else(|| read("PLANE_WORKSPACE"));
+        let api_key = read("PLANE_API_KEY").or_else(|| read("PLANE_TOKEN"));
 
         match (base_url, workspace_slug, api_key) {
             (Some(base_url), Some(workspace_slug), Some(api_key)) => {

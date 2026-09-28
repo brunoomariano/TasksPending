@@ -17,8 +17,8 @@ After every successful refresh, each source's cards are saved to `$XDG_STATE_HOM
 `kind = "plane"` lists open work items assigned to the owner of the API key, across every project of one workspace. Settings come only from the environment:
 
 - `PLANE_BASE_URL`: instance URL (self-hosted, or `https://api.plane.so` for Plane Cloud);
-- `PLANE_WORKSPACE_SLUG`;
-- `PLANE_API_KEY`: sent as `x-api-key`, never logged or shown; redirects are not followed, so the key never reaches another host;
+- `PLANE_WORKSPACE_SLUG` (or `PLANE_WORKSPACE`);
+- `PLANE_API_KEY` (or `PLANE_TOKEN`): sent as `x-api-key`, never logged or shown; redirects are not followed, so the key never reaches another host;
 - `PLANE_WEB_URL` (optional): web app origin for card links; defaults to `PLANE_BASE_URL`, or `https://app.plane.so` when the API is Plane Cloud's.
 
 Missing variables make the source fail with their names. Sections follow the state group: "In progress" (started), "To do" (unstarted), "Backlog"; completed and cancelled items are left out. Assignee and state filters run locally, because some Plane deployments ignore them server-side; when items come back without their state expanded, the project's states are fetched to find each group, and items whose state is still unknown are skipped with a warning. Urgent priority and a past target date make a card critical; high priority makes it a warning. "Overdue" uses the machine's local date. A refresh reads the user, the project list and every project (up to 20 s each, in parallel), so keep `timeout_seconds` at 60 (the default) or more; configs copied from older examples with 30 can time out the whole source. Projects and their work items are read page by page. Each project has 20 s; a failing or slow project becomes a warning naming its identifier, and the other projects still show.

@@ -521,3 +521,30 @@ fn cloud_cards_link_to_the_web_app() {
         "Debug must hide the key"
     );
 }
+
+/// Os nomes usados por outras ferramentas (PLANE_TOKEN, PLANE_WORKSPACE)
+/// também servem; os nomes próprios têm precedência.
+#[test]
+fn common_alternative_variable_names_are_accepted() {
+    let env = |key: &str| match key {
+        "PLANE_BASE_URL" => Some("https://plane.example".to_owned()),
+        "PLANE_TOKEN" => Some("alt-token".to_owned()),
+        "PLANE_WORKSPACE" => Some("alt-ws".to_owned()),
+        _ => None,
+    };
+    let settings = PlaneSettings::from_env(&env).expect("aliases are enough");
+    assert_eq!(settings.api_key, "alt-token");
+    assert_eq!(settings.workspace_slug, "alt-ws");
+
+    let both = |key: &str| match key {
+        "PLANE_BASE_URL" => Some("https://plane.example".to_owned()),
+        "PLANE_API_KEY" => Some("primary".to_owned()),
+        "PLANE_TOKEN" => Some("alt-token".to_owned()),
+        "PLANE_WORKSPACE_SLUG" => Some("primary-ws".to_owned()),
+        "PLANE_WORKSPACE" => Some("alt-ws".to_owned()),
+        _ => None,
+    };
+    let settings = PlaneSettings::from_env(&both).unwrap();
+    assert_eq!(settings.api_key, "primary");
+    assert_eq!(settings.workspace_slug, "primary-ws");
+}

@@ -178,7 +178,11 @@ impl GithubSource {
     /// The error and its causes, without the request URL.
     fn describe(&self, error: reqwest::Error) -> String {
         if error.is_timeout() {
-            return format!("timed out after {:?}", self.request_timeout);
+            return if error.is_connect() {
+                format!("connection timed out after {CONNECT_TIMEOUT:?}")
+            } else {
+                format!("timed out after {:?}", self.request_timeout)
+            };
         }
         let error = error.without_url();
         let mut message = error.to_string();

@@ -12,7 +12,7 @@
 
 `pending-tui` runs the same aggregator as the API in-process, so it works without the API running. It reads the same config (`--config` or the default locations) and redraws every 250 ms.
 
-Keys: `j`/`k` or arrows move the selection, `Enter` opens the selected card's link (`xdg-open`, or `open` on macOS), `r` refreshes every source now, `q`/`Esc`/`Ctrl-C` quit. The Sources panel shows each source's status and failure reason; action failures show in the footer.
+Keys: `j`/`k` or arrows move the selection (lanes scroll to keep it visible), `Enter` opens the selected card's link (`xdg-open`, or `open` on macOS), `r` refreshes every source now (at most once every 10 s, to respect provider rate limits), `q`/`Esc`/`Ctrl-C` quit. The Sources panel shows one line per source with its status and failure reason; feedback and failures show in the footer.
 
 ## Web Dashboard
 
@@ -43,8 +43,8 @@ Tokens are read from the environment by each source, never from the config file.
 
 `kind = "github"` searches the authenticated user's open work: review requests (section "Review requested", warning severity), open pull requests ("My pull requests") and assigned issues ("Assigned issues"). An item found by two searches shows once, in the first section.
 
-- Token: `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token` (logged before it runs, given up after 5 s), resolved once at startup for all GitHub sources. Without a token the source shows as failed with a setup hint; restart after logging in.
-- The three searches run in parallel, each limited to 10 s, so a hanging search becomes a warning for its section instead of failing the refresh.
+- Token: `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token` (given up after 5 s; the API logs before running it, the TUI starts silently until then), resolved once at startup for all GitHub sources. Without a token the source shows as failed with a setup hint; restart after logging in.
+- The three searches run in parallel, each limited to 10 s, so a hanging search becomes a warning for its section instead of failing the refresh. Keep `timeout_seconds` above 10, or the aggregator timeout fails the whole refresh first.
 - One failed search keeps the other sections and makes the source degraded; all searches failing makes it failed. Rate limiting reports the reset time.
 - Each search loads up to 50 items; more than that, or GitHub reporting incomplete results, shows as a warning. Draft pull requests are marked in the card.
 - Error messages never include the token or request URLs.

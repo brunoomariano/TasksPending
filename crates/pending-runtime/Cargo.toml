@@ -10,7 +10,9 @@ homepage.workspace = true
 [dependencies]
 chrono.workspace = true
 pending-core = { path = "../pending-core" }
+thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
+toml.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

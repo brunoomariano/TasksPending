@@ -1,0 +1,16 @@
+# TasksPending config. Copy to ~/.config/tasks-pending/config.toml
+# (or $XDG_CONFIG_HOME/tasks-pending/config.toml), or point
+# TASKS_PENDING_CONFIG / --config at it. Tokens never go here.
+
+# Default wait between refreshes of a source, in seconds.
+refresh_seconds = 300
+# A refresh slower than this counts as a failure.
+timeout_seconds = 30
+
+# Sources appear on the dashboard in this order.
+[[sources]]
+name = "sample"      # shown in source health; must be unique
+kind = "sample"      # built-in fixed cards
+lane = "Inbox"       # dashboard lane for this source's cards (default "Inbox")
+enabled = true
+# refresh_seconds = 60   # overrides the default above

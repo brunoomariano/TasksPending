@@ -1,22 +1,26 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::path::PathBuf;
 
 use anyhow::Context;
 use axum::extract::State;
 use axum::{Json, Router, routing::get};
 use clap::Parser;
-use pending_core::{DEFAULT_LANE, DashboardSnapshot, SampleSource};
-use pending_runtime::{Aggregator, SourceSpec};
+use pending_core::DashboardSnapshot;
+use pending_runtime::Aggregator;
+use pending_runtime::config::{Origin, load_plan};
 use serde::Serialize;
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Debug, Parser)]
 #[command(name = "pending-api", about = "TasksPending HTTP API")]
 struct Cli {
     #[arg(long, default_value = "127.0.0.1:8080")]
     listen: SocketAddr,
+    /// Config file. Defaults to $TASKS_PENDING_CONFIG, then
+    /// $XDG_CONFIG_HOME/tasks-pending/config.toml.
+    #[arg(long)]
+    config: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize)]
@@ -30,15 +34,17 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     init_tracing();
 
-    // Until config loading exists, the API serves the built-in sample source.
-    let aggregator = Aggregator::start(
-        vec![SourceSpec {
-            source: Arc::new(SampleSource),
-            lane: DEFAULT_LANE.to_owned(),
-            interval: Duration::from_secs(300),
-        }],
-        Duration::from_secs(30),
-    );
+    let (plan, origin) = load_plan(cli.config, &|key| std::env::var(key).ok())?;
+    match &origin {
+        Origin::File(path) => {
+            info!(config = %path.display(), sources = plan.specs.len(), "config loaded")
+        }
+        Origin::SampleDefault { searched } => warn!(
+            searched = ?searched,
+            "no config file found; serving the built-in sample source"
+        ),
+    }
+    let aggregator = Aggregator::start(plan.specs, plan.timeout);
 
     let listener = tokio::net::TcpListener::bind(cli.listen)
         .await
@@ -95,6 +101,7 @@ mod tests {
     async fn snapshot_endpoint_serves_the_aggregated_state() {
         let aggregator = Aggregator::start(
             vec![SourceSpec {
+                name: "sample".to_owned(),
                 source: Arc::new(SampleSource),
                 lane: "Inbox".to_owned(),
                 interval: Duration::from_secs(300),

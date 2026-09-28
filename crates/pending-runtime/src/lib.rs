@@ -15,13 +15,27 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tracing::{info, warn};
 
-/// A source plus how the dashboard schedules and places it.
+pub mod config;
+
+/// A source plus how the dashboard names, schedules and places it.
 pub struct SourceSpec {
+    /// Name from the source's configuration, shown in source health.
+    pub name: String,
     pub source: Arc<dyn PendingSource>,
     /// Lane from the source's configuration.
     pub lane: String,
     /// Wait between the end of one refresh and the start of the next.
     pub interval: Duration,
+}
+
+impl std::fmt::Debug for SourceSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SourceSpec")
+            .field("name", &self.name)
+            .field("lane", &self.lane)
+            .field("interval", &self.interval)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Cheap-to-clone handle to the running refresh loops. The loops stop when the
@@ -50,7 +64,7 @@ impl Aggregator {
             specs
                 .iter()
                 .map(|spec| SourceReport {
-                    name: spec.source.name().to_owned(),
+                    name: spec.name.clone(),
                     lane: spec.lane.clone(),
                     outcome: SourceOutcome::Pending,
                 })
@@ -81,7 +95,7 @@ async fn refresh_loop(
     timeout: Duration,
     reports: Arc<RwLock<Vec<SourceReport>>>,
 ) {
-    let name = spec.source.name().to_owned();
+    let name = spec.name.clone();
     loop {
         let started = Instant::now();
         let result = match tokio::time::timeout(timeout, spec.source.refresh()).await {

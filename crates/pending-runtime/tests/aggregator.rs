@@ -88,6 +88,7 @@ fn batch(id: &str) -> SourceBatch {
 
 fn spec(source: Arc<dyn PendingSource>, interval_secs: u64) -> SourceSpec {
     SourceSpec {
+        name: source.name().to_owned(),
         source,
         lane: "Work".to_owned(),
         interval: Duration::from_secs(interval_secs),

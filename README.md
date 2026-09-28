@@ -23,6 +23,8 @@ curl http://127.0.0.1:8080/healthz
 curl http://127.0.0.1:8080/api/v1/snapshot
 ```
 
+Configure sources by copying `config.example.toml` to `~/.config/tasks-pending/config.toml`; without it the API serves a built-in sample source. See [docs/operations.md](docs/operations.md).
+
 Run the frontend dev server:
 
 ```sh
@@ -40,4 +42,4 @@ make frontend-dev
 
 ## Current State
 
-The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API refreshes sources through `pending-runtime` and still uses the built-in sample source. Next: config loading and the first real GitHub source.
+The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Only the built-in `sample` source exists so far. Next: the first real GitHub source.

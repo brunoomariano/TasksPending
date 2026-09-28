@@ -35,9 +35,11 @@ The frontend types in `frontend/src/contract.gen.ts` are generated from these Ru
 - a failure after a success keeps the last batch as `stale`;
 - the loops stop when the last `Aggregator` handle is dropped.
 
-There is no persistence yet: a restart starts every source as `pending` again. The API serves the built-in `SampleSource` until config loading exists.
+There is no persistence yet: a restart starts every source as `pending` again.
 
-Next: config loading, then GitHub as the first concrete source, borrowing ideas from `ghpending`.
+`pending_runtime::config` locates and loads the config file, validates it with `AppConfig::validate`, and turns each enabled source into a `SourceSpec`. The source's configured `name` is what source health shows.
+
+Next: GitHub as the first concrete source, borrowing ideas from `ghpending`.
 
 ## Reference Repositories
 

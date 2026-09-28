@@ -13,9 +13,9 @@ use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use pending_runtime::Aggregator;
-use pending_runtime::cache::Cache;
-use pending_runtime::config::{Origin, cache_path, load_plan};
+use pending_runtime::Dashboard;
+use pending_runtime::config::{Origin, cache_path};
+use pending_runtime::live::{Live, process_env};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
@@ -35,7 +35,10 @@ struct Cli {
     config: Option<PathBuf>,
 }
 
-/// How often the screen reads the aggregator and checks for keys.
+/// How often the config file is checked for changes.
+const CONFIG_WATCH_INTERVAL: Duration = Duration::from_secs(2);
+
+/// How often the screen reads the dashboard and checks for keys.
 const TICK: Duration = Duration::from_millis(250);
 
 struct TerminalSession;
@@ -82,24 +85,23 @@ fn restore_terminal() {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    // Config errors print before the terminal switches to the alternate screen.
-    let (plan, origin) = load_plan(cli.config, &|key| std::env::var_os(key))?;
-    let header = match &origin {
-        Origin::File(path) => format!("config: {}", path.display()),
-        Origin::SampleDefault {
-            searched: Some(path),
-        } => {
-            format!("sample source (no config at {})", path.display())
-        }
-        Origin::SampleDefault { searched: None } => "sample source (no config)".to_owned(),
-    };
-
     let runtime = tokio::runtime::Runtime::new().context("starting async runtime")?;
     let result = {
         let _guard = runtime.enter();
-        let cache = cache_path(&|key| std::env::var_os(key)).map(Cache::new);
-        let aggregator = Aggregator::start_with_cache(plan.specs, plan.timeout, cache);
-        run(&aggregator, &header)
+        let env = process_env();
+        let cache = cache_path(&*env);
+        // Config errors print before the terminal switches to the alternate
+        // screen; later edits of the file are reloaded while running.
+        let (live, origin) = Live::start(cli.config, env, cache)?;
+        let header = match &origin {
+            Origin::File(path) => format!("config: {}", path.display()),
+            Origin::SampleDefault {
+                searched: Some(path),
+            } => format!("sample source (no config at {})", path.display()),
+            Origin::SampleDefault { searched: None } => "sample source (no config)".to_owned(),
+        };
+        let _watch = live.watch(CONFIG_WATCH_INTERVAL);
+        run(&live, &header)
     };
     // Quit right away: an in-flight DNS lookup on a blocking thread must not
     // keep the process alive after the terminal is restored.
@@ -107,14 +109,14 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
-fn run(aggregator: &Aggregator, header: &str) -> anyhow::Result<()> {
+fn run(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> {
     let _session = TerminalSession::enter()?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).context("opening terminal")?;
-    let mut app = App::new(aggregator.snapshot());
+    let mut app = App::new(dashboard.snapshot());
 
     loop {
-        app.update(aggregator.snapshot());
+        app.update(dashboard.snapshot());
         terminal
             .draw(|frame| ui::render(frame.area(), frame.buffer_mut(), &app, header))
             .context("drawing TUI")?;
@@ -130,7 +132,7 @@ fn run(aggregator: &Aggregator, header: &str) -> anyhow::Result<()> {
         }
         match app.handle_key(key) {
             Action::Quit => break,
-            Action::RefreshNow => aggregator.refresh_now(),
+            Action::RefreshNow => dashboard.refresh_now(),
             Action::Open(url) => {
                 if let Err(error) = open_url(&url) {
                     app.set_notice(format!("could not open link: {error}"));

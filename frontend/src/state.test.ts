@@ -4,6 +4,7 @@ import { nextState, type ViewState } from "./state";
 
 const snapshot = (id: string): DashboardSnapshot => ({
   generated_at: "2026-09-28T10:00:00Z",
+  config_error: null,
   sources: [
     { name: "github", status: "ready", last_refresh_at: null, message: null },
   ],

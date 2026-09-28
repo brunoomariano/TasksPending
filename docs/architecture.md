@@ -38,6 +38,8 @@ The frontend types in `frontend/src/contract.gen.ts` are generated from these Ru
 
 A source that fails waits longer before its next attempt: the interval doubled per consecutive failure, up to 16×, and never before the `retry_at` a source reports (the GitHub rate-limit reset), capped at an hour. `refresh_now` skips the ordinary backoff but still waits for a `retry_at`. The first success returns to the normal interval.
 
+`pending_runtime::live::Live` wraps the aggregator for the API and the TUI: it rebuilds it when the config file's text changes (polled every 2 s, and on `refresh_now`), keeps the previous one when the new file fails to load, and reports that in `DashboardSnapshot::config_error`. Both surfaces talk to it through the small `Dashboard` trait.
+
 `Aggregator::refresh_now` wakes every source waiting for its interval (the TUI's `r` key).
 
 The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME/tasks-pending/cache.json`, else `~/.local/state/...`) after each successful refresh. Saves are serialized in-process and merge into the file on disk, so an API and a TUI with different sources keep each other's entries; each write goes to a private (0600) temporary file that is renamed into place. Entries not refreshed for 30 days are dropped. On start, a cached source shows those cards as `cached` (dashboard status `refreshing`, "showing data from the previous run") until its first refresh; a failure then keeps them as `stale`. A missing, corrupt or older-format cache is ignored and rewritten.

@@ -70,6 +70,11 @@ function renderSnapshot(
       <button type="button" class="refresh" data-action="refresh">Refresh</button>
     </header>
     ${banner}
+    ${
+      snapshot.config_error
+        ? `<section class="stale" role="alert">Config not reloaded (the previous one is still running): ${escapeHtml(snapshot.config_error)}</section>`
+        : ""
+    }
     <nav class="tabs">
       ${snapshot.boards.map((b, index) => renderTab(b, index, b === selected)).join("")}
     </nav>
@@ -136,9 +141,10 @@ function renderCard(card: PendingCard): string {
     card.url && isHttpUrl(card.url)
       ? `<a href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">${escapeHtml(card.title)}</a>`
       : escapeHtml(card.title);
-  const when = card.due_at
-    ? `due ${localTime(card.due_at)}`
-    : `updated ${localTime(card.updated_at)}`;
+  // The last fetch time is at the top; only a due time is per card.
+  const due = card.due_at
+    ? `<footer>due ${escapeHtml(localTime(card.due_at))}</footer>`
+    : "";
 
   return `
     <article class="card severity-${card.severity}">
@@ -147,7 +153,7 @@ function renderCard(card: PendingCard): string {
         <span>${severityLabel(card.severity)}</span>
       </div>
       <p>${escapeHtml(card.body)}</p>
-      <footer>${escapeHtml(when)}</footer>
+      ${due}
     </article>
   `;
 }

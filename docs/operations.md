@@ -94,6 +94,8 @@ An explicit path (1 or 2) that does not exist is an error. When no file exists a
 
 Tokens are read from the environment by each source, never from the config file.
 
+Edits are picked up while running: the API and the TUI check the file every 2 seconds, and a manual refresh (`r`, the web Refresh button) also reloads it first. Sources are rebuilt only when the file's text changed, with the cache keeping their cards on screen meanwhile. A file that fails to load keeps the previous config running and shows the error in the TUI's Sources panel and as a banner on the web. Environment variables are read at startup; changing them still needs a restart.
+
 ## GitHub Source
 
 `kind = "github"` runs one search per column (`query`, github.com search syntax; optional `severity`), or reads notifications (`notifications = "unread"`, matching github.com's Unread tab, or `"all"` for read and unread — the REST API cannot tell which ones you marked as done on github.com, so those show too; `inbox` is accepted as the old name of `all`; unread ones are warnings, cards link to the pull request or issue, or to the repository for other kinds). A column sets exactly one of the two. The notifications API needs a classic token with the `repo` or `notifications` scope, as `gh auth token` provides; fine-grained tokens cannot read it. By default: review requests (warning), your open pull requests and your assigned issues. An item found by several searches shows in each of those columns.

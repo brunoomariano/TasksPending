@@ -199,6 +199,7 @@ pub fn build_snapshot(
         generated_at,
         boards,
         sources,
+        config_error: None,
     }
 }
 

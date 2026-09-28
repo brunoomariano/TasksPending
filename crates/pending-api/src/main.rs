@@ -11,9 +11,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use pending_core::DashboardSnapshot;
-use pending_runtime::Aggregator;
-use pending_runtime::cache::Cache;
-use pending_runtime::config::{Origin, cache_path, load_plan};
+use pending_runtime::Dashboard;
+use pending_runtime::config::{Origin, cache_path};
+use pending_runtime::live::{Live, process_env};
 use serde::Serialize;
 use tokio::time::Instant;
 use tower_http::services::ServeDir;
@@ -47,26 +47,27 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     init_tracing();
 
-    let (plan, origin) = load_plan(cli.config, &|key| std::env::var_os(key))?;
+    let env = process_env();
+    let cache = cache_path(&*env);
+    match &cache {
+        Some(path) => info!(cache = %path.display(), "source cache enabled"),
+        None => warn!("no XDG_STATE_HOME or HOME; the source cache is disabled"),
+    }
+    let (live, origin) = Live::start(cli.config, env, cache)?;
+    let sources = live.snapshot().sources.len();
     match &origin {
-        Origin::File(path) if plan.specs.is_empty() => warn!(
+        Origin::File(path) if sources == 0 => warn!(
             config = %path.display(),
             "config has no enabled sources; the dashboard will be empty"
         ),
-        Origin::File(path) => {
-            info!(config = %path.display(), sources = plan.specs.len(), "config loaded")
-        }
+        Origin::File(path) => info!(config = %path.display(), sources, "config loaded"),
         Origin::SampleDefault { searched } => warn!(
             searched = ?searched,
             "no config file found; serving the built-in sample source"
         ),
     }
-    let cache = cache_path(&|key| std::env::var_os(key)).map(Cache::new);
-    match &cache {
-        Some(cache) => info!(cache = ?cache, "source cache enabled"),
-        None => warn!("no XDG_STATE_HOME or HOME; the source cache is disabled"),
-    }
-    let aggregator = Aggregator::start_with_cache(plan.specs, plan.timeout, cache);
+    // Saving the config file is enough; no restart needed.
+    let _watch = live.watch(CONFIG_WATCH_INTERVAL);
 
     let static_dir = resolve_static_dir(cli.static_dir);
     match &static_dir {
@@ -85,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("binding {}", cli.listen))?;
     info!(addr = %cli.listen, "pending-api listening");
 
-    axum::serve(listener, app(aggregator, static_dir.as_deref()))
+    axum::serve(listener, app(live, static_dir.as_deref()))
         .await
         .context("serving API")?;
     Ok(())
@@ -93,6 +94,9 @@ async fn main() -> anyhow::Result<()> {
 
 /// Minimum wait between refreshes requested over HTTP; each one queries every
 /// source, and provider APIs rate-limit.
+/// How often the config file is checked for changes.
+const CONFIG_WATCH_INTERVAL: Duration = Duration::from_secs(2);
+
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
 
 /// Header the dashboard sends with state-changing requests. Another site open
@@ -101,14 +105,14 @@ const DASHBOARD_HEADER: (&str, &str) = ("x-requested-with", "tasks-pending");
 
 #[derive(Clone)]
 struct AppState {
-    aggregator: Aggregator,
+    dashboard: Arc<dyn Dashboard>,
     last_refresh: Arc<Mutex<Option<Instant>>>,
 }
 
 /// API routes, plus the built frontend from `static_dir` for any other path.
-fn app(aggregator: Aggregator, static_dir: Option<&Path>) -> Router {
+fn app(dashboard: impl Dashboard + 'static, static_dir: Option<&Path>) -> Router {
     let state = AppState {
-        aggregator,
+        dashboard: Arc::new(dashboard),
         last_refresh: Arc::new(Mutex::new(None)),
     };
     let router = Router::new()
@@ -172,7 +176,7 @@ async fn healthz() -> Json<Health> {
 }
 
 async fn snapshot(State(state): State<AppState>) -> Json<DashboardSnapshot> {
-    Json(state.aggregator.snapshot())
+    Json(state.dashboard.snapshot())
 }
 
 #[derive(Debug, Serialize)]
@@ -213,7 +217,7 @@ async fn refresh(State(state): State<AppState>, headers: HeaderMap) -> impl Into
         );
     }
     *last = Some(now);
-    state.aggregator.refresh_now();
+    state.dashboard.refresh_now();
     (
         StatusCode::ACCEPTED,
         Json(RefreshReply::Accepted { accepted: true }),

@@ -153,7 +153,11 @@ body {
 
 .card-title a {
   color: inherit;
-  text-decoration-color: #54a7ff;
+  text-decoration: none;
+}
+
+.card-title a:hover {
+  text-decoration: underline;
 }
 
 .card-title span {

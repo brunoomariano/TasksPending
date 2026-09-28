@@ -16,6 +16,7 @@ const card = (id: string, extra: Partial<PendingCard> = {}): PendingCard => ({
 
 const snapshot = (): DashboardSnapshot => ({
   generated_at: "2026-09-28T10:00:00Z",
+  config_error: null,
   sources: [
     { name: "plane", status: "ready", last_refresh_at: null, message: null },
     {
@@ -173,5 +174,37 @@ describe("renderApp", () => {
   /** Com dados na tela, há um botão para atualizar todas as fontes agora. */
   test("offers a refresh button", () => {
     expect(ready()).toContain('data-action="refresh"');
+  });
+
+  /**
+   * O card mostra o prazo quando existe, mas não o horário de atualização: o
+   * horário do último fetch fica só no topo.
+   */
+  test("cards show due times but not update times", () => {
+    const withDue = snapshot();
+    withDue.boards[0].groups[1].columns[0].cards[0].due_at =
+      "2026-09-29T15:00:00Z";
+    const html = renderApp({
+      kind: "ready",
+      fetchedAt: new Date("2026-09-28T10:00:00Z"),
+      snapshot: withDue,
+    });
+
+    expect(html).toContain("due ");
+    expect(html).not.toContain("updated ");
+  });
+
+  /** Um erro na configuração salva aparece como aviso no topo. */
+  test("shows config errors", () => {
+    const broken = snapshot();
+    broken.config_error = "invalid config config.toml: <bad>";
+    const html = renderApp({
+      kind: "ready",
+      fetchedAt: new Date("2026-09-28T10:00:00Z"),
+      snapshot: broken,
+    });
+
+    expect(html).toContain("Config not reloaded");
+    expect(html).toContain("invalid config config.toml: &lt;bad&gt;");
   });
 });

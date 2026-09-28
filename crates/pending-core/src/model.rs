@@ -8,6 +8,10 @@ pub struct DashboardSnapshot {
     /// Areas of work (Work, Personal, …), shown as tabs.
     pub boards: Vec<Board>,
     pub sources: Vec<SourceHealth>,
+    /// Why the config file on disk was rejected; the previous config keeps
+    /// running meanwhile.
+    #[serde(default)]
+    pub config_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

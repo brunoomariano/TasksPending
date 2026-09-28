@@ -31,7 +31,11 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
         .constraints([
             Constraint::Length(1),
             Constraint::Length(1),
-            Constraint::Length(snapshot.sources.len().max(1) as u16 + 2),
+            Constraint::Length(
+                snapshot.sources.len().max(1) as u16
+                    + u16::from(snapshot.config_error.is_some())
+                    + 2,
+            ),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
@@ -53,7 +57,7 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
 
     // One line per source, clipped, so a long failure message never pushes
     // the other sources out of the panel.
-    let sources: Vec<Line> = if snapshot.sources.is_empty() {
+    let mut sources: Vec<Line> = if snapshot.sources.is_empty() {
         vec![Line::from(Span::styled(
             "No sources configured: add [[sources]] to the config file.",
             Style::default().fg(Color::Yellow),
@@ -61,6 +65,15 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
     } else {
         snapshot.sources.iter().map(source_line).collect()
     };
+    if let Some(error) = &snapshot.config_error {
+        sources.insert(
+            0,
+            Line::from(Span::styled(
+                format!("config not reloaded (previous one still running): {error}"),
+                Style::default().fg(Color::Red),
+            )),
+        );
+    }
     Paragraph::new(sources)
         .block(Block::default().title("Sources").borders(Borders::ALL))
         .render(layout[2], buf);
@@ -423,5 +436,21 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(area, &mut buf, &app, "");
         assert_eq!(buf[(0, footer_y)].fg, ratatui::style::Color::Red);
+    }
+
+    /// Um erro na configuração salva aparece no painel, avisando que a
+    /// anterior continua valendo.
+    #[test]
+    fn config_errors_are_shown() {
+        let mut snapshot = build_snapshot(
+            Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap(),
+            Vec::new(),
+        );
+        snapshot.config_error = Some("invalid config config.toml: unknown kind".to_owned());
+
+        let screen = screen(&App::new(snapshot), 120, 20);
+
+        assert!(screen.contains("config not reloaded"), "{screen}");
+        assert!(screen.contains("unknown kind"), "{screen}");
     }
 }

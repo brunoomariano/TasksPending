@@ -19,6 +19,35 @@ use tracing::{info, warn};
 
 pub mod cache;
 pub mod config;
+pub mod live;
+
+/// What the API and the TUI need from a running dashboard.
+pub trait Dashboard: Send + Sync {
+    fn snapshot(&self) -> DashboardSnapshot;
+    /// Refreshes every source now (reloading a changed config first, when
+    /// the dashboard follows a config file).
+    fn refresh_now(&self);
+}
+
+impl Dashboard for Aggregator {
+    fn snapshot(&self) -> DashboardSnapshot {
+        Aggregator::snapshot(self)
+    }
+
+    fn refresh_now(&self) {
+        Aggregator::refresh_now(self);
+    }
+}
+
+impl Dashboard for live::Live {
+    fn snapshot(&self) -> DashboardSnapshot {
+        live::Live::snapshot(self)
+    }
+
+    fn refresh_now(&self) {
+        live::Live::refresh_now(self);
+    }
+}
 
 use crate::cache::Cache;
 

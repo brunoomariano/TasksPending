@@ -4,7 +4,12 @@ export type DashboardSnapshot = { generated_at: string,
 /**
  * Areas of work (Work, Personal, …), shown as tabs.
  */
-boards: Array<Board>, sources: Array<SourceHealth>, };
+boards: Array<Board>, sources: Array<SourceHealth>, 
+/**
+ * Why the config file on disk was rejected; the previous config keeps
+ * running meanwhile.
+ */
+config_error: string | null, };
 
 export type Board = { name: string, 
 /**

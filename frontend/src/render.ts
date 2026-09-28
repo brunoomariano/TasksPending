@@ -191,16 +191,13 @@ function renderCard(card: PendingCard): string {
     card.url && isHttpUrl(card.url)
       ? `<a href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">${escapeHtml(card.title)}</a>`
       : escapeHtml(card.title);
-  // The last fetch time is at the top; only a due time is per card.
-  const due = card.due_at
-    ? `<footer>due ${escapeHtml(localTime(card.due_at))}</footer>`
-    : "";
+  // No date line: sources write the due time or event time into the body,
+  // and the last fetch time is at the top.
 
   return `
     <article class="card severity-${card.severity}">
       <strong class="card-title">${title}</strong>
       <p>${escapeHtml(card.body)}</p>
-      ${due}
     </article>
   `;
 }

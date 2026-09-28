@@ -229,15 +229,18 @@ describe("renderApp", () => {
     expect(html).toContain("invalid config config.toml: &lt;bad&gt;");
   });
 
-  /** Os cards mostram o prazo quando existe, não o horário de atualização. */
-  test("cards show due times but not update times", () => {
+  /**
+   * Os cards não repetem datas: o prazo ou horário já vem no texto do card
+   * (a fonte o escreve), e o último fetch fica no topo.
+   */
+  test("cards show no separate due or update line", () => {
     const withDue = snapshot();
     withDue.boards[0].groups[1].columns[0].cards[0].due_at =
       "2026-09-29T15:00:00Z";
 
     const html = ready(view(), withDue);
 
-    expect(html).toContain("due ");
+    expect(html).not.toContain("due ");
     expect(html).not.toMatch(/class="card[\s\S]*updated/);
   });
 

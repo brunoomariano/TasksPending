@@ -17,7 +17,7 @@ The shared model starts in `pending-core`:
 
 ## Sources
 
-Every source implements the `PendingSource` port: `columns()` names its columns (from `[[sources.columns]]`, or the source's defaults), and `refresh()` returns a `SourceBatch` (cards with their column, plus warnings for partial data) or a `SourceError`. The board comes from the source's configuration (`board`, formerly `lane`, default `Inbox`). Column filter keys are kind-specific: each source crate defines its column type with `deny_unknown_fields`, and `pending_runtime::config` parses `[[sources.columns]]` into it, naming the source and column on errors.
+Every source implements the `PendingSource` port: `columns()` names its columns (from `[[sources.stacks]]`, or the source's defaults), and `refresh()` returns a `SourceBatch` (cards with their column, plus warnings for partial data) or a `SourceError`. The board comes from the source's configuration (`board`, formerly `lane`, default `Inbox`). Column filter keys are kind-specific: each source crate defines its column type with `deny_unknown_fields`, and `pending_runtime::config` parses `[[sources.stacks]]` into it, naming the source and column on errors.
 
 `build_snapshot` turns one `SourceReport` per source into the dashboard. A bad source never takes the dashboard down:
 

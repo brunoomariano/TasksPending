@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := ci-check
 
-.PHONY: bootstrap doctor ci ci-check test fmt lint build up serve down logs tui contract frontend-dev frontend-build frontend-test release-local
+.PHONY: bootstrap doctor ci ci-check test fmt lint build up serve down logs tui contract frontend-dev frontend-build frontend-test release-local install uninstall webapp
 
 bootstrap:
 	cargo fetch --locked
@@ -64,3 +64,16 @@ frontend-test:
 
 release-local:
 	./scripts/release-local.sh
+
+# Build a release and install it under PREFIX (default ~/.local), plus the
+# user service (systemd on Linux, launchd on macOS). Config and tokens are
+# left alone; see docs/install.md.
+install:
+	./scripts/install.sh
+
+uninstall:
+	./scripts/install.sh --uninstall
+
+# Omarchy: a launcher that opens the dashboard as a web app.
+webapp:
+	./scripts/omarchy-webapp.sh

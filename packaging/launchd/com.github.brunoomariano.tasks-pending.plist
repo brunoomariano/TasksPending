@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TasksPending API as a macOS LaunchAgent. @BINDIR@ and @LOGDIR@ are replaced
+  at install time. Tokens go in EnvironmentVariables below (launchd has no
+  environment file); keep this file readable only by you (chmod 600).
+
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.brunoomariano.tasks-pending.plist
+    launchctl bootout gui/$(id -u)/com.github.brunoomariano.tasks-pending
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.github.brunoomariano.tasks-pending</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@BINDIR@/pending-api</string>
+    <string>--listen</string>
+    <string>127.0.0.1:8080</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>RUST_LOG</key>
+    <string>info</string>
+    <!-- <key>PLANE_TOKEN</key><string>...</string> -->
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>@LOGDIR@/tasks-pending.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOGDIR@/tasks-pending.log</string>
+</dict>
+</plist>

@@ -23,3 +23,6 @@
 *.swp
 *.swo
 .DS_Store
+
+# Agent worktrees
+/.claude/worktrees/

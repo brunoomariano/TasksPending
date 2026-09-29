@@ -1,0 +1,26 @@
+# TasksPending API as a systemd user service (the dashboard at
+# http://127.0.0.1:8080). @BINDIR@ is replaced at install time.
+#
+#   systemctl --user enable --now tasks-pending
+#   journalctl --user -u tasks-pending -f
+[Unit]
+Description=TasksPending dashboard API
+Documentation=https://github.com/brunoomariano/TasksPending/blob/master/docs/install.md
+After=network-online.target graphical-session.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@BINDIR@/pending-api --listen 127.0.0.1:8080
+# Tokens for the sources (PLANE_TOKEN, TODOIST_API_TOKEN, GITHUB_TOKEN, ...),
+# one KEY=value per line; keep it chmod 600. Optional.
+EnvironmentFile=-%h/.config/tasks-pending/env
+# `gh auth token` is the GitHub fallback; user services don't get your
+# shell's PATH, so add the usual places for user-installed tools.
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

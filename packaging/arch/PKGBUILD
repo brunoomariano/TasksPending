@@ -1,0 +1,37 @@
+# Maintainer: Bruno Mariano
+# Binary package built from the release bundle. The release workflow fills in
+# pkgver and the checksums and builds it with the bundle next to this file.
+pkgname=tasks-pending-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Local-first dashboard of pending work (GitHub, Plane, calendars, Todoist): daemon, web page and TUI"
+arch=('x86_64' 'aarch64')
+url="https://github.com/brunoomariano/TasksPending"
+license=('MIT')
+depends=('glibc' 'gcc-libs')
+optdepends=(
+  'github-cli: GitHub token from `gh auth token`'
+  'gnome-online-accounts: Google Calendar source'
+)
+provides=('tasks-pending')
+conflicts=('tasks-pending')
+# Prebuilt release binaries: no separate debug package.
+options=('!debug')
+_bundle_x86_64="tasks-pending-$pkgver-x86_64-unknown-linux-gnu"
+_bundle_aarch64="tasks-pending-$pkgver-aarch64-unknown-linux-gnu"
+source_x86_64=("$_bundle_x86_64.tar.gz::$url/releases/download/v$pkgver/$_bundle_x86_64.tar.gz")
+source_aarch64=("$_bundle_aarch64.tar.gz::$url/releases/download/v$pkgver/$_bundle_aarch64.tar.gz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  local bundle="tasks-pending-$pkgver-$CARCH-unknown-linux-gnu"
+  cd "$srcdir/$bundle"
+  PREFIX=/usr DESTDIR="$pkgdir" ./scripts/install.sh
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 packaging/icons/tasks-pending.svg \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/tasks-pending.svg"
+  install -d "$pkgdir/usr/share/doc/tasks-pending"
+  install -m644 README.md CHANGELOG.md docs/install.md docs/operations.md \
+    "$pkgdir/usr/share/doc/tasks-pending/"
+}

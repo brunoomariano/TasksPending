@@ -22,6 +22,7 @@ BIN="$DESTDIR$PREFIX/bin"
 SHARE="$DESTDIR$PREFIX/share/tasks-pending"
 OS="$(uname -s)"
 PLIST_NAME="com.github.brunoomariano.tasks-pending.plist"
+ENV_FILE="$HOME/.config/tasks-pending/env"
 
 if [[ -n $DESTDIR ]]; then
   UNIT_DIR="$DESTDIR$PREFIX/lib/systemd/user"
@@ -160,6 +161,13 @@ install -m 0644 "$ROOT/packaging/env.example" "$SHARE/env.example"
 install -m 0644 "$ROOT/packaging/icons/tasks-pending.png" "$SHARE/tasks-pending.png"
 install -m 0644 "$ROOT/packaging/icons/tasks-pending.svg" "$SHARE/tasks-pending.svg"
 legacy_command_remaining=0
+
+if [[ $OS == Linux && -z $DESTDIR && ! -f $ENV_FILE ]]; then
+  cat <<EOF
+Warning: token file is missing; authenticated sources will be unavailable.
+Create $ENV_FILE from $SHARE/env.example, fill in the required values, then restart the daemon.
+EOF
+fi
 
 case $OS in
 Linux)

@@ -15,14 +15,28 @@ assert_contains() {
   }
 }
 
+assert_not_contains() {
+  local text=$1 unexpected=$2
+  [[ $text != *"$unexpected"* ]] || {
+    printf 'installer output must not contain: %s\n' "$unexpected" >&2
+    exit 1
+  }
+}
+
 run_case() {
-  local state=$1 expected=$2 override=${3:-none}
-  local home="$WORK/$state-$override/home"
-  local release_bin="$WORK/$state-$override/release-bin"
-  local fake_bin="$WORK/$state-$override/fake-bin"
+  local state=$1 expected=$2 override=${3:-none} env_file=${4:-missing}
+  local case_name="$state-$override-$env_file"
+  local home="$WORK/$case_name/home"
+  local release_bin="$WORK/$case_name/release-bin"
+  local fake_bin="$WORK/$case_name/fake-bin"
   local output
 
   mkdir -p "$home" "$release_bin" "$fake_bin"
+  if [[ $env_file == present ]]; then
+    install -Dm 0600 /dev/stdin "$home/.config/tasks-pending/env" <<'EOF'
+TODOIST_API_TOKEN=preserve-this-token
+EOF
+  fi
   if [[ $override != none ]]; then
     mkdir -p "$home/.config/systemd/user/tasks-pending.service.d"
     printf '[Service]\nExecStart=\nExecStart=%s/bin/pending-api --listen 127.0.0.1:8090%s\n' "$home/.local" \
@@ -64,11 +78,19 @@ run_case() {
     test ! -e "$home/.local/share/tasks-pending/frontend"
   fi
   assert_contains "$output" "Daemon:  $expected"
+  if [[ $env_file == missing ]]; then
+    assert_contains "$output" "Warning: token file is missing; authenticated sources will be unavailable."
+  else
+    assert_not_contains "$output" "Warning: token file is missing; authenticated sources will be unavailable."
+    grep -Fqx 'TODOIST_API_TOKEN=preserve-this-token' "$home/.config/tasks-pending/env"
+    test "$(stat -c %a "$home/.config/tasks-pending/env")" = 600
+  fi
 }
 
 run_case true "systemctl --user restart tasks-pending" standard
 run_case false "systemctl --user enable --now tasks-pending"
 run_case true "update the remaining pending-api command" custom
+run_case false "systemctl --user enable --now tasks-pending" none present
 
 run_start_case() {
   local state=$1 expected=$2 override=${3:-none}
@@ -76,6 +98,7 @@ run_start_case() {
   local release_bin="$WORK/start-$state-$override/release-bin"
   local fake_bin="$WORK/start-$state-$override/fake-bin"
   local log="$WORK/start-$state-$override/systemctl.log"
+  local output
   local status=0
 
   mkdir -p "$home" "$release_bin" "$fake_bin"
@@ -99,15 +122,17 @@ fi
 EOF
   chmod +x "$fake_bin/systemctl"
 
-  if HOME="$home" \
-    XDG_CONFIG_HOME="$home/.config" \
-    PATH="$fake_bin:$PATH" \
-    PREFIX="$home/.local" \
-    RELEASE_BIN="$release_bin" \
-    SKIP_BUILD=1 \
-    SYSTEMCTL_ACTIVE="$state" \
-    SYSTEMCTL_LOG="$log" \
-    "$ROOT/scripts/install.sh" --start >/dev/null 2>&1; then
+  if output="$(
+    HOME="$home" \
+      XDG_CONFIG_HOME="$home/.config" \
+      PATH="$fake_bin:$PATH" \
+      PREFIX="$home/.local" \
+      RELEASE_BIN="$release_bin" \
+      SKIP_BUILD=1 \
+      SYSTEMCTL_ACTIVE="$state" \
+      SYSTEMCTL_LOG="$log" \
+      "$ROOT/scripts/install.sh" --start
+  )"; then
     status=0
   else
     status=$?
@@ -120,6 +145,7 @@ EOF
   else
     test "$status" -eq 0
     grep -Fqx -- "$expected" "$log"
+    assert_contains "$output" "Warning: token file is missing; authenticated sources will be unavailable."
   fi
 }
 

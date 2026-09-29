@@ -73,6 +73,16 @@ restart_linux_service() {
   fi
 }
 
+warn_missing_token_file() {
+  token_file="$HOME/.config/tasks-pending/env"
+  [ -f "$token_file" ] && return
+
+  cat <<EOF
+Warning: token file is missing; authenticated sources will be unavailable.
+Create $token_file from /usr/share/tasks-pending/env.example, fill in the required values, then restart the daemon.
+EOF
+}
+
 install_arch_package() {
   package=$(download_checked "tasks-pending-bin-x86_64.pkg.tar.zst")
   command -v pacman >/dev/null 2>&1 || fail "pacman is required to install the Arch package"
@@ -85,6 +95,7 @@ install_arch_package() {
     fail "sudo is required to install the Arch package"
   fi
 
+  warn_missing_token_file
   restart_linux_service
 }
 

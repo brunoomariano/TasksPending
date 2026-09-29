@@ -38,7 +38,9 @@ uninstall() {
       systemctl --user disable --now tasks-pending.service 2>/dev/null || true
     fi
     rm -f "$UNIT_DIR/tasks-pending.service"
-    [[ -z $DESTDIR ]] && command -v systemctl >/dev/null && systemctl --user daemon-reload || true
+    if [[ -z $DESTDIR ]] && command -v systemctl >/dev/null; then
+      systemctl --user daemon-reload || true
+    fi
   elif [[ $OS == Darwin ]]; then
     launchctl bootout "gui/$(id -u)/${PLIST_NAME%.plist}" 2>/dev/null || true
     rm -f "$AGENT_DIR/$PLIST_NAME"

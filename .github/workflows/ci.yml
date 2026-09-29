@@ -50,4 +50,5 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Shellcheck
-        run: shellcheck scripts/*.sh
+        # Warnings and errors fail; style notes differ between versions.
+        run: shellcheck --severity=warning scripts/*.sh

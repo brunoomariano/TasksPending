@@ -63,7 +63,7 @@ pub enum LoadError {
     },
     #[error("invalid config {}: {source}", path.display())]
     Invalid { path: PathBuf, source: ConfigError },
-    #[error("invalid config {}: source `{source_name}`, column `{column}`: {message}", path.display())]
+    #[error("invalid config {}: source `{source_name}`, stack `{column}`: {message}", path.display())]
     Column {
         path: PathBuf,
         source_name: String,
@@ -186,12 +186,12 @@ fn plan(
         let implementation: Arc<dyn PendingSource> =
             match source.kind {
                 SourceKind::Sample => {
-                    if let Some(column) = source.columns.first() {
+                    if let Some(column) = source.stacks.first() {
                         return Err(column_error(
                             path,
                             source,
                             &column.name,
-                            "the sample source has fixed columns",
+                            "the sample source has fixed stacks",
                         ));
                     }
                     Arc::new(SampleSource)
@@ -261,7 +261,7 @@ fn plan(
     })
 }
 
-/// A source's `[[sources.columns]]` read as that kind's column type; unknown
+/// A source's `[[sources.stacks]]` read as that kind's column type; unknown
 /// or missing filter keys name the source and the column.
 fn parse_columns<T: DeserializeOwned>(
     path: &Path,
@@ -269,7 +269,7 @@ fn parse_columns<T: DeserializeOwned>(
     finish: impl Fn(&mut T, String) -> Result<(), String>,
 ) -> Result<Vec<T>, LoadError> {
     source
-        .columns
+        .stacks
         .iter()
         .map(|column| {
             let mut parsed: T = toml::Value::Table(column.filter.clone())

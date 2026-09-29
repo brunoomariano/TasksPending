@@ -41,21 +41,22 @@ pub struct SourceConfig {
     /// Variant of `icon` for dark themes.
     #[serde(default)]
     pub icon_dark: Option<String>,
-    /// Columns (filters) of this source; empty means the source's defaults.
-    /// Filter keys depend on `kind` and are checked when the source is built.
-    #[serde(default)]
-    pub columns: Vec<ColumnConfig>,
+    /// Stacks (filters) of this source, top to bottom; empty means the
+    /// source's defaults. Filter keys depend on `kind` and are checked when
+    /// the source is built. `columns` is the old name.
+    #[serde(default, alias = "columns")]
+    pub stacks: Vec<StackConfig>,
 }
 
-/// One kanban column of a source: a name plus kind-specific filter keys.
+/// One stack of a source's cards: a name plus kind-specific filter keys.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ColumnConfig {
+pub struct StackConfig {
     pub name: String,
     #[serde(flatten)]
     pub filter: toml::Table,
 }
 
-impl Eq for ColumnConfig {}
+impl Eq for StackConfig {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -74,9 +75,9 @@ pub enum ConfigError {
     DuplicateSourceName(String),
     #[error("`{0}` must be greater than zero")]
     Zero(String),
-    #[error("source `{source_name}` has more than one column named `{column}`")]
+    #[error("source `{source_name}` has more than one stack named `{column}`")]
     DuplicateColumnName { source_name: String, column: String },
-    #[error("source `{0}` has a column without a name")]
+    #[error("source `{0}` has a stack without a name")]
     EmptyColumnName(String),
     #[error("source `{source_name}`: {message}")]
     Icon {
@@ -111,7 +112,7 @@ impl AppConfig {
                 return Err(ConfigError::DuplicateSourceName(source.name.clone()));
             }
             let mut columns = HashSet::new();
-            for column in &source.columns {
+            for column in &source.stacks {
                 if column.name.trim().is_empty() {
                     return Err(ConfigError::EmptyColumnName(source.name.clone()));
                 }
@@ -206,6 +207,47 @@ mod tests {
         assert!(source.enabled);
         assert_eq!(source.kind, SourceKind::Github);
         assert_eq!(source.refresh_seconds, None);
+    }
+
+    /// A source's filters are `stacks`, shown top to bottom in file order;
+    /// `columns`, the old name, still works.
+    #[test]
+    fn stacks_keep_file_order_and_accept_the_old_name() {
+        let config = parse(
+            r#"
+            [[sources]]
+            name = "github"
+            kind = "github"
+
+              [[sources.stacks]]
+              name = "Notifications"
+
+              [[sources.stacks]]
+              name = "Review requested"
+
+            [[sources]]
+            name = "old"
+            kind = "sample"
+
+              [[sources.columns]]
+              name = "Mine"
+            "#,
+        );
+        config.validate().expect("valid stacks");
+        let names: Vec<&str> = config.sources[0]
+            .stacks
+            .iter()
+            .map(|stack| stack.name.as_str())
+            .collect();
+        assert_eq!(names, ["Notifications", "Review requested"]);
+        assert_eq!(config.sources[1].stacks[0].name, "Mine");
+
+        let error = parse(
+            "[[sources]]\nname = \"s\"\nkind = \"sample\"\n[[sources.stacks]]\nname = \"A\"\n[[sources.stacks]]\nname = \"A\"",
+        )
+        .validate()
+        .expect_err("duplicate stack");
+        assert!(error.to_string().contains("stack named `A`"), "{error}");
     }
 
     /// A source may name an icon (and a variant for dark themes) by http(s)

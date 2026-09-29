@@ -318,10 +318,10 @@ fn sources_declare_board_and_columns() {
         kind = "plane"
         board = "Work"
 
-          [[sources.columns]]
+          [[sources.stacks]]
           name = "Mine"
 
-          [[sources.columns]]
+          [[sources.stacks]]
           name = "Unassigned inbox"
           assignee = "none"
           state = ["Inbox"]
@@ -331,7 +331,7 @@ fn sources_declare_board_and_columns() {
         kind = "todoist"
         lane = "Personal"
 
-          [[sources.columns]]
+          [[sources.stacks]]
           name = "Today"
           filter = "today | overdue"
 
@@ -340,7 +340,7 @@ fn sources_declare_board_and_columns() {
         kind = "github"
         board = "Contributions"
 
-          [[sources.columns]]
+          [[sources.stacks]]
           name = "OSS reviews"
           query = "is:open is:pr review-requested:@me -org:SejaSenfio"
           severity = "warning"
@@ -393,7 +393,7 @@ fn invalid_column_filters_name_the_source_and_column() {
         std::fs::write(
             &path,
             format!(
-                "[[sources]]\nname = \"plane\"\nkind = \"plane\"\n[[sources.columns]]\nname = \"Mine\"\n{body}\n"
+                "[[sources]]\nname = \"plane\"\nkind = \"plane\"\n[[sources.stacks]]\nname = \"Mine\"\n{body}\n"
             ),
         )
         .unwrap();
@@ -420,13 +420,13 @@ fn github_columns_need_a_query_or_notifications() {
         let path = dir.join(name);
         std::fs::write(
             &path,
-            format!("[[sources]]\nname = \"gh\"\nkind = \"github\"\n[[sources.columns]]\nname = \"N\"\n{body}\n"),
+            format!("[[sources]]\nname = \"gh\"\nkind = \"github\"\n[[sources.stacks]]\nname = \"N\"\n{body}\n"),
         )
         .unwrap();
 
         let error =
             load_plan_with(Some(path), &env(&[("GITHUB_TOKEN", "t")]), &|| None).expect_err(name);
-        assert!(error.to_string().contains("column `N`"), "{name}: {error}");
+        assert!(error.to_string().contains("stack `N`"), "{name}: {error}");
     }
 }
 
@@ -443,11 +443,11 @@ fn google_sources_are_scheduled_with_columns() {
         kind = "google"
         board = "Personal"
 
-          [[sources.columns]]
+          [[sources.stacks]]
           name = "Today"
           when = ["now", "today"]
 
-          [[sources.columns]]
+          [[sources.stacks]]
           name = "Team"
           calendar = ["Team"]
         "#,

@@ -10,7 +10,7 @@ TasksPending aggregates pending work from multiple refreshable sources and expos
 - a Rust HTTP API;
 - a lightweight TypeScript frontend.
 
-Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Board` (a tab/area), `Group` (one source's columns), `Column` (one filter), `PendingCard`, and `SourceStatus`.
+Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Board` (a tab/area), `Group` (one source's stacks), `Column` (one filter; shown and configured as a "stack", `[[sources.stacks]]`), `PendingCard`, and `SourceStatus`.
 
 ## Commands
 

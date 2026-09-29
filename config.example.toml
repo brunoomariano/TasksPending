@@ -7,13 +7,17 @@ refresh_seconds = 300
 # A refresh slower than this counts as a failure; sources may override it.
 timeout_seconds = 60
 
-# Each source is a group of kanban columns inside a board (tab). Boards and
-# groups appear in the order below. Without [[sources.columns]] a source uses
-# its default columns.
+# The page follows this file's order:
+#   - each [[sources]] is a group; groups run left to right in the order
+#     below, whatever their board;
+#   - each [[sources.stacks]] is a stack of cards inside its group; stacks
+#     run top to bottom in the order they are listed.
+# To reorder, move whole blocks up or down. Without [[sources.stacks]] a
+# source uses its default stacks.
 [[sources]]
 name = "sample"      # shown in source health; must be unique
 kind = "sample"      # built-in fixed cards
-board = "Inbox"      # tab that shows this source (default "Inbox")
+board = "Inbox"      # area used by the web filter and TUI tabs (default "Inbox")
 enabled = true
 # refresh_seconds = 60   # overrides the default above
 # timeout_seconds = 120  # overrides the default timeout above
@@ -24,27 +28,27 @@ enabled = true
 
 # --- Examples (uncomment and adapt) ---------------------------------------
 
-# GitHub: every column is a search query (github.com search syntax).
+# GitHub: every stack is a search query (github.com search syntax).
 # Token from GITHUB_TOKEN, then GH_TOKEN, then `gh auth token`.
 # [[sources]]
 # name = "github"
 # kind = "github"
 # board = "Work"
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "Review requested"
 #   query = "is:open is:pr archived:false review-requested:@me"
 #   severity = "warning"          # optional: info (default), warning, critical
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "Notifications"
 #   notifications = "unread"      # "all" adds read ones (incl. marked done)
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "My pull requests"
 #   query = "is:open is:pr archived:false author:@me"
 
-# Plane: every column filters the workspace's work items locally.
+# Plane: every stack filters the workspace's work items locally.
 # Needs PLANE_BASE_URL, PLANE_WORKSPACE_SLUG (or PLANE_WORKSPACE) and
 # PLANE_API_KEY (or PLANE_TOKEN) in the environment.
 # [[sources]]
@@ -53,15 +57,15 @@ enabled = true
 # board = "Work"
 # timeout_seconds = 180   # one request at a time: slow on big workspaces
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "Assigned to me"       # assignee defaults to "me", open states
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "Inbox, unassigned"
 #   assignee = "none"             # me | none | others | any
 #   state = ["Inbox"]             # state names, case-insensitive
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "In review (others)"
 #   assignee = "others"
 #   state = ["In Review"]
@@ -75,11 +79,11 @@ enabled = true
 # kind = "google"
 # board = "Personal"
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "Today"
 #   when = ["now", "today"]
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "Team"
 #   calendar = ["Team"]            # calendar names as shown in Google Calendar
 
@@ -90,25 +94,25 @@ enabled = true
 # kind = "ical"
 # board = "Personal"
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "Today"
 #   when = ["now", "today"]       # now | today | tomorrow | later
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "Coming up"
 #   when = ["tomorrow", "later"]
 
-# Todoist: every column is a Todoist filter query.
+# Todoist: every stack is a Todoist filter query.
 # Needs TODOIST_API_TOKEN (Todoist Settings → Integrations → Developer).
 # [[sources]]
 # name = "todoist"
 # kind = "todoist"
 # board = "Personal"
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "Today"
 #   filter = "today | overdue"
 #
-#   [[sources.columns]]
+#   [[sources.stacks]]
 #   name = "Next 7 days"
 #   filter = "7 days & !today & !overdue"

@@ -5,7 +5,7 @@ pub mod sample;
 pub mod snapshot;
 pub mod source;
 
-pub use config::{AppConfig, ColumnConfig, ConfigError, DEFAULT_BOARD, SourceConfig, SourceKind};
+pub use config::{AppConfig, ConfigError, DEFAULT_BOARD, SourceConfig, SourceKind, StackConfig};
 pub use model::{
     Board, CardSeverity, Column, DashboardSnapshot, Group, Icon, PendingCard, SourceHealth,
     SourceStatus,

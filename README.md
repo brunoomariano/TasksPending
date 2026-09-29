@@ -1,5 +1,7 @@
 # TasksPending
 
+![TasksPending dashboard banner](docs/assets/tasks-pending-banner.svg)
+
 TasksPending is a local-first pending-work dashboard. It collects auto-refreshing sources and shows the same model through a Rust TUI, a Rust HTTP API, and a lightweight TypeScript frontend.
 
 ## Install

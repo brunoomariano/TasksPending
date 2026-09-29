@@ -6,9 +6,19 @@ TasksPending is one executable. `tasks-pending serve` runs the local daemon: it 
 
 Arch Linux is the supported operational target right now. The release workflow also builds generic Linux and macOS bundles to catch portability regressions, but those artifacts do not have the same installation and operational coverage as the Arch package.
 
-## 1. Install
+## 1. Install and run
 
-Pick one. Each installs `tasks-pending` and a user service.
+The supported path is one command. It installs the latest compatible release, validates the downloaded SHA-256, and starts the dashboard at <http://127.0.0.1:8080>.
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh
+```
+
+It uses the validated Arch package on x86_64 Arch Linux and the matching bundle everywhere else. Run the same command to update: your configuration, tokens and service override stay untouched, and an active daemon restarts with the new version. With no configuration file, the dashboard starts with the built-in sample source.
+
+### Manual options
+
+Use these when you prefer to download an artifact yourself or build from source. They install `tasks-pending` and its user service but leave starting it as an explicit step.
 
 **Arch Linux** (x86_64): download `tasks-pending-bin-<version>-1-x86_64.pkg.tar.zst` from the [releases](https://github.com/brunoomariano/TasksPending/releases) and run
 
@@ -85,6 +95,7 @@ Tokens never go in `config.toml`. The daemon reads them from its environment. On
 
 ```sh
 cp -n ~/.local/share/tasks-pending/env.example ~/.config/tasks-pending/env
+# Arch package: /usr/share/tasks-pending/env.example
 chmod 600 ~/.config/tasks-pending/env
 $EDITOR ~/.config/tasks-pending/env
 ```
@@ -101,7 +112,9 @@ On macOS, put them in the `EnvironmentVariables` block of `~/Library/LaunchAgent
 
 The TUI, run from your shell, uses your shell's environment instead.
 
-## 4. Run the daemon
+## 4. Manage the daemon
+
+The one-command installer has already started the daemon. Use these commands to inspect it, or to start a manual installation.
 
 **Linux (systemd user service)**
 

@@ -206,21 +206,27 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: Prepare stable install assets
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
+        run: ./scripts/prepare-release-assets.sh "$VERSION" artifacts
       - name: Checksums and notes
         env:
           VERSION: ${{ needs.quality.outputs.version }}
         run: |
-          cd artifacts
-          sha256sum ./*.tar.gz ./*.pkg.tar.zst | sed 's| \./| |' > SHA256SUMS
-          cd ..
           {
             awk -v v="## $VERSION" '$0==v{on=1;next} /^## /{on=0} on' CHANGELOG.md
             echo
             echo "## Install"
             echo
-            echo "- Arch Linux: \`sudo pacman -U tasks-pending-bin-$VERSION-1-x86_64.pkg.tar.zst\`"
-            echo "- Linux / macOS: download the bundle for your machine, then \`tar xzf tasks-pending-$VERSION-<target>.tar.gz && cd tasks-pending-$VERSION-<target> && ./scripts/install.sh\`"
-            echo "- Then follow [docs/install.md](https://github.com/$GITHUB_REPOSITORY/blob/v$VERSION/docs/install.md) to set up the config, tokens and the daemon."
+            echo "- Install or update in one command:"
+            echo
+            echo '  ```sh'
+            echo "  curl --proto '=https' --tlsv1.2 -fsSL https://github.com/$GITHUB_REPOSITORY/releases/latest/download/tasks-pending-install.sh | sh"
+            echo '  ```'
+            echo
+            echo "- The installer selects the platform artifact, validates its checksum and starts or restarts the user service."
+            echo "- Then follow [docs/install.md](https://github.com/$GITHUB_REPOSITORY/blob/v$VERSION/docs/install.md) to configure sources and tokens."
             echo
             echo "## Checksums"
             echo
@@ -235,7 +241,8 @@ jobs:
         run: |
           gh release create "v$VERSION" \
             artifacts/*.tar.gz artifacts/*.tar.gz.sha256 \
-            artifacts/*.pkg.tar.zst artifacts/PKGBUILD artifacts/SHA256SUMS \
+            artifacts/*.pkg.tar.zst artifacts/*.pkg.tar.zst.sha256 \
+            artifacts/PKGBUILD artifacts/SHA256SUMS artifacts/tasks-pending-install.sh \
             --repo "$GITHUB_REPOSITORY" \
             --title "TasksPending $VERSION" \
             --notes-file notes.md \

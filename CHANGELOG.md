@@ -6,6 +6,7 @@
 - Run the local dashboard with `tasks-pending serve` and the terminal dashboard with `tasks-pending tui`.
 - Embed the production frontend in release builds while retaining `--static-dir` as a local development override.
 - Keep `pending-api` and `pending-tui` aliases in the Arch package so existing service overrides continue to work during an upgrade.
+- Install or update the latest release with one command, platform detection, SHA-256 verification, and automatic daemon start or restart.
 
 ## 0.1.0
 

@@ -6,9 +6,10 @@
 #   Linux: ~/.config/systemd/user/tasks-pending.service
 #   macOS: ~/Library/LaunchAgents/com.github.brunoomariano.tasks-pending.plist
 #
-# It never touches your config, env file or tokens, and never starts the
-# service; it prints the next steps. `scripts/install.sh --uninstall` removes
-# what it installed (your config stays).
+# It never touches your config, env file or tokens. By default it prints the
+# next steps; `--start` starts a new daemon or restarts an active one.
+# `scripts/install.sh --uninstall` removes what it installed (your config
+# stays).
 #
 # DESTDIR stages a system install (packaging): with DESTDIR set, the service
 # file goes to DESTDIR/PREFIX/lib/systemd/user instead of your home.
@@ -28,6 +29,7 @@ else
   UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 fi
 AGENT_DIR="$HOME/Library/LaunchAgents"
+START_SERVICE=0
 
 uninstall() {
   rm -f "$BIN/tasks-pending" "$BIN/pending-api" "$BIN/pending-tui"
@@ -118,9 +120,22 @@ migrate_legacy_systemd_overrides() {
   done
 }
 
-if [[ ${1:-} == --uninstall ]]; then
+case ${1:-} in
+"") ;;
+--start) START_SERVICE=1 ;;
+--uninstall)
   uninstall
   exit 0
+  ;;
+*)
+  echo "usage: $0 [--start|--uninstall]" >&2
+  exit 2
+  ;;
+esac
+
+if ((START_SERVICE)) && [[ -n $DESTDIR ]]; then
+  echo "--start cannot be used with DESTDIR" >&2
+  exit 2
 fi
 
 # From an unpacked release bundle (no Cargo.toml): install what it ships.
@@ -200,12 +215,42 @@ esac
 
 if ((legacy_command_remaining)); then
   echo "Kept the legacy pending-api and frontend until its custom command is updated."
+  if ((START_SERVICE)); then
+    echo "Cannot start automatically while a legacy custom command remains." >&2
+    exit 1
+  fi
 else
   rm -f "$BIN/pending-api" "$BIN/pending-tui"
   rm -rf "$SHARE/frontend"
 fi
 
 [[ -n $DESTDIR ]] && exit 0
+
+if ((START_SERVICE)); then
+  case $OS in
+  Linux)
+    command -v systemctl >/dev/null || {
+      echo "systemctl is required to start the Linux user service" >&2
+      exit 1
+    }
+    if ((service_was_active)); then
+      systemctl --user restart tasks-pending
+    else
+      systemctl --user enable --now tasks-pending
+    fi
+    next="running at http://127.0.0.1:8080"
+    ;;
+  Darwin)
+    launchctl bootout "gui/$(id -u)/${PLIST_NAME%.plist}" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$AGENT_DIR/$PLIST_NAME"
+    next="running at http://127.0.0.1:8080"
+    ;;
+  *)
+    echo "automatic startup is only available on Linux and macOS" >&2
+    exit 1
+    ;;
+  esac
+fi
 
 cat <<EOF
 

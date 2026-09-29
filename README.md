@@ -9,7 +9,13 @@ The first source target is inspired by:
 
 ## Install
 
-Download a release (Arch package, or a bundle for Linux or macOS) or build from source with `make install`, then run the daemon and open http://127.0.0.1:8080. [docs/install.md](docs/install.md) covers the daemon (systemd or launchd), tokens, the config file and the Omarchy web app.
+Install the latest release and start the dashboard:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh
+```
+
+The installer selects the matching artifact, checks its SHA-256 and starts the user service at <http://127.0.0.1:8080>. Run the same command to update; configuration, tokens and service overrides stay in place. [docs/install.md](docs/install.md) covers source configuration, manual installs and the Omarchy web app.
 
 ## Platform Focus
 

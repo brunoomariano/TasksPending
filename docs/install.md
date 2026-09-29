@@ -127,7 +127,7 @@ systemctl --user edit tasks-pending
 # ExecStart=/usr/bin/tasks-pending serve --listen 127.0.0.1:8090   (or ~/.local/bin/tasks-pending)
 ```
 
-On macOS, edit `--listen` in the plist. Reinstalling keeps your plist (it holds your tokens) and writes the new one next to it as `.plist.new`. Use the new port in the web app URL too.
+On macOS, edit `--listen` in the plist. Reinstalling migrates the standard 0.1 plist to `tasks-pending serve` while keeping its tokens and listen address. A customized plist stays untouched and the installer writes `.plist.new`; copy its command change into your version. Use the new port in the web app URL too.
 
 ## 5. Omarchy web app
 

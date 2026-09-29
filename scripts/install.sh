@@ -47,6 +47,32 @@ uninstall() {
   echo "Removed TasksPending from $PREFIX (your config in ~/.config/tasks-pending stays)."
 }
 
+# The 0.1 service points to the retired pending-api executable. Migrate only
+# the standard three-argument shape, preserving its tokens and listen address.
+migrate_legacy_launchd_service() {
+  local plist=$1
+  local plistbuddy=/usr/libexec/PlistBuddy
+  local program flag listen
+
+  [[ -x $plistbuddy ]] || return 1
+  program="$($plistbuddy -c "Print :ProgramArguments:0" "$plist" 2>/dev/null)" || return 1
+  flag="$($plistbuddy -c "Print :ProgramArguments:1" "$plist" 2>/dev/null)" || return 1
+  listen="$($plistbuddy -c "Print :ProgramArguments:2" "$plist" 2>/dev/null)" || return 1
+  [[ $program == "$PREFIX/bin/pending-api" && $flag == --listen && -n $listen ]] || return 1
+  if "$plistbuddy" -c "Print :ProgramArguments:3" "$plist" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  "$plistbuddy" \
+    -c "Delete :ProgramArguments" \
+    -c "Add :ProgramArguments array" \
+    -c "Add :ProgramArguments:0 string $PREFIX/bin/tasks-pending" \
+    -c "Add :ProgramArguments:1 string serve" \
+    -c "Add :ProgramArguments:2 string --listen" \
+    -c "Add :ProgramArguments:3 string $listen" \
+    "$plist"
+}
+
 if [[ ${1:-} == --uninstall ]]; then
   uninstall
   exit 0
@@ -70,6 +96,7 @@ RELEASE_BIN="${RELEASE_BIN:-$TARGET_DIR/release}"
 install -d "$BIN" "$SHARE"
 install -m 0755 "$RELEASE_BIN/tasks-pending" "$BIN/tasks-pending"
 rm -f "$BIN/pending-api" "$BIN/pending-tui"
+rm -rf "$SHARE/frontend"
 install -m 0644 "$ROOT/config.example.toml" "$SHARE/config.example.toml"
 install -m 0644 "$ROOT/packaging/env.example" "$SHARE/env.example"
 install -m 0644 "$ROOT/packaging/icons/tasks-pending.png" "$SHARE/tasks-pending.png"
@@ -88,15 +115,20 @@ Linux)
   ;;
 Darwin)
   install -d "$AGENT_DIR" "$HOME/Library/Logs"
-  # The installed plist holds your tokens: never overwrite it.
   plist="$AGENT_DIR/$PLIST_NAME"
-  if [[ -f $plist ]]; then
-    plist="$plist.new"
-    echo "Kept your $PLIST_NAME (it holds your tokens); the new one is $plist."
+  if [[ -f $plist ]] && migrate_legacy_launchd_service "$plist"; then
+    chmod 0600 "$plist"
+    echo "Updated $PLIST_NAME for tasks-pending and kept its tokens and listen address."
+  else
+    # The installed plist holds user-managed tokens and settings.
+    if [[ -f $plist ]]; then
+      plist="$plist.new"
+      echo "Kept your $PLIST_NAME; the new one is $plist."
+    fi
+    sed -e "s|@BINDIR@|$PREFIX/bin|g" -e "s|@LOGDIR@|$HOME/Library/Logs|g" \
+      "$ROOT/packaging/launchd/$PLIST_NAME" >"$plist"
+    chmod 0600 "$plist"
   fi
-  sed -e "s|@BINDIR@|$PREFIX/bin|g" -e "s|@LOGDIR@|$HOME/Library/Logs|g" \
-    "$ROOT/packaging/launchd/$PLIST_NAME" >"$plist"
-  chmod 0600 "$plist"
   next="launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$PLIST_NAME"
   ;;
 *)

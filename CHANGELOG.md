@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+### Fixed
+
+- Linux installers now warn when `~/.config/tasks-pending/env` is missing, so it is clear that sources requiring credentials will remain unavailable. The warning covers both the standard bundle installer and the Arch package path used by the one-command installer.
+- Existing environment files remain untouched during installation and updates.
+
 ## 0.3.0
 
 ### Breaking change

@@ -1,5 +1,6 @@
 //! GitHub as a pending-work source: review requests, open pull requests and
-//! assigned issues of the authenticated user, via the search API.
+//! assigned issues of the authenticated user, via the search API, plus
+//! notifications and repositories' open security alerts.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -24,6 +25,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Searches running at once. Each column is one search, and the search API
 /// allows 30 per minute per user.
 const MAX_CONCURRENT_SEARCHES: usize = 3;
+/// Alerts read per repository and kind (first page only). A full page is
+/// reported as a warning.
+const ALERT_PAGE_SIZE: usize = 100;
 /// Pull requests per GraphQL review-state request; `nodes` takes at most 100.
 const GRAPHQL_BATCH: usize = 100;
 
@@ -36,14 +40,20 @@ const REVIEW_STATE_QUERY: &str =
 pub struct GithubColumn {
     #[serde(skip)]
     pub name: String,
-    /// A search query (github.com search syntax). Set this or `notifications`.
+    /// A search query (github.com search syntax). Set exactly one of
+    /// `query`, `notifications` and `alerts`.
     #[serde(default)]
     pub query: Option<String>,
     /// Notifications instead of a search.
     #[serde(default)]
     pub notifications: Option<Notifications>,
-    /// Severity of the cards in this column (default `info`; unread
-    /// notifications are warnings).
+    /// Open security alerts (Dependabot, secret scanning, code scanning) of
+    /// these `owner/repo` repositories instead of a search.
+    #[serde(default)]
+    pub alerts: Option<Vec<String>>,
+    /// Severity of every card in this column. Without it, searches are
+    /// `info`, unread notifications are warnings and alerts follow their own
+    /// severity.
     #[serde(default)]
     pub severity: Option<CardSeverity>,
 }
@@ -61,13 +71,41 @@ pub enum Notifications {
 }
 
 impl GithubColumn {
-    /// A column needs exactly one of `query` and `notifications`.
+    /// A column needs exactly one of `query`, `notifications` and `alerts`;
+    /// `alerts` lists at least one repository, each as `owner/repo`.
     pub fn validate(&self) -> Result<(), String> {
-        match (&self.query, &self.notifications) {
-            (Some(_), None) | (None, Some(_)) => Ok(()),
-            _ => Err("set exactly one of `query` or `notifications`".to_owned()),
+        let origins = [
+            self.query.is_some(),
+            self.notifications.is_some(),
+            self.alerts.is_some(),
+        ];
+        if origins.iter().filter(|set| **set).count() != 1 {
+            return Err("set exactly one of `query`, `notifications` or `alerts`".to_owned());
         }
+        if let Some(repos) = &self.alerts {
+            if repos.is_empty() {
+                return Err("`alerts` needs at least one repository".to_owned());
+            }
+            if let Some(bad) = repos.iter().find(|repo| !is_repo_name(repo)) {
+                return Err(format!("`alerts` entries are `owner/repo`, found `{bad}`"));
+            }
+        }
+        Ok(())
     }
+}
+
+/// `owner/repo`: two non-empty parts of letters, digits, `-`, `_` and `.`.
+fn is_repo_name(repo: &str) -> bool {
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    repo.split_once('/')
+        .is_some_and(|(owner, name)| valid(owner) && valid(name))
 }
 
 /// Columns used when the configuration declares none.
@@ -76,6 +114,7 @@ pub fn default_columns() -> Vec<GithubColumn> {
         name: name.to_owned(),
         query: Some(query.to_owned()),
         notifications: None,
+        alerts: None,
         severity: Some(severity),
     };
     vec![
@@ -248,6 +287,9 @@ impl GithubSource {
         token: &str,
         column: &GithubColumn,
     ) -> Result<(Vec<Entry>, Vec<String>), SearchFailure> {
+        if let Some(repos) = &column.alerts {
+            return self.alert_items(token, repos, column.severity).await;
+        }
         if let Some(mode) = column.notifications {
             let all = match mode {
                 Notifications::All => "true",
@@ -305,6 +347,114 @@ impl GithubSource {
             .map(|issue| issue.into_entry(severity, &self.api_url))
             .collect();
         Ok((cards, warnings))
+    }
+
+    /// Open alerts of every kind for each repository, a few requests at a
+    /// time. A kind that cannot be read (disabled, no permission, error) is a
+    /// warning naming repository and kind; the column fails only when
+    /// nothing could be read.
+    async fn alert_items(
+        &self,
+        token: &str,
+        repos: &[String],
+        severity: Option<CardSeverity>,
+    ) -> Result<(Vec<Entry>, Vec<String>), SearchFailure> {
+        let requests: Vec<(&str, AlertKind)> = repos
+            .iter()
+            .flat_map(|repo| AlertKind::ALL.map(|kind| (repo.as_str(), kind)))
+            .collect();
+        let mut results = Vec::with_capacity(requests.len());
+        for chunk in requests.chunks(MAX_CONCURRENT_SEARCHES) {
+            results.extend(
+                join_all(
+                    chunk
+                        .iter()
+                        .map(|(repo, kind)| self.repo_alerts(token, repo, *kind)),
+                )
+                .await,
+            );
+        }
+
+        let mut entries = Vec::new();
+        let mut warnings = Vec::new();
+        let mut failures = Vec::new();
+        let mut retry_at = None;
+        for ((repo, kind), result) in requests.iter().zip(results) {
+            match result {
+                Ok(cards) => {
+                    if cards.len() >= ALERT_PAGE_SIZE {
+                        warnings.push(format!(
+                            "{repo}: showing the first {ALERT_PAGE_SIZE} {} alerts",
+                            kind.label()
+                        ));
+                    }
+                    entries.extend(cards.into_iter().map(|mut card| {
+                        if let Some(severity) = severity {
+                            card.severity = severity;
+                        }
+                        Entry::ready(card)
+                    }));
+                }
+                Err(failure) => {
+                    let hint = match failure.status {
+                        Some(StatusCode::FORBIDDEN | StatusCode::NOT_FOUND)
+                            if failure.retry_at.is_none() =>
+                        {
+                            " (not enabled for the repository, or the token cannot read it)"
+                        }
+                        _ => "",
+                    };
+                    retry_at = retry_at.max(failure.retry_at);
+                    failures.push(format!(
+                        "{repo}: {} alerts unavailable: {}{hint}",
+                        kind.label(),
+                        failure.message
+                    ));
+                }
+            }
+        }
+
+        if failures.len() == requests.len() {
+            return Err(SearchFailure {
+                message: failures.join("; "),
+                retry_at,
+                status: None,
+            });
+        }
+        warnings.extend(failures);
+        Ok((entries, warnings))
+    }
+
+    /// The open alerts of one kind in one repository, as cards.
+    async fn repo_alerts(
+        &self,
+        token: &str,
+        repo: &str,
+        kind: AlertKind,
+    ) -> Result<Vec<PendingCard>, SearchFailure> {
+        let path = format!("/repos/{repo}/{}/alerts", kind.path());
+        let per_page = ALERT_PAGE_SIZE.to_string();
+        let query = [("state", "open"), ("per_page", per_page.as_str())];
+        Ok(match kind {
+            AlertKind::Dependabot => self
+                .get_json::<Vec<DependabotAlert>>(token, &path, &query)
+                .await?
+                .into_iter()
+                .map(|alert| alert.into_card(repo))
+                .collect(),
+            AlertKind::SecretScanning => self
+                .get_json::<Vec<SecretScanningAlert>>(token, &path, &query)
+                .await?
+                .into_iter()
+                .map(|alert| alert.into_card(repo))
+                .collect(),
+            AlertKind::CodeScanning => self
+                .get_json::<Vec<CodeScanningAlert>>(token, &path, &query)
+                .await?
+                .into_iter()
+                .map(|alert| alert.into_card(repo))
+                .collect(),
+        })
     }
 
     /// GET `{api}{path}`. Returns a message safe to show and log: it never
@@ -366,6 +516,7 @@ impl GithubSource {
                     reset.to_rfc3339()
                 ),
                 retry_at: Some(reset),
+                status: Some(status),
             });
         }
         let message = response
@@ -373,10 +524,13 @@ impl GithubSource {
             .await
             .map(|body| body.message)
             .unwrap_or_default();
-        Err(format!("GitHub API returned {status}: {message}")
-            .trim_end_matches([':', ' '])
-            .to_owned()
-            .into())
+        Err(SearchFailure {
+            message: format!("GitHub API returned {status}: {message}")
+                .trim_end_matches([':', ' '])
+                .to_owned(),
+            retry_at: None,
+            status: Some(status),
+        })
     }
 }
 
@@ -409,6 +563,8 @@ struct SearchFailure {
     message: String,
     /// When GitHub says the rate limit resets.
     retry_at: Option<DateTime<Utc>>,
+    /// HTTP status of an error reply; `None` for transport errors.
+    status: Option<StatusCode>,
 }
 
 impl From<String> for SearchFailure {
@@ -416,6 +572,7 @@ impl From<String> for SearchFailure {
         Self {
             message,
             retry_at: None,
+            status: None,
         }
     }
 }
@@ -738,4 +895,230 @@ struct PullRequestState {
     is_draft: Option<bool>,
     #[serde(default)]
     review_decision: Option<String>,
+}
+
+/// The security alert APIs an `alerts` column reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AlertKind {
+    Dependabot,
+    SecretScanning,
+    CodeScanning,
+}
+
+impl AlertKind {
+    const ALL: [Self; 3] = [Self::Dependabot, Self::SecretScanning, Self::CodeScanning];
+
+    /// Path segment under `/repos/{owner}/{repo}/`.
+    fn path(self) -> &'static str {
+        match self {
+            Self::Dependabot => "dependabot",
+            Self::SecretScanning => "secret-scanning",
+            Self::CodeScanning => "code-scanning",
+        }
+    }
+
+    /// Name in warnings.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Dependabot => "Dependabot",
+            Self::SecretScanning => "secret scanning",
+            Self::CodeScanning => "code scanning",
+        }
+    }
+}
+
+/// Card severity of an advisory or rule level: `critical` is critical,
+/// `high` (and the code scanning rule level `error`) a warning, anything
+/// else info.
+fn alert_severity(level: &str) -> CardSeverity {
+    match level.to_ascii_lowercase().as_str() {
+        "critical" => CardSeverity::Critical,
+        "high" | "error" => CardSeverity::Warning,
+        _ => CardSeverity::Info,
+    }
+}
+
+/// What every alert card is made of.
+struct AlertCard<'a> {
+    repo: &'a str,
+    kind: AlertKind,
+    number: u64,
+    title: String,
+    body: String,
+    html_url: String,
+    severity: CardSeverity,
+    updated_at: DateTime<Utc>,
+}
+
+impl AlertCard<'_> {
+    fn into_card(self) -> PendingCard {
+        let repo = self.repo;
+        PendingCard {
+            id: format!("github:alert:{repo}:{}:{}", self.kind.path(), self.number),
+            title: format!("{repo}: {}", self.title),
+            body: self.body,
+            source: "github".to_owned(),
+            url: Some(self.html_url),
+            due_at: None,
+            severity: self.severity,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct DependabotAlert {
+    number: u64,
+    html_url: String,
+    created_at: DateTime<Utc>,
+    #[serde(default)]
+    updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    dependency: Option<DependabotDependency>,
+    security_advisory: DependabotAdvisory,
+}
+
+#[derive(Deserialize)]
+struct DependabotDependency {
+    #[serde(default)]
+    package: Option<DependabotPackage>,
+}
+
+#[derive(Deserialize)]
+struct DependabotPackage {
+    ecosystem: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct DependabotAdvisory {
+    summary: String,
+    severity: String,
+}
+
+impl DependabotAlert {
+    fn into_card(self, repo: &str) -> PendingCard {
+        let mut body = "Dependabot".to_owned();
+        if let Some(package) = self.dependency.and_then(|d| d.package) {
+            body.push_str(&format!(" · {} {}", package.ecosystem, package.name));
+        }
+        body.push_str(&format!(" · {}", self.security_advisory.severity));
+        AlertCard {
+            repo,
+            kind: AlertKind::Dependabot,
+            number: self.number,
+            severity: alert_severity(&self.security_advisory.severity),
+            title: self.security_advisory.summary,
+            body,
+            html_url: self.html_url,
+            updated_at: self.updated_at.unwrap_or(self.created_at),
+        }
+        .into_card()
+    }
+}
+
+#[derive(Deserialize)]
+struct SecretScanningAlert {
+    number: u64,
+    html_url: String,
+    created_at: DateTime<Utc>,
+    #[serde(default)]
+    updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    secret_type: Option<String>,
+    #[serde(default)]
+    secret_type_display_name: Option<String>,
+}
+
+impl SecretScanningAlert {
+    /// A leaked secret is always critical: it is usable until revoked.
+    fn into_card(self, repo: &str) -> PendingCard {
+        let secret = self
+            .secret_type_display_name
+            .or(self.secret_type)
+            .unwrap_or_else(|| "secret".to_owned());
+        AlertCard {
+            repo,
+            kind: AlertKind::SecretScanning,
+            number: self.number,
+            title: format!("{secret} exposed"),
+            body: format!("Secret scanning · {secret} · critical"),
+            html_url: self.html_url,
+            severity: CardSeverity::Critical,
+            updated_at: self.updated_at.unwrap_or(self.created_at),
+        }
+        .into_card()
+    }
+}
+
+#[derive(Deserialize)]
+struct CodeScanningAlert {
+    number: u64,
+    html_url: String,
+    created_at: DateTime<Utc>,
+    #[serde(default)]
+    updated_at: Option<DateTime<Utc>>,
+    rule: CodeScanningRule,
+    #[serde(default)]
+    tool: Option<CodeScanningTool>,
+}
+
+#[derive(Deserialize)]
+struct CodeScanningRule {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    /// `none`, `note`, `warning` or `error`.
+    #[serde(default)]
+    severity: Option<String>,
+    /// `low`, `medium`, `high` or `critical`; security rules only.
+    #[serde(default)]
+    security_severity_level: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CodeScanningTool {
+    name: String,
+}
+
+impl CodeScanningAlert {
+    /// The security severity decides when the rule has one, else the rule's
+    /// own level.
+    fn into_card(self, repo: &str) -> PendingCard {
+        let rule = self.rule;
+        let level = rule
+            .security_severity_level
+            .or(rule.severity)
+            .unwrap_or_default();
+        let title = rule
+            .description
+            .clone()
+            .or_else(|| rule.name.clone())
+            .or_else(|| rule.id.clone())
+            .unwrap_or_else(|| "code scanning alert".to_owned());
+        let mut body = "Code scanning".to_owned();
+        for part in [self.tool.map(|tool| tool.name), rule.id]
+            .into_iter()
+            .flatten()
+        {
+            body.push_str(&format!(" · {part}"));
+        }
+        if !level.is_empty() {
+            body.push_str(&format!(" · {level}"));
+        }
+        AlertCard {
+            repo,
+            kind: AlertKind::CodeScanning,
+            number: self.number,
+            title,
+            body,
+            html_url: self.html_url,
+            severity: alert_severity(&level),
+            updated_at: self.updated_at.unwrap_or(self.created_at),
+        }
+        .into_card()
+    }
 }

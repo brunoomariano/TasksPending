@@ -214,6 +214,30 @@ fn github_sources_are_scheduled_with_the_token_from_the_environment() {
     assert_eq!(plan.specs[0].board, "Work");
 }
 
+/// A GitHub stack may list repositories whose security alerts it shows.
+#[test]
+fn github_alert_stacks_are_accepted() {
+    let path = scratch("github-alerts").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "github"
+        kind = "github"
+
+          [[sources.stacks]]
+          name = "Security"
+          alerts = ["acme/api", "acme/web.site"]
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) =
+        load_plan(Some(path), &env(&[("GITHUB_TOKEN", "t")])).expect("alerts are supported");
+
+    assert_eq!(plan.specs[0].source.columns(), ["Security"]);
+}
+
 /// Without a token in the environment, `gh` is asked only once, even with
 /// several GitHub sources, so startup waits don't add up.
 #[test]
@@ -407,8 +431,9 @@ fn invalid_column_filters_name_the_source_and_column() {
     }
 }
 
-/// A GitHub column needs exactly one origin: a search (`query`) or the
-/// notifications inbox (`notifications`).
+/// A GitHub column needs exactly one origin: a search (`query`), the
+/// notifications inbox (`notifications`) or security alerts (`alerts`, a
+/// non-empty list of `owner/repo`).
 #[test]
 fn github_columns_need_a_query_or_notifications() {
     let dir = scratch("gh-columns");
@@ -416,6 +441,13 @@ fn github_columns_need_a_query_or_notifications() {
         ("neither.toml", ""),
         ("both.toml", "query = \"is:pr\"\nnotifications = \"all\""),
         ("bad-mode.toml", "notifications = \"done\""),
+        (
+            "alerts-and-query.toml",
+            "query = \"is:pr\"\nalerts = [\"o/api\"]",
+        ),
+        ("no-repos.toml", "alerts = []"),
+        ("not-a-repo.toml", "alerts = [\"api\"]"),
+        ("repo-with-path.toml", "alerts = [\"o/api/x\"]"),
     ] {
         let path = dir.join(name);
         std::fs::write(

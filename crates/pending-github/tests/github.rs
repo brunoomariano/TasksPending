@@ -53,6 +53,11 @@ struct Stub {
     pr_states: Arc<Mutex<HashMap<String, Value>>>,
     graphql_requests: Arc<Mutex<Vec<Vec<String>>>>,
     graphql_reply: Arc<Mutex<Option<Reply>>>,
+    /// Reply per `owner/repo/kind` (`dependabot`, `secret-scanning`,
+    /// `code-scanning`), an empty list otherwise, and the alert requests seen
+    /// as `owner/repo/kind?state=…&per_page=…`.
+    alerts: Arc<Mutex<HashMap<String, Reply>>>,
+    alert_requests: Arc<Mutex<Vec<String>>>,
 }
 
 async fn search(
@@ -135,11 +140,30 @@ async fn graphql(
     axum::Json(json!({ "data": { "nodes": nodes } })).into_response()
 }
 
+async fn alerts(
+    State(stub): State<Stub>,
+    axum::extract::Path((owner, repo, kind)): axum::extract::Path<(String, String, String)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let key = format!("{owner}/{repo}/{kind}");
+    stub.alert_requests.lock().unwrap().push(format!(
+        "{key}?state={}&per_page={}",
+        params.get("state").cloned().unwrap_or_default(),
+        params.get("per_page").cloned().unwrap_or_default()
+    ));
+    let reply = stub.alerts.lock().unwrap().get(&key).cloned();
+    match reply {
+        Some(reply) => (reply.status, axum::Json(reply.body)).into_response(),
+        None => axum::Json(json!([])).into_response(),
+    }
+}
+
 async fn serve(stub: Stub) -> String {
     let app = Router::new()
         .route("/search/issues", get(search))
         .route("/notifications", get(notifications))
         .route("/graphql", post(graphql))
+        .route("/repos/{owner}/{repo}/{kind}/alerts", get(alerts))
         .with_state(stub);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -289,6 +313,7 @@ async fn configured_columns_run_their_own_queries() {
             name: "Acme reviews".to_owned(),
             query: Some("is:open is:pr org:acme review-requested:@me".to_owned()),
             notifications: None,
+            alerts: None,
             severity: Some(CardSeverity::Critical),
         },
     ]);
@@ -747,6 +772,7 @@ async fn review_lookups_ask_for_at_most_a_hundred_pull_requests() {
         name: name.to_owned(),
         query: Some(name.to_owned()),
         notifications: None,
+        alerts: None,
         severity: None,
     };
     GithubSource::new(base, Some(TOKEN.to_owned()))
@@ -861,6 +887,7 @@ async fn notification_columns_show_the_inbox() {
         name: "Notifications".to_owned(),
         query: None,
         notifications: Some(Notifications::All),
+        alerts: None,
         severity: None,
     }]);
 
@@ -928,10 +955,266 @@ async fn unread_notification_columns_ask_only_for_unread() {
         name: "Unread".to_owned(),
         query: None,
         notifications: Some(Notifications::Unread),
+        alerts: None,
         severity: None,
     }]);
 
     source.refresh().await.expect("refresh succeeds");
 
     assert_eq!(seen_all.lock().unwrap().as_slice(), ["false"]);
+}
+
+fn alerts_source(base: String, repos: &[&str]) -> GithubSource {
+    GithubSource::new(base, Some(TOKEN.to_owned())).with_columns(vec![
+        pending_github::GithubColumn {
+            name: "Security".to_owned(),
+            query: None,
+            notifications: None,
+            alerts: Some(repos.iter().map(|repo| (*repo).to_owned()).collect()),
+            severity: None,
+        },
+    ])
+}
+
+fn dependabot_alert(number: u64, package: &str, severity: &str, summary: &str) -> Value {
+    json!({
+        "number": number,
+        "state": "open",
+        "html_url": format!("https://github.com/o/api/security/dependabot/{number}"),
+        "created_at": "2026-09-01T10:00:00Z",
+        "updated_at": "2026-09-20T10:00:00Z",
+        "dependency": { "package": { "ecosystem": "npm", "name": package }, "manifest_path": "package-lock.json" },
+        "security_advisory": { "ghsa_id": "GHSA-xxxx", "summary": summary, "severity": severity },
+        "security_vulnerability": { "severity": severity, "package": { "ecosystem": "npm", "name": package } },
+    })
+}
+
+fn ok(body: Value) -> Reply {
+    Reply {
+        status: StatusCode::OK,
+        headers: Vec::new(),
+        body,
+    }
+}
+
+/// An `alerts` stack shows the open Dependabot, secret scanning and code
+/// scanning alerts of each listed repository as cards linking to the alert.
+/// Leaked secrets are critical; critical and high advisories or rules are
+/// critical and warning; the rest is info.
+#[tokio::test]
+async fn open_security_alerts_become_cards() {
+    let stub = Stub::default();
+    stub.alerts.lock().unwrap().extend([
+        (
+            "o/api/dependabot".to_owned(),
+            ok(json!([
+                dependabot_alert(1, "lodash", "critical", "Prototype pollution in lodash"),
+                dependabot_alert(2, "minimist", "medium", "Minimist bug"),
+            ])),
+        ),
+        (
+            "o/api/secret-scanning".to_owned(),
+            ok(json!([{
+                "number": 3,
+                "state": "open",
+                "html_url": "https://github.com/o/api/security/secret-scanning/3",
+                "created_at": "2026-09-02T10:00:00Z",
+                "updated_at": null,
+                "secret_type": "aws_access_key_id",
+                "secret_type_display_name": "AWS Access Key ID",
+            }])),
+        ),
+        (
+            "o/web/code-scanning".to_owned(),
+            ok(json!([{
+                "number": 4,
+                "state": "open",
+                "html_url": "https://github.com/o/web/security/code-scanning/4",
+                "created_at": "2026-09-03T10:00:00Z",
+                "updated_at": "2026-09-04T10:00:00Z",
+                "rule": {
+                    "id": "js/sql-injection",
+                    "severity": "error",
+                    "security_severity_level": "high",
+                    "description": "Database query built from user-controlled sources",
+                },
+                "tool": { "name": "CodeQL" },
+            }])),
+        ),
+    ]);
+    let requests = stub.alert_requests.clone();
+    let base = serve(stub).await;
+
+    let batch = alerts_source(base, &["o/api", "o/web"])
+        .refresh()
+        .await
+        .expect("refresh succeeds");
+
+    let mut requests = requests.lock().unwrap().clone();
+    requests.sort();
+    assert_eq!(
+        requests,
+        [
+            "o/api/code-scanning?state=open&per_page=100",
+            "o/api/dependabot?state=open&per_page=100",
+            "o/api/secret-scanning?state=open&per_page=100",
+            "o/web/code-scanning?state=open&per_page=100",
+            "o/web/dependabot?state=open&per_page=100",
+            "o/web/secret-scanning?state=open&per_page=100",
+        ]
+    );
+    assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
+    assert!(batch.items.iter().all(|i| i.column == "Security"));
+
+    let card = |url: &str| {
+        batch
+            .items
+            .iter()
+            .find(|i| i.card.url.as_deref() == Some(url))
+            .map(|i| i.card.clone())
+            .unwrap_or_else(|| panic!("no card for {url}"))
+    };
+    let lodash = card("https://github.com/o/api/security/dependabot/1");
+    assert_eq!(lodash.title, "o/api: Prototype pollution in lodash");
+    assert!(lodash.body.contains("Dependabot"), "{}", lodash.body);
+    assert!(lodash.body.contains("lodash"), "{}", lodash.body);
+    assert!(lodash.body.contains("critical"), "{}", lodash.body);
+    assert_eq!(lodash.severity, CardSeverity::Critical);
+    assert_eq!(lodash.updated_at.to_rfc3339(), "2026-09-20T10:00:00+00:00");
+    let minimist = card("https://github.com/o/api/security/dependabot/2");
+    assert_eq!(minimist.severity, CardSeverity::Info);
+
+    let secret = card("https://github.com/o/api/security/secret-scanning/3");
+    assert!(secret.title.starts_with("o/api: "), "{}", secret.title);
+    assert!(
+        secret.title.contains("AWS Access Key ID"),
+        "{}",
+        secret.title
+    );
+    assert!(secret.body.contains("Secret scanning"), "{}", secret.body);
+    assert_eq!(secret.severity, CardSeverity::Critical);
+    assert_eq!(secret.updated_at.to_rfc3339(), "2026-09-02T10:00:00+00:00");
+
+    let code = card("https://github.com/o/web/security/code-scanning/4");
+    assert_eq!(
+        code.title,
+        "o/web: Database query built from user-controlled sources"
+    );
+    assert!(code.body.contains("Code scanning"), "{}", code.body);
+    assert!(code.body.contains("js/sql-injection"), "{}", code.body);
+    assert!(code.body.contains("high"), "{}", code.body);
+    assert_eq!(code.severity, CardSeverity::Warning);
+
+    let mut ids: Vec<&str> = batch.items.iter().map(|i| i.card.id.as_str()).collect();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 4, "ids are unique: {ids:?}");
+}
+
+/// An alert type that a repository has disabled, or that the token may not
+/// read (403 or 404), becomes a warning naming the repository and the alert
+/// type; the other types and repositories still show.
+#[tokio::test]
+async fn unavailable_alert_types_are_warnings_naming_repo_and_type() {
+    let stub = Stub::default();
+    stub.alerts.lock().unwrap().extend([
+        (
+            "o/api/dependabot".to_owned(),
+            ok(json!([dependabot_alert(1, "lodash", "high", "Bug")])),
+        ),
+        (
+            "o/api/secret-scanning".to_owned(),
+            Reply::status(
+                StatusCode::NOT_FOUND,
+                "Secret scanning is disabled on this repository.",
+            ),
+        ),
+        (
+            "o/web/code-scanning".to_owned(),
+            Reply::status(
+                StatusCode::FORBIDDEN,
+                "Resource not accessible by integration",
+            ),
+        ),
+    ]);
+    let base = serve(stub).await;
+
+    let batch = alerts_source(base, &["o/api", "o/web"])
+        .refresh()
+        .await
+        .expect("the rest still loads");
+
+    assert_eq!(batch.items.len(), 1);
+    assert_eq!(batch.items[0].card.severity, CardSeverity::Warning);
+    assert_eq!(batch.warnings.len(), 2, "{:?}", batch.warnings);
+    let secret = batch
+        .warnings
+        .iter()
+        .find(|w| w.contains("secret scanning"))
+        .expect("secret scanning warning");
+    assert!(
+        secret.contains("Security") && secret.contains("o/api"),
+        "{secret}"
+    );
+    assert!(secret.contains("404"), "{secret}");
+    let code = batch
+        .warnings
+        .iter()
+        .find(|w| w.contains("code scanning"))
+        .expect("code scanning warning");
+    assert!(code.contains("o/web") && code.contains("403"), "{code}");
+    assert!(batch.warnings.iter().all(|w| !w.contains(TOKEN)));
+}
+
+/// When no alert of a stack can be read, the stack fails like a failed
+/// search: here the only stack, so the refresh fails with the reasons.
+#[tokio::test]
+async fn a_stack_whose_alerts_all_fail_fails() {
+    let stub = Stub::default();
+    for kind in ["dependabot", "secret-scanning", "code-scanning"] {
+        stub.alerts.lock().unwrap().insert(
+            format!("o/api/{kind}"),
+            Reply::status(StatusCode::FORBIDDEN, "Resource not accessible"),
+        );
+    }
+    let base = serve(stub).await;
+
+    let error = alerts_source(base, &["o/api"])
+        .refresh()
+        .await
+        .expect_err("nothing could be read");
+
+    let message = error.to_string();
+    assert!(message.contains("Security"), "{message}");
+    assert!(message.contains("Dependabot"), "{message}");
+    assert!(message.contains("403"), "{message}");
+}
+
+/// Only the first 100 alerts of a type are read; a full page says so.
+#[tokio::test]
+async fn a_full_page_of_alerts_is_reported() {
+    let stub = Stub::default();
+    let page: Vec<Value> = (1..=100)
+        .map(|n| dependabot_alert(n, "pkg", "low", "Bug"))
+        .collect();
+    stub.alerts
+        .lock()
+        .unwrap()
+        .insert("o/api/dependabot".to_owned(), ok(json!(page)));
+    let base = serve(stub).await;
+
+    let batch = alerts_source(base, &["o/api"])
+        .refresh()
+        .await
+        .expect("refresh succeeds");
+
+    assert_eq!(batch.items.len(), 100);
+    assert!(
+        batch
+            .warnings
+            .iter()
+            .any(|w| w.contains("o/api") && w.contains("Dependabot") && w.contains("100")),
+        "{:?}",
+        batch.warnings
+    );
 }

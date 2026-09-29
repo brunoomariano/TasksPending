@@ -47,6 +47,10 @@ enabled = true
 #   [[sources.stacks]]
 #   name = "My pull requests"
 #   query = "is:open is:pr archived:false author:@me"
+#
+#   [[sources.stacks]]
+#   name = "Security"
+#   alerts = ["acme/api", "acme/web"]   # open Dependabot, secret and code scanning alerts
 
 # Plane: every stack filters the workspace's work items locally.
 # Needs PLANE_BASE_URL, PLANE_WORKSPACE_SLUG (or PLANE_WORKSPACE) and

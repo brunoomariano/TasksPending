@@ -4,13 +4,15 @@ mod ui;
 
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use clap::Parser;
 use crossterm::ExecutableCommand;
 use crossterm::cursor::Show;
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind,
+};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -53,6 +55,11 @@ impl TerminalSession {
             let _ = disable_raw_mode();
             return Err(error).context("entering alternate screen");
         }
+        // Wheel and clicks. Terminals still select text with Shift held.
+        if let Err(error) = io::stdout().execute(EnableMouseCapture) {
+            restore_terminal();
+            return Err(error).context("capturing the mouse");
+        }
 
         // Restore the terminal before a UI-thread panic message prints, so it
         // is readable instead of lost with the alternate screen. Panics on
@@ -81,9 +88,16 @@ fn is_ui_thread(ui: std::thread::ThreadId) -> bool {
 }
 
 fn restore_terminal() {
-    let _ = io::stdout().execute(Show);
     let _ = disable_raw_mode();
-    let _ = io::stdout().execute(LeaveAlternateScreen);
+    reset_screen(&mut io::stdout());
+}
+
+/// Shows the cursor, releases the mouse and leaves the alternate screen,
+/// each step regardless of the others failing.
+fn reset_screen(out: &mut impl io::Write) {
+    let _ = out.execute(Show);
+    let _ = out.execute(DisableMouseCapture);
+    let _ = out.execute(LeaveAlternateScreen);
 }
 
 fn main() -> anyhow::Result<()> {
@@ -117,32 +131,48 @@ fn run(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> {
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).context("opening terminal")?;
     let mut app = App::new(dashboard.snapshot());
+    let mut redraw = true;
+    let mut drawn_at = Instant::now();
 
     loop {
-        app.update(dashboard.snapshot());
-        let mut viewport = Viewport::default();
-        terminal
-            .draw(|frame| {
-                viewport = ui::render(
-                    frame.area(),
-                    frame.buffer_mut(),
-                    &app,
-                    header,
-                    chrono::Local::now(),
-                );
-            })
-            .context("drawing TUI")?;
-        app.set_viewport(viewport);
+        // Redraw after each handled event and on every tick, but not for
+        // mouse movement, which the terminal reports continuously.
+        if redraw || drawn_at.elapsed() >= TICK {
+            app.update(dashboard.snapshot());
+            let mut viewport = Viewport::default();
+            terminal
+                .draw(|frame| {
+                    viewport = ui::render(
+                        frame.area(),
+                        frame.buffer_mut(),
+                        &app,
+                        header,
+                        chrono::Local::now(),
+                    );
+                })
+                .context("drawing TUI")?;
+            app.set_viewport(viewport);
+            drawn_at = Instant::now();
+        }
+        redraw = false;
 
-        if !event::poll(TICK)? {
+        if !event::poll(TICK.saturating_sub(drawn_at.elapsed()))? {
             continue;
         }
-        let Event::Key(key) = event::read()? else {
-            continue;
+        let key = match event::read()? {
+            Event::Key(key) if key.kind == KeyEventKind::Press => key,
+            Event::Mouse(mouse) => {
+                redraw = !matches!(mouse.kind, MouseEventKind::Moved);
+                app.handle_mouse(mouse);
+                continue;
+            }
+            Event::Resize(..) => {
+                redraw = true;
+                continue;
+            }
+            _ => continue,
         };
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
+        redraw = true;
         match app.handle_key(key) {
             Action::Quit => break,
             Action::RefreshNow => dashboard.refresh_now(),
@@ -192,5 +222,24 @@ mod tests {
 
         let from_worker = std::thread::spawn(move || is_ui_thread(ui)).join().unwrap();
         assert!(!from_worker);
+    }
+
+    /// Restoring the terminal (on quit or on a UI panic) also releases the
+    /// mouse, so the shell gets clicks and text selection back.
+    #[test]
+    fn restoring_the_terminal_releases_the_mouse() {
+        let mut out = Vec::new();
+        reset_screen(&mut out);
+        let out = String::from_utf8(out).unwrap();
+
+        assert!(
+            out.contains("\x1b[?1000l"),
+            "mouse capture left on: {out:?}"
+        );
+        assert!(
+            out.contains("\x1b[?1049l"),
+            "alternate screen left on: {out:?}"
+        );
+        assert!(out.contains("\x1b[?25h"), "cursor left hidden: {out:?}");
     }
 }

@@ -66,9 +66,11 @@ It shows events that are not over yet, starting within 30 days, at most 25, soon
 
 A big clock sits at the top, as on the web page: the date, then the local time as `HH:MM:SS` in block digits, centered. The digits grow with the terminal (up to a third of its height) and the clock hides when the terminal is narrower than 62 columns or when showing it would leave the board fewer than 10 rows.
 
-Keys: `1`–`9` or `Tab`/`Shift+Tab` switch boards; `h`/`l` or left/right move between columns (the board scrolls sideways when they don't fit); `j`/`k` or up/down move within a column (it scrolls to keep the selection visible); `Enter` opens the selected card's link (`xdg-open`, or `open` on macOS), `Space` or `d` shows the selected card in full, `s` shows every source's full status, `r` refreshes every source now (at most once every 10 s, to respect provider rate limits), `q`/`Esc`/`Ctrl-C` quit. The Sources panel shows one line per source with its status and failure reason (clipped to the width; `s` shows it whole); feedback and failures show in the footer.
+Keys: `1`–`9` or `Tab`/`Shift+Tab` switch boards; `h`/`l` or left/right move between columns (the board scrolls sideways when they don't fit); `j`/`k` or up/down move within a column (it scrolls to keep the selection visible), `PageUp`/`PageDown` by as many cards as fit on screen, and `Home`/`End` (or `g`/`G`) jump to its first and last card; `Enter` opens the selected card's link (`xdg-open`, or `open` on macOS), `Space` or `d` shows the selected card in full, `s` shows every source's full status, `r` refreshes every source now (at most once every 10 s, to respect provider rate limits), `q`/`Esc`/`Ctrl-C` quit. The Sources panel shows one line per source with its status and failure reason (clipped to the width; `s` shows it whole); feedback and failures show in the footer.
 
 Details open in a centered popup of at most 110 × 30 cells: the card's title, source, board, column, due date, last update, link and whole body, or each source's status, last refresh and full message. `j`/`k`, up/down, `PageUp`/`PageDown` and `Home`/`End` scroll it; `Esc` or `q` close it (they don't quit while it is open), as does the key that opened it; `Enter` still opens the card's link.
+
+The TUI captures the mouse: the wheel moves the selection in the column under the pointer (focusing that column first), or scrolls the open popup; a click selects a card, or focuses the column. While it runs, hold `Shift` to select text with the mouse (most terminals).
 
 ## Web Dashboard
 

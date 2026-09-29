@@ -12,10 +12,10 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
 };
 
-use crate::app::{App, ColumnRef, Popup, Viewport};
+use crate::app::{App, CARD_ROWS, ColumnArea, ColumnRef, Popup, Viewport};
 use crate::clock;
 
-const HELP: &str = "1-9/tab boards · h/l columns · j/k cards · enter open · space details · s sources · r refresh · q quit";
+const HELP: &str = "1-9/tab boards · h/l columns · j/k/pgup/pgdn cards · enter open · space details · s sources · r refresh · q quit";
 /// Largest details popup, so long lines stay readable on wide terminals.
 const POPUP_MAX_WIDTH: u16 = 110;
 const POPUP_MAX_HEIGHT: u16 = 30;
@@ -109,7 +109,7 @@ pub fn render(
         .block(Block::default().title("Sources").borders(Borders::ALL))
         .render(layout[2], buf);
 
-    render_board(layout[3], buf, app);
+    render_board(layout[3], buf, app, &mut viewport);
 
     let footer = match app.notice() {
         Some(notice) if app.notice_is_error() => {
@@ -354,7 +354,8 @@ fn visible_window(total: usize, selected: usize, width: u16) -> (usize, usize) {
     (start, fit)
 }
 
-fn render_board(area: Rect, buf: &mut Buffer, app: &App) {
+/// Draws the current board and records where its columns landed.
+fn render_board(area: Rect, buf: &mut Buffer, app: &App, viewport: &mut Viewport) {
     let columns = app.columns();
     if columns.is_empty() {
         Paragraph::new("No columns on this board.")
@@ -405,12 +406,26 @@ fn render_board(area: Rect, buf: &mut Buffer, app: &App) {
             ])
             .split(inner);
         for (&index, column_area) in indexes.iter().zip(column_areas.iter()) {
-            render_column(*column_area, buf, app, index, &columns[index]);
+            let offset = render_column(*column_area, buf, app, index, &columns[index]);
+            viewport.columns.push(ColumnArea {
+                index,
+                area: *column_area,
+                offset,
+            });
+            // Below the column's title row.
+            viewport.card_page = usize::from(column_area.height.saturating_sub(1) / CARD_ROWS);
         }
     }
 }
 
-fn render_column(area: Rect, buf: &mut Buffer, app: &App, index: usize, column: &ColumnRef<'_>) {
+/// Draws a column and returns the index of its first card on screen.
+fn render_column(
+    area: Rect,
+    buf: &mut Buffer,
+    app: &App,
+    index: usize,
+    column: &ColumnRef<'_>,
+) -> usize {
     let selected_column = index == app.selected_column();
     let title_style = if selected_column {
         Style::default()
@@ -430,7 +445,7 @@ fn render_column(area: Rect, buf: &mut Buffer, app: &App, index: usize, column: 
         Paragraph::new(Span::styled("—", Style::default().fg(Color::DarkGray)))
             .block(block)
             .render(area, buf);
-        return;
+        return 0;
     }
 
     let mut state = ListState::default();
@@ -465,12 +480,15 @@ fn render_column(area: Rect, buf: &mut Buffer, app: &App, index: usize, column: 
         .collect();
 
     StatefulWidget::render(List::new(items).block(block), area, buf, &mut state);
+    state.offset()
 }
 
 #[cfg(test)]
 mod tests {
     use chrono::{Local, TimeZone, Utc};
-    use crossterm::event::{KeyCode, KeyEvent};
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
     use pending_core::{
         CardSeverity, PendingCard, SourceBatch, SourceError, SourceItem, SourceOutcome,
         SourceReport, build_snapshot,
@@ -813,6 +831,68 @@ mod tests {
         let bottom = screen(&app, 100, 30);
         assert!(bottom.contains("body line 49"), "{bottom}");
         assert!(!bottom.contains("body line 00"), "{bottom}");
+    }
+
+    /// Where `text` starts on the screen, as (column, row).
+    fn position(screen: &str, text: &str) -> (u16, u16) {
+        screen
+            .lines()
+            .enumerate()
+            .find_map(|(row, line)| {
+                line.find(text)
+                    .map(|byte| (line[..byte].chars().count() as u16, row as u16))
+            })
+            .unwrap_or_else(|| panic!("{text:?} not on screen\n{screen}"))
+    }
+
+    /// The screen reports where each column is and how many cards fit, so
+    /// a click on a card as drawn selects it and PageDown moves by a page.
+    #[test]
+    fn clicks_land_on_the_cards_as_drawn() {
+        let items = (0..30)
+            .map(|i| card("Mine", &format!("c{i}"), &format!("Card number {i}")))
+            .collect();
+        let mut app = app(vec![
+            fresh("plane", "Work", &["Mine"], items),
+            fresh(
+                "github",
+                "Work",
+                &["Review"],
+                vec![card("Review", "gh-1", "Add cache")],
+            ),
+        ]);
+
+        let (screen, viewport) = render_screen(&app, 120, 40);
+        assert_eq!(viewport.columns.len(), 2, "{viewport:?}");
+        assert!(viewport.card_page > 0, "{viewport:?}");
+        app.set_viewport(viewport.clone());
+
+        let (x, y) = position(&screen, "Add cache");
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.selected_card().unwrap().id, "gh-1");
+
+        app.handle_key(KeyEvent::from(KeyCode::Char('h')));
+        app.handle_key(KeyEvent::from(KeyCode::PageDown));
+        let expected = format!("c{}", viewport.card_page);
+        assert_eq!(app.selected_card().unwrap().id, expected);
+
+        // Scrolled down, the column reports its new first card.
+        app.handle_key(KeyEvent::from(KeyCode::End));
+        let (screen, viewport) = render_screen(&app, 120, 40);
+        app.set_viewport(viewport);
+        let (x, y) = position(&screen, "Card number 28");
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.selected_card().unwrap().id, "c28");
     }
 
     /// The Sources panel clips long failure messages; s shows them whole.

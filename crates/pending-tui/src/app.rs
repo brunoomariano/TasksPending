@@ -2,8 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use pending_core::{Board, Column, DashboardSnapshot, PendingCard};
+use ratatui::layout::{Position, Rect};
 
 /// Minimum wait between manual refreshes. Each one queries every source, and
 /// provider APIs rate-limit (GitHub search: 30 requests per minute, and every
@@ -38,15 +39,34 @@ pub enum Popup {
     Sources,
 }
 
-/// Screen geometry the last render reported, which the keys need: how far
-/// the popup scrolls and how much of it fits.
+/// Screen geometry the last render reported, which keys and the mouse need:
+/// where the columns are, how many cards fit, how far the popup scrolls.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Viewport {
+    /// The columns on screen.
+    pub columns: Vec<ColumnArea>,
+    /// Cards that fit in a column at once.
+    pub card_page: usize,
     /// Popup lines that fit on screen at once.
     pub popup_page: u16,
     /// The furthest the popup scrolls, in lines.
     pub popup_max_scroll: u16,
 }
+
+/// A column as drawn: its title row, then two rows per card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnArea {
+    /// Index into `App::columns()`.
+    pub index: usize,
+    pub area: Rect,
+    /// The first card shown (the column scrolls to keep the selection visible).
+    pub offset: usize,
+}
+
+/// Rows a card takes in a column: title and body.
+pub const CARD_ROWS: u16 = 2;
+/// Popup lines one mouse wheel step scrolls.
+const WHEEL_LINES: i32 = 3;
 
 /// Where the selection is, by name, so it survives refreshes.
 struct Anchor {
@@ -282,6 +302,22 @@ impl App {
                 self.move_card(-1);
                 Action::None
             }
+            KeyCode::PageDown => {
+                self.move_card(self.card_page());
+                Action::None
+            }
+            KeyCode::PageUp => {
+                self.move_card(-self.card_page());
+                Action::None
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                self.card = 0;
+                Action::None
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                self.move_card(isize::MAX);
+                Action::None
+            }
             KeyCode::Enter => self.open_selected(),
             KeyCode::Char(' ' | 'd') => {
                 if self.selected_card().is_some() {
@@ -334,6 +370,67 @@ impl App {
         let scroll = (i32::from(self.popup_scroll) + delta)
             .clamp(0, i32::from(self.viewport.popup_max_scroll));
         self.popup_scroll = scroll as u16;
+    }
+
+    /// The wheel scrolls an open popup, or else the column under the pointer
+    /// (focusing it first) or the focused one; a left click selects the card
+    /// under it, or focuses the column.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        let delta = match mouse.kind {
+            MouseEventKind::ScrollDown => 1,
+            MouseEventKind::ScrollUp => -1,
+            MouseEventKind::Down(MouseButton::Left) if self.popup.is_none() => {
+                self.click(mouse.column, mouse.row);
+                return;
+            }
+            _ => return,
+        };
+        self.notice = None;
+        if self.popup.is_some() {
+            self.scroll_popup(delta * WHEEL_LINES);
+            return;
+        }
+        match self.column_at(mouse.column, mouse.row) {
+            Some(column) if column.index != self.column => self.focus_column(column.index),
+            _ => self.move_card(delta as isize),
+        }
+    }
+
+    fn click(&mut self, x: u16, y: u16) {
+        let Some(column) = self.column_at(x, y) else {
+            return;
+        };
+        self.notice = None;
+        self.focus_column(column.index);
+        let row = y - column.area.y;
+        if row == 0 {
+            return;
+        }
+        let card = column.offset + usize::from((row - 1) / CARD_ROWS);
+        if card < self.columns()[column.index].column.cards.len() {
+            self.card = card;
+        }
+    }
+
+    fn column_at(&self, x: u16, y: u16) -> Option<ColumnArea> {
+        self.viewport
+            .columns
+            .iter()
+            .find(|column| column.area.contains(Position::new(x, y)))
+            .filter(|column| column.index < self.columns().len())
+            .cloned()
+    }
+
+    fn focus_column(&mut self, column: usize) {
+        if column != self.column {
+            self.column = column;
+            self.card = 0;
+        }
+    }
+
+    /// Cards PageUp/PageDown move by: as many as fit in a column.
+    fn card_page(&self) -> isize {
+        self.viewport.card_page.max(1) as isize
     }
 
     fn open_selected(&self) -> Action {
@@ -637,6 +734,7 @@ mod tests {
         app.set_viewport(Viewport {
             popup_page: 5,
             popup_max_scroll: 12,
+            ..Viewport::default()
         });
 
         app.handle_key(key(KeyCode::Char('j')));
@@ -690,6 +788,142 @@ mod tests {
         app.update(snapshot(Vec::new()));
 
         assert_eq!(app.popup(), None);
+    }
+
+    /// Plane's Mine column with cards c0..c29, and a second, empty column.
+    fn long_column() -> App {
+        let items = (0..30)
+            .map(|i| card("Mine", &format!("c{i}"), None))
+            .collect();
+        App::new(snapshot(vec![report(
+            "plane",
+            "Work",
+            &["Mine", "Inbox"],
+            items,
+        )]))
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    /// Three columns side by side, 20 cells wide, from row 10: Mine, Inbox
+    /// and Review of the sample Work board.
+    fn three_columns() -> Viewport {
+        Viewport {
+            columns: (0..3)
+                .map(|index| ColumnArea {
+                    index,
+                    area: Rect::new(20 * index as u16, 10, 20, 10),
+                    offset: 0,
+                })
+                .collect(),
+            card_page: 4,
+            ..Viewport::default()
+        }
+    }
+
+    /// PageUp/PageDown move the selection by the cards that fit in a column;
+    /// Home/End (or g/G) jump to the first and last card.
+    #[test]
+    fn page_keys_move_by_a_page_and_home_end_jump() {
+        let mut app = long_column();
+        app.set_viewport(Viewport {
+            card_page: 5,
+            ..Viewport::default()
+        });
+
+        app.handle_key(key(KeyCode::PageDown));
+        assert_eq!(selected(&app), Some("c5"));
+        app.handle_key(key(KeyCode::PageDown));
+        assert_eq!(selected(&app), Some("c10"));
+        app.handle_key(key(KeyCode::PageUp));
+        assert_eq!(selected(&app), Some("c5"));
+        app.handle_key(key(KeyCode::End));
+        assert_eq!(selected(&app), Some("c29"));
+        app.handle_key(key(KeyCode::PageDown));
+        assert_eq!(selected(&app), Some("c29"), "stops at the end");
+        app.handle_key(key(KeyCode::Home));
+        assert_eq!(selected(&app), Some("c0"));
+        app.handle_key(key(KeyCode::PageUp));
+        assert_eq!(selected(&app), Some("c0"), "stops at the top");
+        app.handle_key(key(KeyCode::Char('G')));
+        assert_eq!(selected(&app), Some("c29"));
+        app.handle_key(key(KeyCode::Char('g')));
+        assert_eq!(selected(&app), Some("c0"));
+    }
+
+    /// The mouse wheel scrolls the column under the pointer, focusing it
+    /// first; away from the columns it scrolls the focused one.
+    #[test]
+    fn mouse_wheel_scrolls_the_column_under_the_pointer() {
+        let mut app = App::new(sample());
+        app.set_viewport(three_columns());
+
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 5, 12));
+        assert_eq!(selected(&app), Some("p2"));
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 5, 12));
+        assert_eq!(selected(&app), Some("p2"), "stops at the end");
+
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 45, 12));
+        assert_eq!(app.selected_column(), 2, "focuses the column under it");
+        assert_eq!(selected(&app), Some("g1"));
+
+        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 5, 12));
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 100, 0));
+        assert_eq!(
+            selected(&app),
+            Some("p2"),
+            "outside any column: focused one"
+        );
+    }
+
+    /// Clicking a card selects it; clicking elsewhere in a column focuses
+    /// that column.
+    #[test]
+    fn clicking_a_card_selects_it() {
+        let mut app = App::new(sample());
+        app.set_viewport(three_columns());
+        let click = |column, row| mouse(MouseEventKind::Down(MouseButton::Left), column, row);
+
+        // Row 10 is the column title; each card takes two rows from row 11.
+        app.handle_mouse(click(3, 13));
+        assert_eq!(selected(&app), Some("p2"));
+        app.handle_mouse(click(3, 11));
+        assert_eq!(selected(&app), Some("p1"));
+
+        app.handle_mouse(click(45, 10));
+        assert_eq!(selected(&app), Some("g1"), "title focuses the column");
+        app.handle_mouse(click(25, 12));
+        assert_eq!(selected(&app), Some("p3"), "a card's second row");
+        app.handle_mouse(click(3, 18));
+        assert_eq!(app.selected_column(), 0, "below the cards: focus only");
+        assert_eq!(selected(&app), Some("p1"));
+    }
+
+    /// While details are open, the wheel scrolls them and clicks do nothing.
+    #[test]
+    fn mouse_wheel_scrolls_open_details() {
+        let mut app = App::new(sample());
+        app.handle_key(key(KeyCode::Char(' ')));
+        app.set_viewport(Viewport {
+            popup_page: 5,
+            popup_max_scroll: 10,
+            ..three_columns()
+        });
+
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 45, 12));
+        assert_eq!(app.popup_scroll(), 3);
+        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 45, 12));
+        assert_eq!(app.popup_scroll(), 0);
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 45, 11));
+        assert_eq!(selected(&app), Some("p1"));
+        assert_eq!(app.popup(), Some(Popup::Card));
     }
 
     /// r requests a refresh and says so in the footer; pressing it again right

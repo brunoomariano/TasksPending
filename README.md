@@ -2,11 +2,6 @@
 
 TasksPending is a local-first pending-work dashboard. It will collect auto-refreshing sources and show the same model through a Rust TUI, a Rust HTTP API, and a lightweight TypeScript frontend.
 
-The first source target is inspired by:
-
-- [`akitaonrails/ghpending`](https://github.com/akitaonrails/ghpending): GitHub pending issues, pull requests, alerts, token fallback, and terminal digest.
-- [`akitaonrails/clock-tui`](https://github.com/akitaonrails/clock-tui): Ratatui interface, independent refresh widgets, config-first operation, and release packaging.
-
 ## Install
 
 Install the latest release and start the dashboard:
@@ -69,3 +64,10 @@ make frontend-dev
 ## Current State
 
 The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Each source is a group of stacks, and each stack is a filter declared in the config; groups and stacks follow the file order, and boards (Work, Personal, …) filter the page and are the TUI's tabs. Sources available: `github` (search queries), `plane` (work item filters), `google` (Google Calendar via GNOME Online Accounts), `ical` (any iCal feed), `todoist` (Todoist filters) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). Release builds embed the web dashboard in `tasks-pending`; `--static-dir` remains a development override.
+
+## Inspiration
+
+The first source target is inspired by:
+
+- [`akitaonrails/ghpending`](https://github.com/akitaonrails/ghpending): GitHub pending issues, pull requests, alerts, token fallback, and terminal digest.
+- [`akitaonrails/clock-tui`](https://github.com/akitaonrails/clock-tui): Ratatui interface, independent refresh widgets, config-first operation, and release packaging.

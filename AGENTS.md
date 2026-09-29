@@ -14,6 +14,7 @@ Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Board` (a tab
 
 ## Commands
 
+- `make` or `make help`: list every target with a one-line description (from the `## ` comment on each target; add one to any new target).
 - `make bootstrap`: install/fetch local dependencies.
 - `make doctor`: read-only environment diagnostics.
 - `make ci-check`: read-only verification gate.

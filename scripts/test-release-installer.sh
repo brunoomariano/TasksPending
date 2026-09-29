@@ -8,6 +8,22 @@ FIXTURES="$WORK/fixtures"
 FAKE_BIN="$WORK/fake-bin"
 trap 'rm -rf "$WORK"' EXIT
 
+assert_contains() {
+  local text=$1 expected=$2
+  [[ $text == *"$expected"* ]] || {
+    printf 'expected installer output to contain: %s\n' "$expected" >&2
+    exit 1
+  }
+}
+
+assert_not_contains() {
+  local text=$1 unexpected=$2
+  [[ $text != *"$unexpected"* ]] || {
+    printf 'installer output must not contain: %s\n' "$unexpected" >&2
+    exit 1
+  }
+}
+
 mkdir -p "$FIXTURES" "$FAKE_BIN"
 
 make_bundle() {
@@ -148,6 +164,43 @@ for state in 1 0; do
     grep -Fqx -- '--user restart tasks-pending' "$systemctl_log"
   fi
 done
+
+missing_env_home="$WORK/arch-missing-env-home"
+arch_output="$(
+  HOME="$missing_env_home" \
+    MOCK_UNAME_S=Linux \
+    MOCK_UNAME_M=x86_64 \
+    PATH="$FAKE_BIN:$PATH" \
+    FIXTURES="$FIXTURES" \
+    SYSTEMCTL_ACTIVE=0 \
+    SYSTEMCTL_LOG="$WORK/arch-missing-env.systemctl.log" \
+    PACMAN_LOG="$WORK/arch-missing-env.pacman.log" \
+    TASKS_PENDING_DOWNLOAD_BASE="https://example.test/download" \
+    TASKS_PENDING_OS_RELEASE="$WORK/arch-os-release" \
+    sh "$ROOT/scripts/install-release.sh"
+)"
+assert_contains "$arch_output" "Warning: token file is missing; authenticated sources will be unavailable."
+
+existing_env_home="$WORK/arch-existing-env-home"
+install -Dm 0600 /dev/stdin "$existing_env_home/.config/tasks-pending/env" <<'EOF'
+TODOIST_API_TOKEN=preserve-this-token
+EOF
+arch_output="$(
+  HOME="$existing_env_home" \
+    MOCK_UNAME_S=Linux \
+    MOCK_UNAME_M=x86_64 \
+    PATH="$FAKE_BIN:$PATH" \
+    FIXTURES="$FIXTURES" \
+    SYSTEMCTL_ACTIVE=0 \
+    SYSTEMCTL_LOG="$WORK/arch-existing-env.systemctl.log" \
+    PACMAN_LOG="$WORK/arch-existing-env.pacman.log" \
+    TASKS_PENDING_DOWNLOAD_BASE="https://example.test/download" \
+    TASKS_PENDING_OS_RELEASE="$WORK/arch-os-release" \
+    sh "$ROOT/scripts/install-release.sh"
+)"
+assert_not_contains "$arch_output" "Warning: token file is missing; authenticated sources will be unavailable."
+grep -Fqx 'TODOIST_API_TOKEN=preserve-this-token' "$existing_env_home/.config/tasks-pending/env"
+test "$(stat -c %a "$existing_env_home/.config/tasks-pending/env")" = 600
 
 if MOCK_UNAME_S=Linux \
   MOCK_UNAME_M=x86_64 \

@@ -17,7 +17,7 @@
     <string>@BINDIR@/tasks-pending</string>
     <string>serve</string>
     <string>--listen</string>
-    <string>127.0.0.1:8080</string>
+    <string>127.0.0.1:61000</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

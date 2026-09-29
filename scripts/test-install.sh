@@ -47,7 +47,7 @@ run_case() {
   )"
 
   test -x "$home/.local/bin/tasks-pending"
-  grep -Fqx "ExecStart=$home/.local/bin/tasks-pending serve --listen 127.0.0.1:8080" \
+  grep -Fqx "ExecStart=$home/.local/bin/tasks-pending serve --listen 127.0.0.1:61000" \
     "$home/.config/systemd/user/tasks-pending.service"
   if [[ $override == standard ]]; then
     grep -Fqx "ExecStart=$home/.local/bin/tasks-pending serve --listen 127.0.0.1:8090" \

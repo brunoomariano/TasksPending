@@ -38,11 +38,11 @@ test: ## Run the Rust tests
 build: ## Build the workspace (debug)
 	cargo build --workspace --locked
 
-up: ## Run the API on 127.0.0.1:8080
-	cargo run -p tasks-pending -- serve --listen 127.0.0.1:8080
+up: ## Run the API on 127.0.0.1:61000
+	cargo run -p tasks-pending -- serve --listen 127.0.0.1:61000
 
-serve: frontend-build ## Build the frontend and run the API serving it on 127.0.0.1:8080
-	cargo run -p tasks-pending -- serve --listen 127.0.0.1:8080 --static-dir frontend/dist
+serve: frontend-build ## Build the frontend and run the API serving it on 127.0.0.1:61000
+	cargo run -p tasks-pending -- serve --listen 127.0.0.1:61000 --static-dir frontend/dist
 
 down: ## Placeholder: no background services are managed
 	@echo "No background services are managed yet."

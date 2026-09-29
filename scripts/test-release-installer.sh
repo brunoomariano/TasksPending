@@ -96,17 +96,21 @@ chmod +x "$FAKE_BIN"/*
 run_bundle_case() {
   local os=$1 machine=$2 target=$3 os_release=${4:-"$WORK/non-arch-os-release"}
   local install_log="$WORK/$target.install.log"
+  local output
 
-  MOCK_UNAME_S="$os" \
-    MOCK_UNAME_M="$machine" \
-    PATH="$FAKE_BIN:$PATH" \
-    FIXTURES="$FIXTURES" \
-    INSTALL_LOG="$install_log" \
-    TASKS_PENDING_DOWNLOAD_BASE="https://example.test/download" \
-    TASKS_PENDING_OS_RELEASE="$os_release" \
-    sh "$ROOT/scripts/install-release.sh"
+  output="$(
+    MOCK_UNAME_S="$os" \
+      MOCK_UNAME_M="$machine" \
+      PATH="$FAKE_BIN:$PATH" \
+      FIXTURES="$FIXTURES" \
+      INSTALL_LOG="$install_log" \
+      TASKS_PENDING_DOWNLOAD_BASE="https://example.test/download" \
+      TASKS_PENDING_OS_RELEASE="$os_release" \
+      sh "$ROOT/scripts/install-release.sh"
+  )"
 
   grep -Fqx -- '--start' "$install_log"
+  [[ $output == *"TasksPending is running at http://127.0.0.1:61000"* ]]
 }
 
 run_bundle_case Linux x86_64 x86_64-unknown-linux-gnu

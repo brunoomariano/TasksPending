@@ -12,7 +12,7 @@ Install the latest release and start the dashboard:
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh
 ```
 
-The installer selects the matching artifact, checks its SHA-256 and starts the user service at <http://127.0.0.1:8080>. Run the same command to update; configuration, tokens and service overrides stay in place. [docs/install.md](docs/install.md) covers source configuration, manual installs and the Omarchy web app.
+The installer selects the matching artifact, checks its SHA-256 and starts the user service at <http://127.0.0.1:61000>. Run the same command to update; configuration, tokens and service overrides stay in place. [docs/install.md](docs/install.md) covers source configuration, manual installs and the Omarchy web app.
 
 ## Platform Focus
 
@@ -30,13 +30,13 @@ Run the API:
 
 ```sh
 make up
-curl http://127.0.0.1:8080/healthz
-curl http://127.0.0.1:8080/api/v1/snapshot
+curl http://127.0.0.1:61000/healthz
+curl http://127.0.0.1:61000/api/v1/snapshot
 ```
 
 Configure sources by copying `config.example.toml` to `~/.config/tasks-pending/config.toml`; without it the API serves a built-in sample source. See [docs/operations.md](docs/operations.md).
 
-Run the API and the built web dashboard together, then open http://127.0.0.1:8080:
+Run the API and the built web dashboard together, then open http://127.0.0.1:61000:
 
 ```sh
 make serve

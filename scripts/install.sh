@@ -238,12 +238,12 @@ if ((START_SERVICE)); then
     else
       systemctl --user enable --now tasks-pending
     fi
-    next="running at http://127.0.0.1:8080"
+    next="running at http://127.0.0.1:61000"
     ;;
   Darwin)
     launchctl bootout "gui/$(id -u)/${PLIST_NAME%.plist}" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "$AGENT_DIR/$PLIST_NAME"
-    next="running at http://127.0.0.1:8080"
+    next="running at http://127.0.0.1:61000"
     ;;
   *)
     echo "automatic startup is only available on Linux and macOS" >&2
@@ -262,7 +262,7 @@ Next steps (see docs/install.md):
   2. Tokens:  cp -n $SHARE/env.example ~/.config/tasks-pending/env &&
               chmod 600 ~/.config/tasks-pending/env   (then fill it in)
   3. Daemon:  $next
-  4. Open:    http://127.0.0.1:8080   (or run tasks-pending tui)
+  4. Open:    http://127.0.0.1:61000  (or run tasks-pending tui)
 EOF
 case ":$PATH:" in
 *":$PREFIX/bin:"*) ;;

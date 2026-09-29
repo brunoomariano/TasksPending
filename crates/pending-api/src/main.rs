@@ -31,7 +31,8 @@ struct Cli {
     #[arg(long)]
     config: Option<PathBuf>,
     /// Built frontend to serve at `/`. Defaults to `../frontend` next to the
-    /// binary when it exists (release bundle layout).
+    /// binary (release bundle), then `../share/tasks-pending/frontend`
+    /// (installed prefix), when one exists.
     #[arg(long)]
     static_dir: Option<PathBuf>,
 }
@@ -155,17 +156,23 @@ async fn local_hosts_only(
     }
 }
 
-/// `--static-dir`, else `frontend/` next to the binary's `bin/` directory (the
-/// release bundle layout), if it has an `index.html`.
+/// `--static-dir`, else the frontend installed alongside the binary (see
+/// [`bundled_frontend`]).
 fn resolve_static_dir(cli: Option<PathBuf>) -> Option<PathBuf> {
     cli.or_else(|| bundled_frontend(&std::env::current_exe().ok()?))
 }
 
-/// `<bundle>/frontend` for a binary at `<bundle>/bin/<name>`, when it holds an
-/// `index.html`.
+/// For a binary at `<root>/bin/<name>`: `<root>/frontend` (release bundle),
+/// else `<root>/share/tasks-pending/frontend` (installed prefix), whichever
+/// first holds an `index.html`.
 fn bundled_frontend(exe: &Path) -> Option<PathBuf> {
-    let frontend = exe.parent()?.parent()?.join("frontend");
-    frontend.join("index.html").is_file().then_some(frontend)
+    let root = exe.parent()?.parent()?;
+    [
+        root.join("frontend"),
+        root.join("share/tasks-pending/frontend"),
+    ]
+    .into_iter()
+    .find(|dir| dir.join("index.html").is_file())
 }
 
 async fn healthz() -> Json<Health> {
@@ -415,6 +422,35 @@ mod tests {
         let flag = PathBuf::from("/explicit/dist");
         assert_eq!(resolve_static_dir(Some(flag.clone())), Some(flag));
         let _ = std::fs::remove_dir_all(&bundle);
+    }
+
+    /// Installed with a prefix (`make install`, the Arch package), the
+    /// frontend lives in `<prefix>/share/tasks-pending/frontend`; the API
+    /// finds it there too, preferring the bundle layout when both exist.
+    #[test]
+    fn static_dir_is_found_in_an_installed_prefix() {
+        let prefix =
+            std::env::temp_dir().join(format!("tasks-pending-prefix-{}", std::process::id()));
+        let shared = prefix.join("share/tasks-pending/frontend");
+        std::fs::create_dir_all(prefix.join("bin")).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        let exe = prefix.join("bin/pending-api");
+
+        assert_eq!(bundled_frontend(&exe), None, "no index.html yet");
+        std::fs::write(shared.join("index.html"), "<main></main>").unwrap();
+        assert_eq!(bundled_frontend(&exe), Some(shared));
+
+        std::fs::create_dir_all(prefix.join("frontend")).unwrap();
+        std::fs::write(prefix.join("frontend/index.html"), "<main></main>").unwrap();
+        assert_eq!(bundled_frontend(&exe), Some(prefix.join("frontend")));
+        let _ = std::fs::remove_dir_all(&prefix);
+    }
+
+    /// The command-line definition is consistent (no clashing flags).
+    #[test]
+    fn cli_definition_is_valid() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
     }
 
     async fn get_with_host(app: Router, path: &str, host: &str) -> StatusCode {

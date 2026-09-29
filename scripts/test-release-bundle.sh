@@ -43,6 +43,11 @@ pid=$!
 
 ready=0
 for _ in $(seq 1 50); do
+  if ! kill -0 "$pid" 2>/dev/null; then
+    wait "$pid" || true
+    cat "$LOG" >&2
+    exit 1
+  fi
   if curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1; then
     ready=1
     break
@@ -55,6 +60,7 @@ if (( !ready )); then
 fi
 
 page="$(curl -fsS "http://127.0.0.1:$PORT/")"
+kill -0 "$pid" 2>/dev/null
 [[ $page == *'id="app"'* ]]
 asset="$(printf '%s' "$page" | sed -n 's/.*src="\([^"]*\.js\)".*/\1/p')"
 test -n "$asset"

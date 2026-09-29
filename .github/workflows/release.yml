@@ -1,9 +1,16 @@
 name: Release
 
+# Push a tag `v<version>` matching Cargo.toml's version to build and publish
+# a release: bundles for Linux and macOS, an Arch package, checksums.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build everything but do not publish a release"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -14,8 +21,25 @@ env:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
+
+      - name: Read the version and check the tag
+        id: version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+          grep -q "^## $version\$" CHANGELOG.md || {
+            echo "::error::CHANGELOG.md has no '## $version' section"
+            exit 1
+          }
+
       # Keep in sync with .mise.toml.
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
@@ -29,53 +53,156 @@ jobs:
       - run: npm --prefix frontend ci
       - run: make ci-check
 
-  build:
+  frontend:
     needs: quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.95.0
-      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v5
         with:
           node-version: "26.10.0"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - run: npm --prefix frontend ci
-      - run: make release-local
+      - run: npm --prefix frontend run build
       - uses: actions/upload-artifact@v5
         with:
-          name: tasks-pending-linux-x86_64
+          name: frontend-dist
+          path: frontend/dist
+
+  build:
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            cargo: cargo
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            cargo: cross
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            cargo: cargo
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            cargo: cargo
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install cross
+        if: matrix.cargo == 'cross'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - uses: actions/download-artifact@v5
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - name: Build
+        run: ${{ matrix.cargo }} build --release --locked --target ${{ matrix.target }} -p pending-api -p pending-tui
+      - name: Package
+        env:
+          TARGET: ${{ matrix.target }}
+          SKIP_BUILD: "1"
+        run: ./scripts/release-local.sh
+      - name: Smoke test
+        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin'
+        run: |
+          dir="$(find dist -maxdepth 1 -type d -name 'tasks-pending-*' | head -1)"
+          "$dir/bin/pending-api" --help >/dev/null
+          "$dir/bin/pending-tui" --help >/dev/null
+      - uses: actions/upload-artifact@v5
+        with:
+          name: bundle-${{ matrix.target }}
           path: |
-            dist/tasks-pending.tar.gz
-            dist/tasks-pending.tar.gz.sha256
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+
+  arch:
+    needs: [quality, build]
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: bundle-x86_64-unknown-linux-gnu
+          path: pkg
+      - name: Build the package
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
+        run: |
+          cp packaging/arch/PKGBUILD pkg/
+          cd pkg
+          sum="$(cut -d' ' -f1 "tasks-pending-$VERSION-x86_64-unknown-linux-gnu.tar.gz.sha256")"
+          sed -i -e "s/^pkgver=.*/pkgver=$VERSION/" \
+                 -e "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('$sum')/" PKGBUILD
+          useradd -m builder
+          chown -R builder: .
+          # The bundle is already next to PKGBUILD, so makepkg does not download it.
+          su builder -c "makepkg --noconfirm --nodeps -f"
+          ls -l ./*.pkg.tar.zst
+          # The package installs and its binaries run.
+          pacman -U --noconfirm ./*.pkg.tar.zst
+          pending-api --help >/dev/null
+          test -f /usr/share/tasks-pending/frontend/index.html
+          test -f /usr/lib/systemd/user/tasks-pending.service
+      - uses: actions/upload-artifact@v5
+        with:
+          name: arch-package
+          path: |
+            pkg/*.pkg.tar.zst
+            pkg/PKGBUILD
 
   release:
-    needs: build
+    needs: [quality, build, arch]
+    if: github.ref_type == 'tag' || inputs.dry_run == false
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
-      - name: Create release notes
+      - name: Checksums and notes
+        env:
+          VERSION: ${{ needs.quality.outputs.version }}
         run: |
+          cd artifacts
+          sha256sum ./*.tar.gz ./*.pkg.tar.zst | sed 's| \./| |' > SHA256SUMS
+          cd ..
           {
-            echo "## Artifacts"
+            awk -v v="## $VERSION" '$0==v{on=1;next} /^## /{on=0} on' CHANGELOG.md
             echo
-            echo "- tasks-pending.tar.gz"
+            echo "## Install"
+            echo
+            echo "- Arch Linux: \`sudo pacman -U tasks-pending-bin-$VERSION-1-x86_64.pkg.tar.zst\`"
+            echo "- Linux / macOS: download the bundle for your machine, then \`tar xzf tasks-pending-$VERSION-<target>.tar.gz && cd tasks-pending-$VERSION-<target> && ./scripts/install.sh\`"
+            echo "- Then follow [docs/install.md](https://github.com/$GITHUB_REPOSITORY/blob/v$VERSION/docs/install.md) to set up the config, tokens and the daemon."
             echo
             echo "## Checksums"
+            echo
             echo '```'
-            cat artifacts/*.sha256
+            cat artifacts/SHA256SUMS
             echo '```'
-          } > body.md
-      - name: Create GitHub Release
+          } > notes.md
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.quality.outputs.version }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          gh release create "$TAG" artifacts/*.tar.gz artifacts/*.sha256 \
+          gh release create "v$VERSION" \
+            artifacts/*.tar.gz artifacts/*.tar.gz.sha256 \
+            artifacts/*.pkg.tar.zst artifacts/PKGBUILD artifacts/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
-            --title "$TAG" \
-            --notes-file body.md
+            --title "TasksPending $VERSION" \
+            --notes-file notes.md \
+            --verify-tag

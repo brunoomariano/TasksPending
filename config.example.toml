@@ -12,6 +12,8 @@ timeout_seconds = 60
 #     below, whatever their board;
 #   - each [[sources.stacks]] is a stack of cards inside its group; stacks
 #     run top to bottom in the order they are listed.
+# Any stack may add `sort = "oldest"` to list the least recently updated
+# cards first (default "newest"); severity and due time still come first.
 # To reorder, move whole blocks up or down. Without [[sources.stacks]] a
 # source uses its default stacks.
 [[sources]]
@@ -47,6 +49,7 @@ enabled = true
 #   [[sources.stacks]]
 #   name = "My pull requests"
 #   query = "is:open is:pr archived:false author:@me"
+#   sort = "oldest"               # stale ones first (default "newest")
 #
 #   [[sources.stacks]]
 #   name = "Security"

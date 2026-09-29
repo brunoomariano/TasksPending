@@ -548,6 +548,7 @@ mod tests {
             board: board.to_owned(),
             columns: columns.iter().map(|c| (*c).to_owned()).collect(),
             icon: None,
+            sorts: Default::default(),
             outcome: SourceOutcome::Fresh {
                 batch: SourceBatch {
                     items,
@@ -584,6 +585,7 @@ mod tests {
                 board: "Personal".to_owned(),
                 columns: vec!["Today".to_owned()],
                 icon: None,
+                sorts: Default::default(),
                 outcome: SourceOutcome::Failed(SourceError::new("feed returned 404")),
             },
         ])

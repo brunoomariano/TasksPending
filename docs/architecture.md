@@ -24,7 +24,7 @@ Every source implements the `PendingSource` port: `columns()` names its columns 
 - a failed source shows as `failed` with its error and contributes no cards;
 - warnings make the source `degraded`;
 - a card may appear in several columns (they are independent filters); within one column, a repeated id or a non-http(s) url drops the card and the source shows as `degraded` naming it;
-- boards and groups keep configuration order; declared columns show even when empty; cards sort by severity, then due time (soonest first), then most recent update.
+- boards and groups keep configuration order; declared columns show even when empty; cards sort by severity, then due time (soonest first), then most recent update, or least recent for a stack with `sort = "oldest"` (read by `pending-core`'s `StackConfig` for every kind and carried to `build_snapshot` through `SourceSpec`/`SourceReport::sorts`).
 
 The frontend types in `frontend/src/contract.gen.ts` are generated from these Rust types with `make contract`.
 

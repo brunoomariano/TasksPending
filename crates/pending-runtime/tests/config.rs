@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use pending_core::StackSort;
 use pending_runtime::config::{
     ConfigLocation, LoadError, Origin, load_plan, load_plan_with, locate,
 };
@@ -236,6 +237,47 @@ fn github_alert_stacks_are_accepted() {
         load_plan(Some(path), &env(&[("GITHUB_TOKEN", "t")])).expect("alerts are supported");
 
     assert_eq!(plan.specs[0].source.columns(), ["Security"]);
+}
+
+/// A stack's `sort` travels with the scheduled source, for any source kind,
+/// so the dashboard can order that stack oldest first.
+#[test]
+fn stack_sort_order_reaches_the_scheduled_source() {
+    let path = scratch("stack-sort").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "github"
+        kind = "github"
+
+          [[sources.stacks]]
+          name = "Stale PRs"
+          query = "is:open is:pr author:@me"
+          sort = "oldest"
+
+          [[sources.stacks]]
+          name = "Recent PRs"
+          query = "is:open is:pr author:@me"
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) =
+        load_plan(Some(path), &env(&[("GITHUB_TOKEN", "t")])).expect("sort is accepted");
+
+    let sorts: Vec<(&str, StackSort)> = plan.specs[0]
+        .sorts
+        .iter()
+        .map(|(name, sort)| (name.as_str(), *sort))
+        .collect();
+    assert_eq!(
+        sorts,
+        [
+            ("Recent PRs", StackSort::Newest),
+            ("Stale PRs", StackSort::Oldest)
+        ]
+    );
 }
 
 /// Without a token in the environment, `gh` is asked only once, even with

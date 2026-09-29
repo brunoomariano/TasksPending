@@ -74,6 +74,7 @@ pub fn sample_snapshot() -> DashboardSnapshot {
             board: DEFAULT_BOARD.to_owned(),
             columns: SampleSource.columns(),
             icon: None,
+            sorts: Default::default(),
             outcome: SourceOutcome::Fresh {
                 batch: SampleSource::batch(at),
                 refreshed_at: at,

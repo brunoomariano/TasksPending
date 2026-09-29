@@ -4,13 +4,14 @@
 //! and keeps the latest [`SourceOutcome`] of each one in memory. Reading a
 //! snapshot never waits for a source.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use pending_core::{
     DashboardSnapshot, Icon, PendingSource, SourceBatch, SourceError, SourceOutcome, SourceReport,
-    build_snapshot,
+    StackSort, build_snapshot,
 };
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
@@ -63,6 +64,8 @@ pub struct SourceSpec {
     /// Replaces the aggregator's timeout for this source.
     pub timeout: Option<Duration>,
     pub icon: Option<Icon>,
+    /// Card order per stack (column) name, from the configuration.
+    pub sorts: BTreeMap<String, StackSort>,
 }
 
 impl std::fmt::Debug for SourceSpec {
@@ -164,6 +167,7 @@ impl Aggregator {
                 board: spec.board.clone(),
                 columns: spec.source.columns(),
                 icon: spec.icon.clone(),
+                sorts: spec.sorts.clone(),
                 outcome: match cached.remove(&spec.name) {
                     Some((refreshed_at, batch)) => SourceOutcome::Cached {
                         batch,

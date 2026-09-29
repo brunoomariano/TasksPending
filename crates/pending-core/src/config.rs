@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -48,15 +48,30 @@ pub struct SourceConfig {
     pub stacks: Vec<StackConfig>,
 }
 
-/// One stack of a source's cards: a name plus kind-specific filter keys.
+/// One stack of a source's cards: a name, the order of its cards, plus
+/// kind-specific filter keys.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackConfig {
     pub name: String,
+    /// Card order, for any source kind; not part of `filter`.
+    #[serde(default)]
+    pub sort: StackSort,
     #[serde(flatten)]
     pub filter: toml::Table,
 }
 
 impl Eq for StackConfig {}
+
+/// How a stack orders cards of the same severity and due time.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StackSort {
+    /// Most recently updated first.
+    #[default]
+    Newest,
+    /// Least recently updated first, to surface stale work.
+    Oldest,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -155,6 +170,14 @@ impl AppConfig {
 }
 
 impl SourceConfig {
+    /// Card order of each configured stack, by stack name.
+    pub fn stack_sorts(&self) -> BTreeMap<String, StackSort> {
+        self.stacks
+            .iter()
+            .map(|stack| (stack.name.clone(), stack.sort))
+            .collect()
+    }
+
     /// The configured icon, if any.
     pub fn icon(&self) -> Option<Icon> {
         Some(Icon {
@@ -248,6 +271,49 @@ mod tests {
         .validate()
         .expect_err("duplicate stack");
         assert!(error.to_string().contains("stack named `A`"), "{error}");
+    }
+
+    /// Any stack may say `sort = "oldest"` (default `"newest"`); the key is
+    /// read here, not by the source's filter, and other values are rejected.
+    #[test]
+    fn stacks_sort_newest_first_unless_asked_for_oldest() {
+        let config = parse(
+            r#"
+            [[sources]]
+            name = "plane"
+            kind = "plane"
+
+              [[sources.stacks]]
+              name = "Stale"
+              sort = "oldest"
+              state = ["In Review"]
+
+              [[sources.stacks]]
+              name = "Recent"
+              sort = "newest"
+
+              [[sources.stacks]]
+              name = "Default"
+            "#,
+        );
+        let stacks = &config.sources[0].stacks;
+        let sorts: Vec<StackSort> = stacks.iter().map(|stack| stack.sort).collect();
+        assert_eq!(
+            sorts,
+            [StackSort::Oldest, StackSort::Newest, StackSort::Newest]
+        );
+        assert!(
+            !stacks[0].filter.contains_key("sort"),
+            "{:?}",
+            stacks[0].filter
+        );
+        assert!(stacks[0].filter.contains_key("state"));
+
+        let error = toml::from_str::<AppConfig>(
+            "[[sources]]\nname = \"s\"\nkind = \"plane\"\n[[sources.stacks]]\nname = \"A\"\nsort = \"stale\"",
+        )
+        .expect_err("unknown sort");
+        assert!(error.to_string().contains("stale"), "{error}");
     }
 
     /// A source may name an icon (and a variant for dark themes) by http(s)

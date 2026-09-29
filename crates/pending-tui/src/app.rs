@@ -522,6 +522,7 @@ mod tests {
             board: board.to_owned(),
             columns: columns.iter().map(|c| (*c).to_owned()).collect(),
             icon: None,
+            sorts: Default::default(),
             outcome: SourceOutcome::Fresh {
                 batch: SourceBatch {
                     items,

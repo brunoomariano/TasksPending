@@ -62,6 +62,7 @@ fn spec(result: Result<SourceBatch, SourceError>, delay_secs: u64) -> SourceSpec
         interval: Duration::from_secs(300),
         timeout: None,
         icon: None,
+        sorts: Default::default(),
     }
 }
 

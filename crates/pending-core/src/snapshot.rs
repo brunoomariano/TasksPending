@@ -1,7 +1,9 @@
 use std::cmp::Reverse;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use chrono::{DateTime, Utc};
+
+use crate::config::StackSort;
 
 use crate::model::{Board, Column, DashboardSnapshot, Group, Icon, SourceHealth, SourceStatus};
 use crate::source::{SourceBatch, SourceError};
@@ -15,6 +17,8 @@ pub struct SourceReport {
     /// The source's columns in display order.
     pub columns: Vec<String>,
     pub icon: Option<Icon>,
+    /// Card order per column name; columns not listed are newest first.
+    pub sorts: BTreeMap<String, StackSort>,
     pub outcome: SourceOutcome,
 }
 
@@ -59,7 +63,9 @@ pub enum SourceOutcome {
 ///   or a non-http(s) url drops the card and degrades its source, naming it.
 /// - Source warnings also make the source `Degraded`.
 /// - Cards inside a column are sorted by severity (critical first), then
-///   cards with a `due_at`, soonest first, then by most recent `updated_at`.
+///   cards with a `due_at`, soonest first, then by most recent `updated_at`;
+///   a column sorted [`StackSort::Oldest`] puts the least recent first
+///   instead.
 pub fn build_snapshot(
     generated_at: DateTime<Utc>,
     reports: Vec<SourceReport>,
@@ -178,13 +184,18 @@ pub fn build_snapshot(
         }
 
         for column in &mut group.columns {
-            column.cards.sort_by_key(|card| {
-                (
-                    Reverse(card.severity),
-                    card.due_at.is_none(),
-                    card.due_at,
-                    Reverse(card.updated_at),
-                )
+            let oldest_first = report.sorts.get(&column.name) == Some(&StackSort::Oldest);
+            column.cards.sort_by(|a, b| {
+                let recency = if oldest_first {
+                    a.updated_at.cmp(&b.updated_at)
+                } else {
+                    b.updated_at.cmp(&a.updated_at)
+                };
+                Reverse(a.severity)
+                    .cmp(&Reverse(b.severity))
+                    .then_with(|| a.due_at.is_none().cmp(&b.due_at.is_none()))
+                    .then_with(|| a.due_at.cmp(&b.due_at))
+                    .then(recency)
             });
         }
 

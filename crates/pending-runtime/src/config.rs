@@ -252,6 +252,7 @@ fn plan(
             interval: Duration::from_secs(config.refresh_seconds_for(source)),
             timeout: source.timeout_seconds.map(Duration::from_secs),
             icon: source.icon(),
+            sorts: source.stack_sorts(),
         });
     }
 
@@ -303,6 +304,7 @@ fn sample_plan() -> Plan {
             interval: Duration::from_secs(defaults.refresh_seconds),
             timeout: None,
             icon: None,
+            sorts: Default::default(),
         }],
         timeout: Duration::from_secs(defaults.timeout_seconds),
     }

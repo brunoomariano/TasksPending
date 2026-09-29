@@ -14,12 +14,14 @@ Each source is a group of stacks, one per `[[sources.stacks]]` entry (or the sou
 
 | kind | stack keys | default stacks |
 |---|---|---|
-| `github` | `query` (search syntax) or `notifications` (`unread`/`all`), `severity` | Review requested, My pull requests, Assigned issues |
+| `github` | `query` (search syntax), `notifications` (`unread`/`all`) or `alerts` (`owner/repo` list), `severity` | Review requested, My pull requests, Assigned issues |
 | `plane` | `assignee` (me/none/others/any), `state_group`, `state`, `project`, `priority` | In progress, To do, Backlog (yours) |
 | `google` | `when` (now/today/tomorrow/later), `calendar` (names) | Now, Today, Tomorrow, Next 30 days |
 | `ical` | `when` (now/today/tomorrow/later) | Now, Today, Tomorrow, Next 30 days |
 | `todoist` | `filter` (Todoist filter query) | Today (today \| overdue), Next 7 days |
 | `sample` | none | Review, Next |
+
+Every stack, whatever the kind, also takes `sort`. Cards in a stack are ordered by severity (critical first), then due time (soonest first), then most recent update (`sort = "newest"`, the default). `sort = "oldest"` puts the least recently updated first instead, to surface stale work such as pull requests nobody touched in weeks. Severity and due time still come first, so critical and overdue cards stay on top; within a query stack the severity is usually the same for every card, so staleness decides the order.
 
 Unknown keys or invalid values fail at startup naming the source and the stack.
 

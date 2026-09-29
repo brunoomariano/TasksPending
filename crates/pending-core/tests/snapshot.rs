@@ -3,7 +3,7 @@
 use chrono::{DateTime, TimeZone, Utc};
 use pending_core::{
     CardSeverity, DashboardSnapshot, Icon, PendingCard, SourceBatch, SourceError, SourceHealth,
-    SourceItem, SourceOutcome, SourceReport, SourceStatus, build_snapshot,
+    SourceItem, SourceOutcome, SourceReport, SourceStatus, StackSort, build_snapshot,
 };
 
 fn at(hour: u32) -> DateTime<Utc> {
@@ -37,6 +37,7 @@ fn report(name: &str, board: &str, columns: &[&str], outcome: SourceOutcome) -> 
         board: board.to_owned(),
         columns: columns.iter().map(|c| (*c).to_owned()).collect(),
         icon: None,
+        sorts: Default::default(),
         outcome,
     }
 }
@@ -193,6 +194,44 @@ fn cards_are_ordered_by_severity_due_time_and_recency() {
     assert_eq!(
         layout(&snapshot),
         vec!["Work/calendar/Today: critical,warning,soon,late,new-info,old-info"]
+    );
+}
+
+/// A stack sorted oldest first puts the least recently updated cards on top,
+/// to surface stale work; severity and due time still come first, and other
+/// stacks of the same source keep newest first.
+#[test]
+fn oldest_first_stacks_surface_the_least_recently_updated_cards() {
+    let due = |mut item: SourceItem, hour: u32| {
+        item.card.due_at = Some(at(hour));
+        item
+    };
+    let cards = |column: &str| {
+        vec![
+            item(column, "new-info", CardSeverity::Info, 5),
+            item(column, "old-info", CardSeverity::Info, 1),
+            item(column, "mid-info", CardSeverity::Info, 3),
+            due(item(column, "due", CardSeverity::Info, 4), 18),
+            item(column, "new-warning", CardSeverity::Warning, 6),
+            item(column, "old-warning", CardSeverity::Warning, 2),
+        ]
+    };
+    let mut report = report(
+        "github",
+        "Work",
+        &["Stale", "Recent"],
+        fresh([cards("Stale"), cards("Recent")].concat()),
+    );
+    report.sorts.insert("Stale".to_owned(), StackSort::Oldest);
+
+    let snapshot = build_snapshot(at(12), vec![report]);
+
+    assert_eq!(
+        layout(&snapshot),
+        vec![
+            "Work/github/Stale: old-warning,new-warning,due,old-info,mid-info,new-info",
+            "Work/github/Recent: new-warning,old-warning,due,new-info,mid-info,old-info",
+        ]
     );
 }
 

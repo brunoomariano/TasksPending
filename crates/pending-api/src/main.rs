@@ -262,6 +262,7 @@ mod tests {
                 interval: Duration::from_secs(300),
                 timeout: None,
                 icon: None,
+                sorts: Default::default(),
             }],
             Duration::from_secs(30),
         );
@@ -376,6 +377,7 @@ mod tests {
                 interval: Duration::from_secs(300),
                 timeout: None,
                 icon: None,
+                sorts: Default::default(),
             }],
             Duration::from_secs(30),
         );

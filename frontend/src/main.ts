@@ -1,5 +1,6 @@
 import "./styles.css";
 import { loadSnapshot, requestRefresh } from "./api";
+import { AUTO_REFRESH_CHOICES, startAutoRefresh } from "./autoRefresh";
 import { startClock } from "./clock";
 import { startPolling } from "./poll";
 import { DEFAULT_VIEW, renderApp, renderControls, type View } from "./render";
@@ -19,6 +20,8 @@ function savedView(): View {
       board?: string | null;
       expanded?: string[];
       openColumns?: string[];
+      collapsed?: string[];
+      autoRefreshMinutes?: number;
       hidden?: string[];
     };
     const set = (list: unknown) =>
@@ -28,6 +31,12 @@ function savedView(): View {
       board: typeof saved.board === "string" ? saved.board : null,
       expanded: set(saved.expanded),
       openColumns: set(saved.openColumns),
+      collapsed: set(saved.collapsed),
+      autoRefreshMinutes: AUTO_REFRESH_CHOICES.some(
+        (minutes) => minutes === saved.autoRefreshMinutes,
+      )
+        ? (saved.autoRefreshMinutes as number)
+        : DEFAULT_VIEW.autoRefreshMinutes,
       hidden: set(saved.hidden),
     };
   } catch {
@@ -43,6 +52,8 @@ function saveView(view: View): void {
         board: view.board,
         expanded: [...view.expanded],
         openColumns: [...view.openColumns],
+        collapsed: [...view.collapsed],
+        autoRefreshMinutes: view.autoRefreshMinutes,
         hidden: [...view.hidden],
       }),
     );
@@ -95,10 +106,29 @@ if (app && controls) {
       setLabel(button, refreshHold.label);
     }
   };
+  /** Restarts the automatic refresh with the current interval. */
+  let stopAutoRefresh = () => {};
+  const scheduleAutoRefresh = () => {
+    stopAutoRefresh();
+    stopAutoRefresh = startAutoRefresh(
+      view.autoRefreshMinutes,
+      async () => {
+        const result = await requestRefresh();
+        if (result.ok) {
+          setTimeout(() => poller.pollNow(), AFTER_REFRESH_MS);
+        }
+      },
+      () => document.hidden,
+    );
+  };
   const change = (next: Partial<View>) => {
+    const interval = view.autoRefreshMinutes;
     view = { ...view, ...next };
     saveView(view);
     draw();
+    if (view.autoRefreshMinutes !== interval) {
+      scheduleAutoRefresh();
+    }
   };
   draw();
   const poller = startPolling({
@@ -110,6 +140,7 @@ if (app && controls) {
     intervalMs: POLL_INTERVAL_MS,
     isHidden: () => document.hidden,
   });
+  scheduleAutoRefresh();
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       poller.pollNow();
@@ -139,6 +170,18 @@ if (app && controls) {
     const hide = target.closest<HTMLElement>("[data-hide]");
     if (hide) {
       change({ hidden: flip(view.hidden, hide.dataset.hide ?? "") });
+      return;
+    }
+    const interval = target.closest<HTMLElement>("[data-auto-refresh]");
+    if (interval) {
+      change({ autoRefreshMinutes: Number(interval.dataset.autoRefresh) });
+      return;
+    }
+    const collapse = target.closest<HTMLElement>("[data-collapse]");
+    if (collapse) {
+      change({
+        collapsed: flip(view.collapsed, collapse.dataset.collapse ?? ""),
+      });
       return;
     }
     const more = target.closest<HTMLElement>("[data-more-column]");

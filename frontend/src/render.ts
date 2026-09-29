@@ -6,6 +6,10 @@ import type {
   PendingCard,
   SourceHealth,
 } from "./contract.gen";
+import {
+  AUTO_REFRESH_CHOICES,
+  DEFAULT_AUTO_REFRESH_MINUTES,
+} from "./autoRefresh";
 import type { ViewState } from "./state";
 
 /** Stroke icons (Lucide shapes), inline so the page needs no icon font. */
@@ -20,6 +24,7 @@ const ICON_PATHS = {
   eye: '<path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/>',
   eyeOff:
     '<path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.53 13.53 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
   inbox:
     '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11"/>',
   clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
@@ -51,6 +56,10 @@ export interface View {
   expanded: ReadonlySet<string>;
   /** Columns (see `columnKey`) showing every card, not just the first ones. */
   openColumns: ReadonlySet<string>;
+  /** Minutes between automatic refreshes of every source; 0 is off. */
+  autoRefreshMinutes: number;
+  /** Stacks (see `columnKey`) collapsed to their header. */
+  collapsed: ReadonlySet<string>;
   /** Boards, groups and columns switched off (see `hideKey`). */
   hidden: ReadonlySet<string>;
   sourcesOpen: boolean;
@@ -61,6 +70,8 @@ export const DEFAULT_VIEW: View = {
   board: null,
   expanded: new Set(),
   openColumns: new Set(),
+  autoRefreshMinutes: DEFAULT_AUTO_REFRESH_MINUTES,
+  collapsed: new Set(),
   hidden: new Set(),
   sourcesOpen: false,
   settingsOpen: false,
@@ -181,6 +192,8 @@ function renderSnapshot(
       (view.board === null || board.name === view.board) &&
       !view.hidden.has(hideKey.board(board.name)),
   );
+  const configIndex = (group: Group) =>
+    snapshot.sources.findIndex((source) => source.name === group.source);
   const icons = new Map(
     snapshot.boards.flatMap((board) =>
       board.groups.map((group) => [group.source, group.icon] as const),
@@ -196,8 +209,11 @@ function renderSnapshot(
               (group) =>
                 !view.hidden.has(hideKey.group(board.name, group.source)),
             )
-            .map((group) => renderGroup(board.name, group, snapshot, view)),
+            .map((group) => ({ board: board.name, group })),
         )
+        // Config order, whatever the board: `sources` lists them that way.
+        .sort((a, b) => configIndex(a.group) - configIndex(b.group))
+        .map(({ board, group }) => renderGroup(board, group, snapshot, view))
         .join("")}
     </section>
     ${view.sourcesOpen ? renderSourcesModal(snapshot, icons) : ""}
@@ -244,7 +260,7 @@ function renderGroup(
   const shown = visible.filter((column) => column.cards.length > 0 || expanded);
   const health = snapshot.sources.find((s) => s.name === group.source);
   const toggle = empty.length
-    ? `<button type="button" class="empty-toggle" data-toggle-empty="${escapeHtml(key)}" title="${expanded ? "Hide" : "Show"} empty columns">
+    ? `<button type="button" class="empty-toggle" data-toggle-empty="${escapeHtml(key)}" title="${expanded ? "Hide" : "Show"} empty stacks">
         ${expanded ? `${icon("eyeOff")} hide empty` : `${icon("eye")} ${empty.length} empty`}
       </button>`
     : "";
@@ -252,7 +268,13 @@ function renderGroup(
     ? shown
         .map((column) => {
           const key = columnKey(board, group.source, column.name);
-          return renderColumn(column, key, view.openColumns.has(key), health);
+          return renderStack(
+            column,
+            key,
+            view.openColumns.has(key),
+            view.collapsed.has(key),
+            health,
+          );
         })
         .join("")
     : `<p class="empty">${icon("inbox")} Nothing pending.</p>`;
@@ -264,17 +286,28 @@ function renderGroup(
         <span class="group-board">${escapeHtml(board)}</span>
         ${toggle}
       </header>
-      <div class="columns">${columns}</div>
+      <div class="stacks">${columns}</div>
     </section>
   `;
 }
 
-function renderColumn(
+/** One stack: a header that collapses it, then its cards. */
+function renderStack(
   column: Column,
   key: string,
   open: boolean,
+  collapsed: boolean,
   health: SourceHealth | undefined,
 ): string {
+  const header = `
+    <button type="button" class="stack-header" data-collapse="${escapeHtml(key)}" aria-expanded="${!collapsed}">
+      ${icon("chevron")}
+      <span class="stack-name">${escapeHtml(column.name)}</span>
+      <span class="count">${column.cards.length}</span>
+    </button>`;
+  if (collapsed) {
+    return `<section class="stack collapsed">${header}</section>`;
+  }
   const hidden = open ? 0 : Math.max(0, column.cards.length - COLUMN_LIMIT);
   const more =
     hidden > 0 || (open && column.cards.length > COLUMN_LIMIT)
@@ -293,8 +326,8 @@ function renderColumn(
           : "not refreshed yet"
       }</p>`;
   return `
-    <section class="column">
-      <h3>${escapeHtml(column.name)} <span class="count">${column.cards.length}</span></h3>
+    <section class="stack">
+      ${header}
       <div class="cards">${cards}</div>
     </section>
   `;
@@ -373,6 +406,15 @@ function renderSettingsModal(snapshot: DashboardSnapshot, view: View): string {
             renderFilter(board.name, board.name, view.board === board.name),
           )
           .join("")}
+      </nav>
+      <h3>Auto-refresh</h3>
+      <nav class="filters">
+        ${AUTO_REFRESH_CHOICES.map(
+          (minutes) => `
+            <button type="button" class="filter${minutes === view.autoRefreshMinutes ? " active" : ""}" data-auto-refresh="${minutes}">
+              ${minutes === 0 ? "Off" : `${minutes} min`}
+            </button>`,
+        ).join("")}
       </nav>
       <h3>Show or hide</h3>
       <ul class="visibility">

@@ -164,18 +164,22 @@ button {
   font-weight: 600;
 }
 
-/* Kanban: groups (one per source) side by side, scrolling sideways. */
+/* Groups (one per source) side by side in config order, wrapping onto
+   a new row when the window is narrow. */
 .board {
-  display: flex;
-  align-items: flex-start;
-  gap: 36px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr));
+  align-items: start;
+  gap: 20px;
   padding: 20px 28px 32px;
-  overflow-x: auto;
 }
 
-/* Groups are not boxed: fewer frames, less to look at. */
 .group {
-  flex: 0 0 auto;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 
 .group-header {
@@ -231,31 +235,52 @@ button {
   height: 13px;
 }
 
-.columns {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+/* A group's stacks, one above another. */
+.stacks {
+  display: grid;
+  gap: 14px;
 }
 
-.column {
-  flex: 0 0 290px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
+.stack + .stack {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
-.column h3 {
+.stack-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 2px 10px;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-2);
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.02em;
+  text-align: left;
   text-transform: uppercase;
+  cursor: pointer;
+}
+
+.stack-header:hover {
+  color: var(--text);
+}
+
+.stack-header .icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 120ms;
+}
+
+.stack.collapsed .stack-header {
+  margin-bottom: 0;
+}
+
+.stack.collapsed .stack-header .icon {
+  transform: rotate(-90deg);
 }
 
 .count {
@@ -469,10 +494,6 @@ button {
 @media (max-width: 640px) {
   .board {
     padding: 16px 16px 24px;
-  }
-
-  .column {
-    flex-basis: 250px;
   }
 }
 

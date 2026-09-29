@@ -248,12 +248,67 @@ describe("renderApp", () => {
     ).toMatch(/aria-label="Settings \(1 hidden\)"[\s\S]*class="filter-dot"/);
   });
 
+  /**
+   * Settings pick how often the page refreshes every source on its own:
+   * off, or every 1, 5, 15 or 30 minutes; 1 minute by default.
+   */
+  test("settings choose the auto-refresh interval", () => {
+    const html = ready(view({ settingsOpen: true }));
+    expect(html).toMatch(
+      /class="filter active" data-auto-refresh="1">\s*1 min/,
+    );
+    for (const minutes of ["0", "5", "15", "30"]) {
+      expect(html).toContain(`data-auto-refresh="${minutes}"`);
+    }
+
+    const off = ready(view({ settingsOpen: true, autoRefreshMinutes: 0 }));
+    expect(off).toMatch(/class="filter active" data-auto-refresh="0">\s*Off/);
+  });
+
   /** While one board is picked, the gear says so, so nothing looks missing. */
   test("the gear marks an active board filter", () => {
     expect(controls()).not.toContain('class="filter-dot"');
     expect(controls(snapshot(), view({ board: "Personal" }))).toMatch(
       /data-action="settings"[^>]*aria-label="Settings \(showing Personal\)"[\s\S]*class="filter-dot"/,
     );
+  });
+
+  /**
+   * Groups run left to right in config order (the order of `sources`),
+   * whatever board they belong to.
+   */
+  test("groups follow the config order across boards", () => {
+    const data = snapshot();
+    data.sources = [data.sources[2], data.sources[1], data.sources[0]];
+
+    const order = [...ready(view(), data).matchAll(/([a-z]+)<\/h2>/g)].map(
+      (match) => match[1],
+    );
+
+    expect(order).toEqual(["todoist", "github", "plane"]);
+  });
+
+  /**
+   * A group's stacks sit one above another; clicking a stack's header
+   * collapses it to the header and its count, and clicking again opens it.
+   */
+  test("stack headers collapse their stack", () => {
+    const key = columnKey("Work", "plane", "Mine");
+    const open = ready();
+    expect(open).toMatch(
+      new RegExp(
+        `<button[^>]*class="stack-header"[^>]*data-collapse="${key}"[^>]*aria-expanded="true"`,
+      ),
+    );
+    expect(open).toContain("alert(1)");
+
+    const collapsed = ready(view({ collapsed: new Set([key]) }));
+    expect(collapsed).toMatch(
+      new RegExp(
+        `data-collapse="${key}"[^>]*aria-expanded="false"[\\s\\S]*?Mine[\\s\\S]*?class="count">1<`,
+      ),
+    );
+    expect(collapsed).not.toContain("alert(1)");
   });
 
   /**

@@ -495,6 +495,8 @@ struct Issue {
     user: Option<User>,
     #[serde(default)]
     draft: bool,
+    #[serde(default)]
+    comments: u64,
 }
 
 #[derive(Deserialize)]
@@ -526,6 +528,11 @@ impl Issue {
         };
         if self.draft {
             body.push_str(" · draft");
+        }
+        match self.comments {
+            0 => {}
+            1 => body.push_str(" · 1 comment"),
+            n => body.push_str(&format!(" · {n} comments")),
         }
 
         PendingCard {

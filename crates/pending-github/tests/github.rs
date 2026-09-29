@@ -492,6 +492,29 @@ async fn draft_pull_requests_are_marked() {
     );
 }
 
+/// Issues and pull requests with comments say how many on the card; none
+/// says nothing.
+#[tokio::test]
+async fn comment_counts_are_shown_when_there_are_comments() {
+    let mut discussed = item("o/api", 7, "Add cache", true);
+    discussed["comments"] = json!(3);
+    let mut issue = item("o/api", 9, "Crash on start", false);
+    issue["comments"] = json!(1);
+    let mut quiet = item("o/web", 3, "Fix layout", true);
+    quiet["comments"] = json!(0);
+    let batch = refresh(stub_with(vec![
+        ("author", Reply::items(vec![discussed, quiet])),
+        ("assignee", Reply::items(vec![issue])),
+    ]))
+    .await
+    .expect("refresh succeeds");
+
+    let bodies: Vec<&str> = batch.items.iter().map(|i| i.card.body.as_str()).collect();
+    assert!(bodies[0].ends_with(" · 3 comments"), "{bodies:?}");
+    assert!(!bodies[1].contains("comment"), "{bodies:?}");
+    assert!(bodies[2].ends_with(" · 1 comment"), "{bodies:?}");
+}
+
 /// The id uses owner and repository even when one of them is named `repos`.
 #[tokio::test]
 async fn card_id_keeps_owner_and_repo_named_repos() {

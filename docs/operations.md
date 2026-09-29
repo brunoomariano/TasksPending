@@ -117,7 +117,7 @@ Edits are picked up while running: the API and the TUI check the file every 2 se
 - Token: `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token` (given up after 5 s; the API logs before running it, the TUI starts silently until then), resolved once at startup for all GitHub sources. Without a token the source shows as failed with a setup hint; restart after logging in.
 - Each stack is one search; they run three at a time (GitHub discourages concurrent searches, and the search API allows 30 requests per minute per user, so keep the number of GitHub stacks modest). Each search is limited to 10 s, so a hanging search becomes a warning for its stack instead of failing the refresh. Keep `timeout_seconds` (default 60) above 10, or the aggregator timeout fails the whole refresh first.
 - One failed search keeps the other stacks and makes the source degraded; all searches failing makes it failed. Rate limiting reports the reset time, and both scheduled and manual refreshes wait for it (up to an hour); a manual refresh only skips the ordinary backoff.
-- Each search loads up to 50 items; more than that, or GitHub reporting incomplete results, shows as a warning. Draft pull requests are marked in the card.
+- Each search loads up to 50 items; more than that, or GitHub reporting incomplete results, shows as a warning. Draft pull requests are marked in the card, and issues and pull requests with comments show how many (`3 comments`).
 - Error messages never include the token or request URLs.
 
 ## Observability

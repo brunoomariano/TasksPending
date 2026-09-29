@@ -7,7 +7,7 @@ use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use pending_core::{CardSeverity, PendingSource, SourceBatch};
 use pending_github::{GithubSource, resolve_token};
 use serde_json::{Value, json};
@@ -48,6 +48,11 @@ struct Stub {
     /// Notifications served by `/notifications`, and the `all` param seen.
     notifications: Arc<Mutex<Value>>,
     notifications_all: Arc<Mutex<Vec<String>>>,
+    /// Pull request state per node id served by `/graphql`, the id lists
+    /// asked for, and a reply that replaces the served one when set.
+    pr_states: Arc<Mutex<HashMap<String, Value>>>,
+    graphql_requests: Arc<Mutex<Vec<Vec<String>>>>,
+    graphql_reply: Arc<Mutex<Option<Reply>>>,
 }
 
 async fn search(
@@ -101,10 +106,40 @@ async fn notifications(
     axum::Json(stub.notifications.lock().unwrap().clone()).into_response()
 }
 
+async fn graphql(
+    State(stub): State<Stub>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<Value>,
+) -> Response {
+    assert_eq!(
+        headers.get("authorization").and_then(|v| v.to_str().ok()),
+        Some(format!("Bearer {TOKEN}").as_str())
+    );
+    let query = request["query"].as_str().unwrap_or_default();
+    assert!(query.contains("reviewDecision"), "{query}");
+    let ids: Vec<String> = request["variables"]["ids"]
+        .as_array()
+        .expect("ids variable")
+        .iter()
+        .map(|id| id.as_str().unwrap().to_owned())
+        .collect();
+    stub.graphql_requests.lock().unwrap().push(ids.clone());
+    if let Some(reply) = stub.graphql_reply.lock().unwrap().clone() {
+        return (reply.status, axum::Json(reply.body)).into_response();
+    }
+    let states = stub.pr_states.lock().unwrap();
+    let nodes: Vec<Value> = ids
+        .iter()
+        .map(|id| states.get(id).cloned().unwrap_or(Value::Null))
+        .collect();
+    axum::Json(json!({ "data": { "nodes": nodes } })).into_response()
+}
+
 async fn serve(stub: Stub) -> String {
     let app = Router::new()
         .route("/search/issues", get(search))
         .route("/notifications", get(notifications))
+        .route("/graphql", post(graphql))
         .with_state(stub);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -123,8 +158,19 @@ fn item(repo: &str, number: u64, title: &str, is_pr: bool) -> Value {
     });
     if is_pr {
         value["pull_request"] = json!({ "url": "…" });
+        value["node_id"] = json!(node_id(repo, number));
     }
     value
+}
+
+fn node_id(repo: &str, number: u64) -> String {
+    format!("PR_{repo}_{number}")
+}
+
+fn pr_state(repo: &str, number: u64, draft: bool, decision: Option<&str>) -> (String, Value) {
+    let id = node_id(repo, number);
+    let state = json!({ "id": id, "isDraft": draft, "reviewDecision": decision });
+    (id, state)
 }
 
 fn stub_with(replies: Vec<(&'static str, Reply)>) -> Stub {
@@ -513,6 +559,204 @@ async fn comment_counts_are_shown_when_there_are_comments() {
     assert!(bodies[0].ends_with(" · 3 comments"), "{bodies:?}");
     assert!(!bodies[1].contains("comment"), "{bodies:?}");
     assert!(bodies[2].ends_with(" · 1 comment"), "{bodies:?}");
+}
+
+/// Pull request cards say whether they are drafts and where their review
+/// stands, from one GraphQL request for every pull request of the refresh
+/// (issues are not asked about, and a PR in two stacks is asked once). A PR
+/// with changes requested is at least a warning.
+#[tokio::test]
+async fn pull_requests_show_draft_and_review_state_from_one_lookup() {
+    let stub = stub_with(vec![
+        (
+            "review-requested",
+            Reply::items(vec![item("o/api", 1, "Needs review", true)]),
+        ),
+        (
+            "author",
+            Reply::items(vec![
+                item("o/api", 1, "Needs review", true),
+                item("o/api", 2, "Approved", true),
+                item("o/api", 3, "Rework", true),
+                item("o/api", 4, "Draft", true),
+            ]),
+        ),
+        (
+            "assignee",
+            Reply::items(vec![item("o/api", 9, "Crash on start", false)]),
+        ),
+    ]);
+    stub.pr_states.lock().unwrap().extend([
+        pr_state("o/api", 1, false, Some("REVIEW_REQUIRED")),
+        pr_state("o/api", 2, false, Some("APPROVED")),
+        pr_state("o/api", 3, false, Some("CHANGES_REQUESTED")),
+        pr_state("o/api", 4, true, None),
+    ]);
+    let requests = stub.graphql_requests.clone();
+
+    let batch = refresh(stub).await.expect("refresh succeeds");
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1, "one lookup: {requests:?}");
+    let mut ids = requests[0].clone();
+    ids.sort();
+    assert_eq!(
+        ids,
+        ["PR_o/api_1", "PR_o/api_2", "PR_o/api_3", "PR_o/api_4"]
+    );
+
+    let card = |column: &str, id: &str| {
+        batch
+            .items
+            .iter()
+            .find(|i| i.column == column && i.card.id == id)
+            .map(|i| i.card.clone())
+            .unwrap_or_else(|| panic!("{column} {id}"))
+    };
+    let review = card("Review requested", "github:o/api#1");
+    assert!(review.body.contains("review required"), "{}", review.body);
+    assert_eq!(review.severity, CardSeverity::Warning);
+    let mine = card("My pull requests", "github:o/api#1");
+    assert!(mine.body.contains("review required"), "{}", mine.body);
+    assert_eq!(mine.severity, CardSeverity::Info);
+    let approved = card("My pull requests", "github:o/api#2");
+    assert!(approved.body.contains("approved"), "{}", approved.body);
+    assert_eq!(approved.severity, CardSeverity::Info);
+    let rework = card("My pull requests", "github:o/api#3");
+    assert!(rework.body.contains("changes requested"), "{}", rework.body);
+    assert_eq!(rework.severity, CardSeverity::Warning);
+    let draft = card("My pull requests", "github:o/api#4");
+    assert!(draft.body.contains("draft"), "{}", draft.body);
+    assert_eq!(draft.body.matches("draft").count(), 1, "{}", draft.body);
+    let issue = card("Assigned issues", "github:o/api#9");
+    assert_eq!(issue.body, "o/api#9 · @octocat");
+    assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
+}
+
+/// A refresh without pull requests makes no GraphQL request.
+#[tokio::test]
+async fn no_pull_requests_means_no_review_lookup() {
+    let stub = stub_with(vec![(
+        "assignee",
+        Reply::items(vec![item("o/api", 9, "Crash on start", false)]),
+    )]);
+    let requests = stub.graphql_requests.clone();
+
+    refresh(stub).await.expect("refresh succeeds");
+
+    assert!(requests.lock().unwrap().is_empty());
+}
+
+/// When the review lookup fails, pull requests still show, without review
+/// state, and a warning says the review state is missing.
+#[tokio::test]
+async fn a_failed_review_lookup_keeps_the_cards_with_a_warning() {
+    let stub = stub_with(vec![(
+        "author",
+        Reply::items(vec![item("o/api", 3, "Rework", true)]),
+    )]);
+    *stub.graphql_reply.lock().unwrap() = Some(Reply::status(StatusCode::BAD_GATEWAY, "upstream"));
+
+    let batch = refresh(stub).await.expect("cards still load");
+
+    assert_eq!(
+        sections(&batch),
+        vec![("My pull requests".to_owned(), "github:o/api#3".to_owned())]
+    );
+    assert_eq!(batch.items[0].card.body, "o/api#3 · @octocat");
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    assert!(
+        batch.warnings[0].contains("review state"),
+        "{:?}",
+        batch.warnings
+    );
+    assert!(batch.warnings[0].contains("502"), "{:?}", batch.warnings);
+    assert!(!batch.warnings[0].contains(TOKEN));
+}
+
+/// GraphQL reports problems in an `errors` list, even with status 200: the
+/// data that came back is used and the errors become a warning.
+#[tokio::test]
+async fn graphql_errors_become_a_warning() {
+    for (body, shows_state) in [
+        (
+            json!({
+                "data": { "nodes": [
+                    { "id": "PR_o/api_3", "isDraft": false, "reviewDecision": "APPROVED" }
+                ] },
+                "errors": [{ "message": "Could not resolve to a node with the global id" }],
+            }),
+            true,
+        ),
+        (
+            json!({ "errors": [{ "message": "Something went wrong" }] }),
+            false,
+        ),
+    ] {
+        let stub = stub_with(vec![(
+            "author",
+            Reply::items(vec![item("o/api", 3, "Rework", true)]),
+        )]);
+        *stub.graphql_reply.lock().unwrap() = Some(Reply {
+            status: StatusCode::OK,
+            headers: Vec::new(),
+            body,
+        });
+
+        let batch = refresh(stub).await.expect("cards still load");
+
+        assert_eq!(batch.items.len(), 1);
+        assert_eq!(
+            batch.items[0].card.body.contains("approved"),
+            shows_state,
+            "{}",
+            batch.items[0].card.body
+        );
+        assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+        assert!(
+            batch.warnings[0].contains("review state")
+                && (batch.warnings[0].contains("Could not resolve")
+                    || batch.warnings[0].contains("Something went wrong")),
+            "{:?}",
+            batch.warnings
+        );
+    }
+}
+
+/// Review state is asked for at most 100 pull requests per request, the
+/// most GraphQL `nodes` accepts.
+#[tokio::test]
+async fn review_lookups_ask_for_at_most_a_hundred_pull_requests() {
+    use pending_github::GithubColumn;
+
+    let page = |stack: &str| {
+        Reply::items(
+            (1..=50)
+                .map(|n| item(&format!("o/{stack}"), n, "PR", true))
+                .collect(),
+        )
+    };
+    let stub = stub_with(vec![
+        ("q1", page("a")),
+        ("q2", page("b")),
+        ("q3", page("c")),
+    ]);
+    let requests = stub.graphql_requests.clone();
+    let base = serve(stub).await;
+    let column = |name: &str| GithubColumn {
+        name: name.to_owned(),
+        query: Some(name.to_owned()),
+        notifications: None,
+        severity: None,
+    };
+    GithubSource::new(base, Some(TOKEN.to_owned()))
+        .with_columns(vec![column("q1"), column("q2"), column("q3")])
+        .refresh()
+        .await
+        .expect("refresh succeeds");
+
+    let sizes: Vec<usize> = requests.lock().unwrap().iter().map(Vec::len).collect();
+    assert_eq!(sizes, [100, 50]);
 }
 
 /// The id uses owner and repository even when one of them is named `repos`.

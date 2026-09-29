@@ -1,6 +1,7 @@
 //! GitHub as a pending-work source: review requests, open pull requests and
 //! assigned issues of the authenticated user, via the search API.
 
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -9,7 +10,7 @@ use pending_core::{
     BoxFuture, CardSeverity, PendingCard, PendingSource, SourceBatch, SourceError, SourceItem,
 };
 use reqwest::{Client, StatusCode};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_API_URL: &str = "https://api.github.com";
 
@@ -23,6 +24,11 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Searches running at once. Each column is one search, and the search API
 /// allows 30 per minute per user.
 const MAX_CONCURRENT_SEARCHES: usize = 3;
+/// Pull requests per GraphQL review-state request; `nodes` takes at most 100.
+const GRAPHQL_BATCH: usize = 100;
+
+const REVIEW_STATE_QUERY: &str =
+    "query($ids: [ID!]!) { nodes(ids: $ids) { ... on PullRequest { id isDraft reviewDecision } } }";
 
 /// One column: a GitHub search query (the search syntax of github.com).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -143,18 +149,16 @@ impl GithubSource {
             );
         }
 
+        let mut entries = Vec::new();
         for (column, result) in self.columns.iter().zip(results) {
             match result {
-                Ok((cards, warnings)) => {
+                Ok((found, warnings)) => {
                     batch.warnings.extend(
                         warnings
                             .into_iter()
                             .map(|warning| format!("{}: {warning}", column.name)),
                     );
-                    batch.items.extend(cards.into_iter().map(|card| SourceItem {
-                        column: column.name.clone(),
-                        card,
-                    }));
+                    entries.extend(found.into_iter().map(|entry| (column.name.clone(), entry)));
                 }
                 Err(failure) => {
                     retry_at = retry_at.max(failure.retry_at);
@@ -174,7 +178,68 @@ impl GithubSource {
             });
         }
         batch.warnings.extend(failures);
+
+        let (states, warning) = self.review_states(token, &entries).await;
+        batch.warnings.extend(warning);
+        batch.items = entries
+            .into_iter()
+            .map(|(column, entry)| SourceItem {
+                column,
+                card: entry.finish(&states),
+            })
+            .collect();
         Ok(batch)
+    }
+
+    /// Draft and review state of every pull request among `entries`, by node
+    /// id, asked [`GRAPHQL_BATCH`] at a time. A failure is a warning: the
+    /// cards show without review state.
+    async fn review_states(
+        &self,
+        token: &str,
+        entries: &[(String, Entry)],
+    ) -> (HashMap<String, PullRequestState>, Option<String>) {
+        let mut ids: Vec<&str> = Vec::new();
+        let mut seen = HashSet::new();
+        for (_, entry) in entries {
+            if let Some(id) = entry.node_id.as_deref()
+                && seen.insert(id)
+            {
+                ids.push(id);
+            }
+        }
+
+        let mut states = HashMap::new();
+        let mut problems = Vec::new();
+        for chunk in ids.chunks(GRAPHQL_BATCH) {
+            let request = GraphqlRequest {
+                query: REVIEW_STATE_QUERY,
+                variables: IdsVariables { ids: chunk },
+            };
+            let reply: GraphqlReply = match self.post_graphql(token, &request).await {
+                Ok(reply) => reply,
+                Err(failure) => {
+                    // The next chunk would most likely fail the same way.
+                    problems.push(failure.message);
+                    break;
+                }
+            };
+            problems.extend(reply.errors.into_iter().map(|error| error.message));
+            let nodes = reply.data.map(|data| data.nodes).unwrap_or_default();
+            for node in nodes.into_iter().flatten() {
+                if let Some(id) = node.id.clone() {
+                    states.insert(id, node);
+                }
+            }
+        }
+
+        let warning = (!problems.is_empty()).then(|| {
+            format!(
+                "pull request review state unavailable: {}",
+                problems.join("; ")
+            )
+        });
+        (states, warning)
     }
 
     /// The cards of one column, plus warnings about them.
@@ -182,7 +247,7 @@ impl GithubSource {
         &self,
         token: &str,
         column: &GithubColumn,
-    ) -> Result<(Vec<PendingCard>, Vec<String>), SearchFailure> {
+    ) -> Result<(Vec<Entry>, Vec<String>), SearchFailure> {
         if let Some(mode) = column.notifications {
             let all = match mode {
                 Notifications::All => "true",
@@ -203,7 +268,7 @@ impl GithubSource {
             };
             let cards = threads
                 .into_iter()
-                .map(|thread| thread.into_card(column.severity))
+                .map(|thread| Entry::ready(thread.into_card(column.severity)))
                 .collect();
             return Ok((cards, warnings));
         }
@@ -237,7 +302,7 @@ impl GithubSource {
         let cards = page
             .items
             .into_iter()
-            .map(|issue| issue.into_card(severity, &self.api_url))
+            .map(|issue| issue.into_entry(severity, &self.api_url))
             .collect();
         Ok((cards, warnings))
     }
@@ -250,10 +315,31 @@ impl GithubSource {
         path: &str,
         query: &[(&str, &str)],
     ) -> Result<T, SearchFailure> {
-        let response = self
+        let request = self
             .client
             .get(format!("{}{path}", self.api_url))
-            .query(query)
+            .query(query);
+        self.send(token, request).await
+    }
+
+    /// POST a GraphQL request to the API's GraphQL endpoint.
+    async fn post_graphql<T: serde::de::DeserializeOwned>(
+        &self,
+        token: &str,
+        body: &impl serde::Serialize,
+    ) -> Result<T, SearchFailure> {
+        let request = self.client.post(graphql_url(&self.api_url)).json(body);
+        self.send(token, request).await
+    }
+
+    /// Sends an authenticated request and reads a JSON reply. Errors are
+    /// safe to show and log: never the token or the request URL.
+    async fn send<T: serde::de::DeserializeOwned>(
+        &self,
+        token: &str,
+        request: reqwest::RequestBuilder,
+    ) -> Result<T, SearchFailure> {
+        let response = request
             .timeout(self.request_timeout)
             .bearer_auth(token)
             .header("accept", "application/vnd.github+json")
@@ -497,6 +583,12 @@ struct Issue {
     draft: bool,
     #[serde(default)]
     comments: u64,
+    /// GraphQL id; the review-state lookup uses it for pull requests.
+    #[serde(default)]
+    node_id: Option<String>,
+    /// Present only on pull requests.
+    #[serde(default)]
+    pull_request: Option<serde::de::IgnoredAny>,
 }
 
 #[derive(Deserialize)]
@@ -510,7 +602,7 @@ struct ApiError {
 }
 
 impl Issue {
-    fn into_card(self, severity: CardSeverity, api_url: &str) -> PendingCard {
+    fn into_entry(self, severity: CardSeverity, api_url: &str) -> Entry {
         let repo = self
             .repository_url
             .strip_prefix(api_url)
@@ -522,28 +614,128 @@ impl Issue {
             })
             .unwrap_or(&self.repository_url);
         let reference = format!("{repo}#{}", self.number);
-        let mut body = match &self.user {
+        let body = match &self.user {
             Some(user) => format!("{reference} · @{}", user.login),
             None => reference.clone(),
         };
-        if self.draft {
-            body.push_str(" · draft");
+
+        Entry {
+            card: PendingCard {
+                id: format!("github:{reference}"),
+                title: self.title,
+                body,
+                source: "github".to_owned(),
+                url: Some(self.html_url),
+                severity,
+                due_at: None,
+                updated_at: self.updated_at,
+            },
+            node_id: self.pull_request.and(self.node_id),
+            draft: self.draft,
+            comments: self.comments,
+        }
+    }
+}
+
+/// A card whose body is finished once the review state of pull requests is
+/// known.
+struct Entry {
+    card: PendingCard,
+    /// GraphQL id, for pull requests only.
+    node_id: Option<String>,
+    draft: bool,
+    comments: u64,
+}
+
+impl Entry {
+    /// A card with nothing more to add.
+    fn ready(card: PendingCard) -> Self {
+        Self {
+            card,
+            node_id: None,
+            draft: false,
+            comments: 0,
+        }
+    }
+
+    /// Appends draft, review state and comment count to the body; changes
+    /// requested make the card at least a warning.
+    fn finish(self, states: &HashMap<String, PullRequestState>) -> PendingCard {
+        let mut card = self.card;
+        let state = self.node_id.as_ref().and_then(|id| states.get(id));
+        if self.draft || state.is_some_and(|state| state.is_draft == Some(true)) {
+            card.body.push_str(" · draft");
+        }
+        let review = match state.and_then(|state| state.review_decision.as_deref()) {
+            Some("CHANGES_REQUESTED") => {
+                card.severity = card.severity.max(CardSeverity::Warning);
+                Some("changes requested")
+            }
+            Some("APPROVED") => Some("approved"),
+            Some("REVIEW_REQUIRED") => Some("review required"),
+            _ => None,
+        };
+        if let Some(review) = review {
+            card.body.push_str(" · ");
+            card.body.push_str(review);
         }
         match self.comments {
             0 => {}
-            1 => body.push_str(" · 1 comment"),
-            n => body.push_str(&format!(" · {n} comments")),
+            1 => card.body.push_str(" · 1 comment"),
+            n => card.body.push_str(&format!(" · {n} comments")),
         }
-
-        PendingCard {
-            id: format!("github:{reference}"),
-            title: self.title,
-            body,
-            source: "github".to_owned(),
-            url: Some(self.html_url),
-            severity,
-            due_at: None,
-            updated_at: self.updated_at,
-        }
+        card
     }
+}
+
+/// `{api}/graphql`, or `/api/graphql` for a GitHub Enterprise Server REST
+/// base ending in `/api/v3`.
+fn graphql_url(api_url: &str) -> String {
+    match api_url.strip_suffix("/api/v3") {
+        Some(host) => format!("{host}/api/graphql"),
+        None => format!("{api_url}/graphql"),
+    }
+}
+
+#[derive(Serialize)]
+struct GraphqlRequest<'a> {
+    query: &'a str,
+    variables: IdsVariables<'a>,
+}
+
+#[derive(Serialize)]
+struct IdsVariables<'a> {
+    ids: &'a [&'a str],
+}
+
+#[derive(Deserialize)]
+struct GraphqlReply {
+    #[serde(default)]
+    data: Option<NodesData>,
+    #[serde(default)]
+    errors: Vec<GraphqlError>,
+}
+
+#[derive(Deserialize)]
+struct NodesData {
+    /// `null` for ids that no longer resolve.
+    #[serde(default)]
+    nodes: Vec<Option<PullRequestState>>,
+}
+
+#[derive(Deserialize)]
+struct GraphqlError {
+    message: String,
+}
+
+/// What GraphQL says about one pull request.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PullRequestState {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    is_draft: Option<bool>,
+    #[serde(default)]
+    review_decision: Option<String>,
 }

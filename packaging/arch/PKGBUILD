@@ -2,7 +2,7 @@
 # Binary package built from the release bundle. The release workflow fills in
 # pkgver and the checksums and builds it with the bundle next to this file.
 pkgname=tasks-pending-bin
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Local-first dashboard of pending work (GitHub, Plane, calendars, Todoist): daemon, web page and TUI"
 arch=('x86_64' 'aarch64')

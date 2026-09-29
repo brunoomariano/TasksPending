@@ -7,7 +7,11 @@ The first source target is inspired by:
 - [`akitaonrails/ghpending`](https://github.com/akitaonrails/ghpending): GitHub pending issues, pull requests, alerts, token fallback, and terminal digest.
 - [`akitaonrails/clock-tui`](https://github.com/akitaonrails/clock-tui): Ratatui interface, independent refresh widgets, config-first operation, and release packaging.
 
-## Quick Start
+## Install
+
+Download a release (Arch package, or a bundle for Linux or macOS) or build from source with `make install`, then run the daemon and open http://127.0.0.1:8080. [docs/install.md](docs/install.md) covers the daemon (systemd or launchd), tokens, the config file and the Omarchy web app.
+
+## Quick Start (development)
 
 ```sh
 make bootstrap
@@ -53,4 +57,4 @@ make frontend-dev
 
 ## Current State
 
-The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. The dashboard is a kanban: boards (Work, Personal, …) are tabs, each source is a group of columns, and each column is a filter declared in the config. Sources available: `github` (search queries), `plane` (work item filters), `google` (Google Calendar via GNOME Online Accounts), `ical` (any iCal feed), `todoist` (Todoist filters) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). The web dashboard polls the API every 15 seconds and shows source health; the API serves it from `--static-dir` or the release bundle's `frontend/`.
+The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Each source is a group of stacks, and each stack is a filter declared in the config; groups and stacks follow the file order, and boards (Work, Personal, …) filter the page and are the TUI's tabs. Sources available: `github` (search queries), `plane` (work item filters), `google` (Google Calendar via GNOME Online Accounts), `ical` (any iCal feed), `todoist` (Todoist filters) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). The web dashboard polls the API every 15 seconds and shows source health; the API serves it from `--static-dir` or the release bundle's `frontend/`.

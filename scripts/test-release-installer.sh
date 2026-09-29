@@ -13,7 +13,7 @@ mkdir -p "$FIXTURES" "$FAKE_BIN"
 make_bundle() {
   local target=$1
   local asset="tasks-pending-$target.tar.gz"
-  local bundle="$WORK/tasks-pending-0.2.0-$target"
+  local bundle="$WORK/tasks-pending-0.3.0-$target"
 
   mkdir -p "$bundle/scripts"
   cat >"$bundle/scripts/install.sh" <<'EOF'

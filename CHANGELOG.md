@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0
+
+### Breaking change
+
+- The dashboard now listens on `http://127.0.0.1:61000` instead of port 8080, avoiding common development-port conflicts. Run the release installer again or update the Arch package, then update bookmarks and any manually created Omarchy web app. Existing explicit `--listen` overrides remain unchanged.
+
+### Features
+
+- Add a board-based TasksPending icon to the installed application, browser favicon, and README banner.
+
+### Security
+
+- Refuse non-loopback listen addresses because the local API has no authentication.
+
 ## 0.2.0
 
 - Release one self-contained `tasks-pending` executable per platform instead of separate API and TUI binaries plus a frontend folder.

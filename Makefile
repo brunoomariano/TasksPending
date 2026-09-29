@@ -39,10 +39,10 @@ build: ## Build the workspace (debug)
 	cargo build --workspace --locked
 
 up: ## Run the API on 127.0.0.1:8080
-	cargo run -p pending-api -- --listen 127.0.0.1:8080
+	cargo run -p tasks-pending -- serve --listen 127.0.0.1:8080
 
 serve: frontend-build ## Build the frontend and run the API serving it on 127.0.0.1:8080
-	cargo run -p pending-api -- --listen 127.0.0.1:8080 --static-dir frontend/dist
+	cargo run -p tasks-pending -- serve --listen 127.0.0.1:8080 --static-dir frontend/dist
 
 down: ## Placeholder: no background services are managed
 	@echo "No background services are managed yet."
@@ -51,7 +51,7 @@ logs: ## Placeholder: the API logs to stdout
 	@echo "The API logs to stdout while make up is running."
 
 tui: ## Run the TUI
-	cargo run -p pending-tui
+	cargo run -p tasks-pending -- tui
 
 contract: ## Regenerate frontend/src/contract.gen.ts from the core model
 	UPDATE_CONTRACT=1 cargo test -p pending-core --test contract --locked

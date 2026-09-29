@@ -118,7 +118,7 @@ jobs:
           name: frontend-dist
           path: frontend/dist
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p pending-api -p pending-tui
+        run: cargo build --release --locked --target ${{ matrix.target }} -p tasks-pending
       - name: Package
         env:
           TARGET: ${{ matrix.target }}
@@ -128,8 +128,9 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin'
         run: |
           dir="$(find dist -maxdepth 1 -type d -name 'tasks-pending-*' | head -1)"
-          "$dir/bin/pending-api" --help >/dev/null
-          "$dir/bin/pending-tui" --help >/dev/null
+          "$dir/bin/tasks-pending" --help >/dev/null
+          "$dir/bin/tasks-pending" serve --help >/dev/null
+          "$dir/bin/tasks-pending" tui --help >/dev/null
       - uses: actions/upload-artifact@v5
         with:
           name: bundle-${{ matrix.target }}
@@ -169,8 +170,10 @@ jobs:
           ls -l ./*.pkg.tar.zst
           # The package installs and its binaries run.
           pacman -U --noconfirm ./*.pkg.tar.zst
-          pending-api --help >/dev/null
-          test -f /usr/share/tasks-pending/frontend/index.html
+          tasks-pending --help >/dev/null
+          tasks-pending serve --help >/dev/null
+          tasks-pending tui --help >/dev/null
+          test ! -e /usr/share/tasks-pending/frontend
           test -f /usr/lib/systemd/user/tasks-pending.service
       - uses: actions/upload-artifact@v5
         with:

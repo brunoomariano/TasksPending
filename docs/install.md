@@ -1,10 +1,10 @@
 # Install and run TasksPending
 
-TasksPending runs as a small daemon, `pending-api`: it refreshes your sources in the background and serves the dashboard at <http://127.0.0.1:8080>, on this machine only. `pending-tui` is the same dashboard in the terminal; it reads the same config and does not need the daemon.
+TasksPending is one executable. `tasks-pending serve` runs the local daemon: it refreshes your sources in the background and serves the dashboard at <http://127.0.0.1:8080>, on this machine only. `tasks-pending tui` is the same dashboard in the terminal; it reads the same config and does not need the daemon. Release builds include the web page inside the executable.
 
 ## 1. Install
 
-Pick one. Each installs `pending-api`, `pending-tui`, the web page and a user service.
+Pick one. Each installs `tasks-pending` and a user service.
 
 **Arch Linux** (x86_64): download `tasks-pending-bin-<version>-1-x86_64.pkg.tar.zst` from the [releases](https://github.com/brunoomariano/TasksPending/releases) and run
 
@@ -12,7 +12,7 @@ Pick one. Each installs `pending-api`, `pending-tui`, the web page and a user se
 sudo pacman -U tasks-pending-bin-*.pkg.tar.zst
 ```
 
-Binaries go to `/usr/bin`, the web page to `/usr/share/tasks-pending/frontend`, the service to `/usr/lib/systemd/user/tasks-pending.service`.
+The executable goes to `/usr/bin`; its user service goes to `/usr/lib/systemd/user/tasks-pending.service`.
 
 **Linux or macOS, from a release bundle**: download `tasks-pending-<version>-<target>.tar.gz` for your machine (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin` for Apple silicon, `x86_64-apple-darwin` for Intel Macs), check it against its `.sha256`, unpack it and run its installer:
 
@@ -22,7 +22,7 @@ tar xzf tasks-pending-*.tar.gz
 cd tasks-pending-*/ && ./scripts/install.sh
 ```
 
-It installs under `~/.local` (set `PREFIX` to change it). The Linux binaries need glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, Arch); on older systems, build from source. The bundle also runs in place: `./bin/pending-api` serves the `frontend/` next to it.
+It installs under `~/.local` (set `PREFIX` to change it). The Linux binaries need glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, Arch); on older systems, build from source. The bundle also runs in place: `./bin/tasks-pending serve` starts the dashboard without a separate web page folder.
 
 macOS may block binaries downloaded by a browser; if it does, run `xattr -d com.apple.quarantine bin/*` in the unpacked folder before installing.
 
@@ -124,7 +124,7 @@ To use another port on Linux, override the command with a drop-in, which survive
 systemctl --user edit tasks-pending
 # [Service]
 # ExecStart=
-# ExecStart=/usr/bin/pending-api --listen 127.0.0.1:8090   (or ~/.local/bin/pending-api)
+# ExecStart=/usr/bin/tasks-pending serve --listen 127.0.0.1:8090   (or ~/.local/bin/tasks-pending)
 ```
 
 On macOS, edit `--listen` in the plist. Reinstalling keeps your plist (it holds your tokens) and writes the new one next to it as `.plist.new`. Use the new port in the web app URL too.

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Builds a release and installs it under PREFIX (default ~/.local):
 #
-#   PREFIX/bin/pending-api, PREFIX/bin/pending-tui
-#   PREFIX/share/tasks-pending/frontend/        (served by pending-api)
+#   PREFIX/bin/tasks-pending
 #   PREFIX/share/tasks-pending/{config.example.toml,env.example,icon}
 #   Linux: ~/.config/systemd/user/tasks-pending.service
 #   macOS: ~/Library/LaunchAgents/com.github.brunoomariano.tasks-pending.plist
@@ -31,7 +30,7 @@ fi
 AGENT_DIR="$HOME/Library/LaunchAgents"
 
 uninstall() {
-  rm -f "$BIN/pending-api" "$BIN/pending-tui"
+  rm -f "$BIN/tasks-pending" "$BIN/pending-api" "$BIN/pending-tui"
   rm -rf "$SHARE"
   if [[ $OS == Linux ]]; then
     if [[ -z $DESTDIR ]] && command -v systemctl >/dev/null; then
@@ -57,25 +56,20 @@ fi
 if [[ ! -f $ROOT/Cargo.toml ]]; then
   SKIP_BUILD=1
   RELEASE_BIN="${RELEASE_BIN:-$ROOT/bin}"
-  FRONTEND_DIST="${FRONTEND_DIST:-$ROOT/frontend}"
 fi
 
 # Build unless told to reuse existing artifacts.
 if [[ ${SKIP_BUILD:-0} != 1 ]]; then
-  cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" -p pending-api -p pending-tui
   npm --prefix "$ROOT/frontend" ci --no-audit --no-fund
   npm --prefix "$ROOT/frontend" run build
+  cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" -p tasks-pending
 fi
 TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 RELEASE_BIN="${RELEASE_BIN:-$TARGET_DIR/release}"
-FRONTEND_DIST="${FRONTEND_DIST:-$ROOT/frontend/dist}"
 
 install -d "$BIN" "$SHARE"
-install -m 0755 "$RELEASE_BIN/pending-api" "$BIN/pending-api"
-install -m 0755 "$RELEASE_BIN/pending-tui" "$BIN/pending-tui"
-rm -rf "$SHARE/frontend"
-install -d "$SHARE/frontend"
-cp -R "$FRONTEND_DIST/." "$SHARE/frontend/"
+install -m 0755 "$RELEASE_BIN/tasks-pending" "$BIN/tasks-pending"
+rm -f "$BIN/pending-api" "$BIN/pending-tui"
 install -m 0644 "$ROOT/config.example.toml" "$SHARE/config.example.toml"
 install -m 0644 "$ROOT/packaging/env.example" "$SHARE/env.example"
 install -m 0644 "$ROOT/packaging/icons/tasks-pending.png" "$SHARE/tasks-pending.png"
@@ -106,7 +100,7 @@ Darwin)
   next="launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$PLIST_NAME"
   ;;
 *)
-  next="$PREFIX/bin/pending-api"
+  next="$PREFIX/bin/tasks-pending serve"
   ;;
 esac
 
@@ -122,7 +116,7 @@ Next steps (see docs/install.md):
   2. Tokens:  cp -n $SHARE/env.example ~/.config/tasks-pending/env &&
               chmod 600 ~/.config/tasks-pending/env   (then fill it in)
   3. Daemon:  $next
-  4. Open:    http://127.0.0.1:8080   (or run pending-tui)
+  4. Open:    http://127.0.0.1:8080   (or run tasks-pending tui)
 EOF
 case ":$PATH:" in
 *":$PREFIX/bin:"*) ;;

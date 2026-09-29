@@ -11,7 +11,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=@BINDIR@/pending-api --listen 127.0.0.1:8080
+ExecStart=@BINDIR@/tasks-pending serve --listen 127.0.0.1:8080
 # Tokens for the sources (PLANE_TOKEN, TODOIST_API_TOKEN, GITHUB_TOKEN, ...),
 # one KEY=value per line; keep it chmod 600. Optional.
 EnvironmentFile=-%h/.config/tasks-pending/env

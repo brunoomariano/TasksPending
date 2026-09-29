@@ -64,7 +64,7 @@ It shows events that are not over yet, starting within 30 days, at most 25, soon
 
 ## TUI
 
-`pending-tui` runs the same aggregator as the API in-process, so it works without the API running. It reads the same config (`--config` or the default locations) and redraws every 250 ms.
+`tasks-pending tui` runs the same aggregator as the API in-process, so it works without the API running. It reads the same config (`--config` or the default locations) and redraws every 250 ms.
 
 A big clock sits at the top, as on the web page: the date, then the local time as `HH:MM:SS` in block digits, centered. The digits grow with the terminal (up to a third of its height) and the clock hides when the terminal is narrower than 62 columns or when showing it would leave the board fewer than 10 rows.
 
@@ -84,14 +84,14 @@ Source health is behind the **Sources** button, which opens a dialog with each s
 
 The page polls `/api/v1/snapshot` every 15 seconds while the tab is visible and redraws only when something changed. If the API stops answering after a successful load, the last cards stay on screen under a warning. The Refresh button calls `POST /api/v1/refresh`.
 
-`pending-api` serves the built frontend at `/` from `--static-dir <dir>`, or from `../frontend` next to the binary when it has an `index.html` (release bundle layout). Without either it serves only the API. An explicit `--static-dir` without `index.html` fails at startup.
+`tasks-pending serve` serves the release build's embedded frontend at `/`. `--static-dir <dir>` overrides it for local frontend development; that directory must have an `index.html`. A binary built without frontend assets and run without the override serves only the API.
 
 ## HTTP Endpoints
 
 - `GET /healthz`: process health and version.
 - `GET /api/v1/snapshot`: dashboard snapshot.
 - `POST /api/v1/refresh`: refresh every source now. Requires the header `x-requested-with: tasks-pending` (403 without it, so other sites open in the browser cannot trigger it) and answers 429 with `retry_after_secs` when called again within 10 s.
-- `GET /*`: built frontend, when a static directory is available.
+- `GET /*`: embedded frontend, or the explicit static directory used for development.
 
 Every request must be addressed to `localhost`, `127.0.0.1` or `[::1]` (any port); other `Host` values get 421, so a page that points its own domain at 127.0.0.1 (DNS rebinding) cannot read the dashboard. Requests without a `Host` header (non-browser clients) are served.
 

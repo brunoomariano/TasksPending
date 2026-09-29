@@ -50,11 +50,12 @@ make frontend-dev
 - `crates/pending-google`: Google Calendar source adapter (GNOME Online Accounts).
 - `crates/pending-ical`: calendar (iCal) source adapter.
 - `crates/pending-todoist`: Todoist source adapter.
-- `crates/pending-api`: HTTP API over the shared dashboard snapshot.
+- `crates/pending-api`: HTTP API and embedded frontend delivery.
 - `crates/pending-tui`: terminal dashboard.
+- `crates/tasks-pending`: released CLI with `serve` and `tui` subcommands.
 - `frontend`: vanilla TypeScript UI built with Vite.
 - `docs`: architecture and operation notes.
 
 ## Current State
 
-The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Each source is a group of stacks, and each stack is a filter declared in the config; groups and stacks follow the file order, and boards (Work, Personal, …) filter the page and are the TUI's tabs. Sources available: `github` (search queries), `plane` (work item filters), `google` (Google Calendar via GNOME Online Accounts), `ical` (any iCal feed), `todoist` (Todoist filters) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). The web dashboard polls the API every 15 seconds and shows source health; the API serves it from `--static-dir` or the release bundle's `frontend/`.
+The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Each source is a group of stacks, and each stack is a filter declared in the config; groups and stacks follow the file order, and boards (Work, Personal, …) filter the page and are the TUI's tabs. Sources available: `github` (search queries), `plane` (work item filters), `google` (Google Calendar via GNOME Online Accounts), `ical` (any iCal feed), `todoist` (Todoist filters) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). Release builds embed the web dashboard in `tasks-pending`; `--static-dir` remains a development override.

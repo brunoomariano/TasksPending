@@ -14,7 +14,8 @@
   <string>com.github.brunoomariano.tasks-pending</string>
   <key>ProgramArguments</key>
   <array>
-    <string>@BINDIR@/pending-api</string>
+    <string>@BINDIR@/tasks-pending</string>
+    <string>serve</string>
     <string>--listen</string>
     <string>127.0.0.1:8080</string>
   </array>

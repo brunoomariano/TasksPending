@@ -67,11 +67,11 @@ Visual style: simple and quiet. Colours come from the design tokens at the top o
   - `app.rs` handling and tests;
   - the footer help;
   - the TUI section of `docs/operations.md`.
-- **New CLI flag:** the `cli_definition_is_valid` test catches clashes; update `docs/install.md` if it matters to the service file.
+- **New CLI flag:** the `tasks-pending` CLI test runs Clap's definition checks; update `docs/install.md` if it matters to the service file.
 - **Service or install layout:**
   - `scripts/install.sh`;
   - `packaging/` (systemd, launchd, PKGBUILD);
-  - `bundled_frontend` in pending-api;
+  - the embedded frontend build in `pending-api`;
   - `docs/install.md`.
 
 ## Release

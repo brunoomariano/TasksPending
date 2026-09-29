@@ -1,15 +1,14 @@
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::Context;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header::CONTENT_TYPE};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use clap::Parser;
 use pending_core::DashboardSnapshot;
 use pending_runtime::Dashboard;
 use pending_runtime::config::{Origin, cache_path};
@@ -20,21 +19,42 @@ use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
-#[derive(Debug, Parser)]
-#[command(name = "pending-api", about = "TasksPending HTTP API")]
-struct Cli {
-    #[arg(long, default_value = "127.0.0.1:8080")]
-    listen: SocketAddr,
+#[derive(Debug)]
+pub struct ServeOptions {
+    pub listen: SocketAddr,
     /// Config file. Defaults to $TASKS_PENDING_CONFIG, then
     /// $XDG_CONFIG_HOME/tasks-pending/config.toml, then
     /// ~/.config/tasks-pending/config.toml.
-    #[arg(long)]
-    config: Option<PathBuf>,
-    /// Built frontend to serve at `/`. Defaults to `../frontend` next to the
-    /// binary (release bundle), then `../share/tasks-pending/frontend`
-    /// (installed prefix), when one exists.
-    #[arg(long)]
-    static_dir: Option<PathBuf>,
+    pub config: Option<PathBuf>,
+    pub static_dir: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EmbeddedFile {
+    pub path: &'static str,
+    pub bytes: &'static [u8],
+}
+
+#[derive(Clone, Debug)]
+pub enum Frontend {
+    Directory(PathBuf),
+    Embedded(&'static [EmbeddedFile]),
+}
+
+impl Frontend {
+    pub fn directory(path: impl Into<PathBuf>) -> Self {
+        Self::Directory(path.into())
+    }
+
+    pub const fn embedded(files: &'static [EmbeddedFile]) -> Self {
+        Self::Embedded(files)
+    }
+}
+
+mod embedded_frontend {
+    use super::EmbeddedFile;
+
+    include!(concat!(env!("OUT_DIR"), "/embedded_frontend.rs"));
 }
 
 #[derive(Debug, Serialize)]
@@ -43,9 +63,7 @@ struct Health {
     version: &'static str,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
     init_tracing();
 
     let env = process_env();
@@ -54,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
         Some(path) => info!(cache = %path.display(), "source cache enabled"),
         None => warn!("no XDG_STATE_HOME or HOME; the source cache is disabled"),
     }
-    let (live, origin) = Live::start(cli.config, env, cache)?;
+    let (live, origin) = Live::start(options.config, env, cache)?;
     let sources = live.snapshot().sources.len();
     match &origin {
         Origin::File(path) if sources == 0 => warn!(
@@ -70,24 +88,19 @@ async fn main() -> anyhow::Result<()> {
     // Saving the config file is enough; no restart needed.
     let _watch = live.watch(CONFIG_WATCH_INTERVAL);
 
-    let static_dir = resolve_static_dir(cli.static_dir);
-    match &static_dir {
-        Some(dir) if !dir.join("index.html").is_file() => {
-            anyhow::bail!(
-                "{} has no index.html; build the frontend first",
-                dir.display()
-            )
-        }
-        Some(dir) => info!(dir = %dir.display(), "serving frontend"),
-        None => info!("no frontend directory; serving the API only"),
+    let frontend = resolve_frontend(options.static_dir)?;
+    match &frontend {
+        Some(Frontend::Directory(dir)) => info!(dir = %dir.display(), "serving frontend directory"),
+        Some(Frontend::Embedded(files)) => info!(files = files.len(), "serving embedded frontend"),
+        None => info!("no embedded frontend; serving the API only"),
     }
 
-    let listener = tokio::net::TcpListener::bind(cli.listen)
+    let listener = tokio::net::TcpListener::bind(options.listen)
         .await
-        .with_context(|| format!("binding {}", cli.listen))?;
-    info!(addr = %cli.listen, "pending-api listening");
+        .with_context(|| format!("binding {}", options.listen))?;
+    info!(addr = %options.listen, "tasks-pending listening");
 
-    axum::serve(listener, app(live, static_dir.as_deref()))
+    axum::serve(listener, app(live, frontend))
         .await
         .context("serving API")?;
     Ok(())
@@ -110,8 +123,8 @@ struct AppState {
     last_refresh: Arc<Mutex<Option<Instant>>>,
 }
 
-/// API routes, plus the built frontend from `static_dir` for any other path.
-fn app(dashboard: impl Dashboard + 'static, static_dir: Option<&Path>) -> Router {
+/// API routes, plus the configured frontend for any other path.
+pub fn app(dashboard: impl Dashboard + 'static, frontend: Option<Frontend>) -> Router {
     let state = AppState {
         dashboard: Arc::new(dashboard),
         last_refresh: Arc::new(Mutex::new(None)),
@@ -120,8 +133,11 @@ fn app(dashboard: impl Dashboard + 'static, static_dir: Option<&Path>) -> Router
         .route("/healthz", get(healthz))
         .route("/api/v1/snapshot", get(snapshot))
         .route("/api/v1/refresh", post(refresh));
-    let router = match static_dir {
-        Some(dir) => router.fallback_service(ServeDir::new(dir)),
+    let router = match frontend {
+        Some(Frontend::Directory(dir)) => router.fallback_service(ServeDir::new(dir)),
+        Some(Frontend::Embedded(files)) => {
+            router.fallback(move |uri: Uri| async move { serve_embedded_frontend(uri, files) })
+        }
         None => router,
     };
     router
@@ -156,23 +172,54 @@ async fn local_hosts_only(
     }
 }
 
-/// `--static-dir`, else the frontend installed alongside the binary (see
-/// [`bundled_frontend`]).
-fn resolve_static_dir(cli: Option<PathBuf>) -> Option<PathBuf> {
-    cli.or_else(|| bundled_frontend(&std::env::current_exe().ok()?))
+fn resolve_frontend(static_dir: Option<PathBuf>) -> anyhow::Result<Option<Frontend>> {
+    if let Some(dir) = static_dir {
+        if !dir.join("index.html").is_file() {
+            anyhow::bail!(
+                "{} has no index.html; build the frontend first",
+                dir.display()
+            );
+        }
+        return Ok(Some(Frontend::directory(dir)));
+    }
+
+    Ok(embedded_frontend::FILES
+        .iter()
+        .any(|file| file.path == "index.html")
+        .then(|| Frontend::embedded(embedded_frontend::FILES)))
 }
 
-/// For a binary at `<root>/bin/<name>`: `<root>/frontend` (release bundle),
-/// else `<root>/share/tasks-pending/frontend` (installed prefix), whichever
-/// first holds an `index.html`.
-fn bundled_frontend(exe: &Path) -> Option<PathBuf> {
-    let root = exe.parent()?.parent()?;
-    [
-        root.join("frontend"),
-        root.join("share/tasks-pending/frontend"),
-    ]
-    .into_iter()
-    .find(|dir| dir.join("index.html").is_file())
+fn serve_embedded_frontend(uri: Uri, files: &'static [EmbeddedFile]) -> axum::response::Response {
+    let requested = match uri.path().trim_start_matches('/') {
+        "" => "index.html",
+        path => path,
+    };
+    let Some(file) = files.iter().find(|file| file.path == requested) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let mut response = (StatusCode::OK, axum::body::Body::from(file.bytes)).into_response();
+    response.headers_mut().insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static(content_type(file.path)),
+    );
+    response
+}
+
+fn content_type(path: &str) -> &'static str {
+    match path.rsplit_once('.').map(|(_, extension)| extension) {
+        Some("css") => "text/css; charset=utf-8",
+        Some("html") => "text/html; charset=utf-8",
+        Some("ico") => "image/x-icon",
+        Some("jpeg" | "jpg") => "image/jpeg",
+        Some("js" | "mjs") => "application/javascript; charset=utf-8",
+        Some("json" | "map") => "application/json; charset=utf-8",
+        Some("png") => "image/png",
+        Some("svg") => "image/svg+xml",
+        Some("webp") => "image/webp",
+        Some("woff2") => "font/woff2",
+        _ => "application/octet-stream",
+    }
 }
 
 async fn healthz() -> Json<Health> {
@@ -311,7 +358,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("assets")).unwrap();
         std::fs::write(dir.join("index.html"), "<main id=app></main>").unwrap();
         std::fs::write(dir.join("assets/app.js"), "console.log(1)").unwrap();
-        let app = app(idle_aggregator(), Some(&dir));
+        let app = app(idle_aggregator(), Some(Frontend::directory(&dir)));
 
         assert_eq!(
             get(app.clone(), "/").await,
@@ -407,52 +454,19 @@ mod tests {
         assert_eq!(status, StatusCode::FORBIDDEN);
     }
 
-    /// In the release bundle (`bin/` next to `frontend/`), the API finds the
-    /// frontend on its own; without `index.html` it serves none; the flag wins.
+    /// An explicit directory remains a development override, but it must have
+    /// the page entry point rather than silently replacing the embedded page.
     #[test]
-    fn static_dir_comes_from_flag_or_release_bundle() {
-        let bundle =
-            std::env::temp_dir().join(format!("tasks-pending-bundle-{}", std::process::id()));
-        std::fs::create_dir_all(bundle.join("bin")).unwrap();
-        std::fs::create_dir_all(bundle.join("frontend")).unwrap();
-        let exe = bundle.join("bin/pending-api");
+    fn static_dir_requires_an_index_page() {
+        let directory = std::env::temp_dir().join(format!(
+            "tasks-pending-static-missing-index-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
 
-        assert_eq!(bundled_frontend(&exe), None, "no index.html yet");
-        std::fs::write(bundle.join("frontend/index.html"), "<main></main>").unwrap();
-        assert_eq!(bundled_frontend(&exe), Some(bundle.join("frontend")));
-
-        let flag = PathBuf::from("/explicit/dist");
-        assert_eq!(resolve_static_dir(Some(flag.clone())), Some(flag));
-        let _ = std::fs::remove_dir_all(&bundle);
-    }
-
-    /// Installed with a prefix (`make install`, the Arch package), the
-    /// frontend lives in `<prefix>/share/tasks-pending/frontend`; the API
-    /// finds it there too, preferring the bundle layout when both exist.
-    #[test]
-    fn static_dir_is_found_in_an_installed_prefix() {
-        let prefix =
-            std::env::temp_dir().join(format!("tasks-pending-prefix-{}", std::process::id()));
-        let shared = prefix.join("share/tasks-pending/frontend");
-        std::fs::create_dir_all(prefix.join("bin")).unwrap();
-        std::fs::create_dir_all(&shared).unwrap();
-        let exe = prefix.join("bin/pending-api");
-
-        assert_eq!(bundled_frontend(&exe), None, "no index.html yet");
-        std::fs::write(shared.join("index.html"), "<main></main>").unwrap();
-        assert_eq!(bundled_frontend(&exe), Some(shared));
-
-        std::fs::create_dir_all(prefix.join("frontend")).unwrap();
-        std::fs::write(prefix.join("frontend/index.html"), "<main></main>").unwrap();
-        assert_eq!(bundled_frontend(&exe), Some(prefix.join("frontend")));
-        let _ = std::fs::remove_dir_all(&prefix);
-    }
-
-    /// The command-line definition is consistent (no clashing flags).
-    #[test]
-    fn cli_definition_is_valid() {
-        use clap::CommandFactory;
-        Cli::command().debug_assert();
+        let error = resolve_frontend(Some(directory.clone())).unwrap_err();
+        assert!(error.to_string().contains("has no index.html"));
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     async fn get_with_host(app: Router, path: &str, host: &str) -> StatusCode {

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Packages a release bundle: dist/tasks-pending-<version>-<target>.tar.gz and
-# its .sha256. The bundle holds bin/, frontend/ (found by pending-api next to
-# bin/), the example config and env file, the service files and install.sh.
+# its .sha256. The bundle holds the self-contained executable, the example
+# config and env file, the service files and install.sh.
 #
 #   TARGET      Rust target triple (default: this machine's)
-#   SKIP_BUILD  1 to package already built binaries and frontend
+#   SKIP_BUILD  1 to package an executable already built with frontend assets
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,16 +15,16 @@ NAME="tasks-pending-$VERSION-$TARGET"
 DIST="$ROOT/dist/$NAME"
 
 if [[ ${SKIP_BUILD:-0} != 1 ]]; then
-  cargo build --release --locked --target "$TARGET" -p pending-api -p pending-tui
   npm --prefix "$ROOT/frontend" run build
+  cargo build --release --locked --target "$TARGET" -p tasks-pending
 fi
 
-rm -rf "$DIST" "$ROOT/dist/$NAME.tar.gz" "$ROOT/dist/$NAME.tar.gz.sha256"
-mkdir -p "$DIST/bin" "$DIST/frontend" "$DIST/scripts" "$DIST/docs"
+test -f "$ROOT/frontend/dist/index.html"
 
-install -m 0755 "$TARGET_DIR/$TARGET/release/pending-api" "$DIST/bin/pending-api"
-install -m 0755 "$TARGET_DIR/$TARGET/release/pending-tui" "$DIST/bin/pending-tui"
-cp -R "$ROOT/frontend/dist/." "$DIST/frontend/"
+rm -rf "$DIST" "$ROOT/dist/$NAME.tar.gz" "$ROOT/dist/$NAME.tar.gz.sha256"
+mkdir -p "$DIST/bin" "$DIST/scripts" "$DIST/docs"
+
+install -m 0755 "$TARGET_DIR/$TARGET/release/tasks-pending" "$DIST/bin/tasks-pending"
 cp -R "$ROOT/packaging" "$DIST/packaging"
 install -m 0755 "$ROOT/scripts/install.sh" "$DIST/scripts/install.sh"
 install -m 0644 "$ROOT/config.example.toml" "$DIST/config.example.toml"

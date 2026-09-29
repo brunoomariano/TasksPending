@@ -7,14 +7,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
-[[bin]]
-name = "pending-tui"
-path = "src/main.rs"
-
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
-clap.workspace = true
 crossterm.workspace = true
 pending-core = { path = "../pending-core" }
 pending-runtime = { path = "../pending-runtime" }

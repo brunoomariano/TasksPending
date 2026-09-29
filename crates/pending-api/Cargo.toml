@@ -7,14 +7,9 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
-[[bin]]
-name = "pending-api"
-path = "src/main.rs"
-
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
-clap.workspace = true
 pending-core = { path = "../pending-core" }
 pending-runtime = { path = "../pending-runtime" }
 serde.workspace = true

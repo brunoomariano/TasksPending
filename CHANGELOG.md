@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- Release one self-contained `tasks-pending` executable per platform instead of separate API and TUI binaries plus a frontend folder.
+- Run the local dashboard with `tasks-pending serve` and the terminal dashboard with `tasks-pending tui`.
+- Embed the production frontend in release builds while retaining `--static-dir` as a local development override.
+
 ## 0.1.0
 
 First release: one local dashboard for the work waiting on you across GitHub, Plane, calendars and Todoist, as a background daemon with a web page, and as a terminal UI.

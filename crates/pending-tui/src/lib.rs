@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use clap::Parser;
 use crossterm::ExecutableCommand;
 use crossterm::cursor::Show;
 use crossterm::event::{
@@ -24,18 +23,9 @@ use ratatui::backend::CrosstermBackend;
 
 use crate::app::{Action, App, Viewport};
 
-#[derive(Debug, Parser)]
-#[command(
-    name = "pending-tui",
-    about = "TasksPending terminal dashboard",
-    version
-)]
-struct Cli {
-    /// Config file. Defaults to $TASKS_PENDING_CONFIG, then
-    /// $XDG_CONFIG_HOME/tasks-pending/config.toml, then
-    /// ~/.config/tasks-pending/config.toml.
-    #[arg(long)]
-    config: Option<PathBuf>,
+#[derive(Debug)]
+pub struct TuiOptions {
+    pub config: Option<PathBuf>,
 }
 
 /// How often the config file is checked for changes.
@@ -100,8 +90,7 @@ fn reset_screen(out: &mut impl io::Write) {
     let _ = out.execute(LeaveAlternateScreen);
 }
 
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+pub fn run(options: TuiOptions) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("starting async runtime")?;
     let result = {
         let _guard = runtime.enter();
@@ -109,7 +98,7 @@ fn main() -> anyhow::Result<()> {
         let cache = cache_path(&*env);
         // Config errors print before the terminal switches to the alternate
         // screen; later edits of the file are reloaded while running.
-        let (live, origin) = Live::start(cli.config, env, cache)?;
+        let (live, origin) = Live::start(options.config, env, cache)?;
         let header = match &origin {
             Origin::File(path) => format!("config: {}", path.display()),
             Origin::SampleDefault {
@@ -118,7 +107,7 @@ fn main() -> anyhow::Result<()> {
             Origin::SampleDefault { searched: None } => "sample source (no config)".to_owned(),
         };
         let _watch = live.watch(CONFIG_WATCH_INTERVAL);
-        run(&live, &header)
+        run_dashboard(&live, &header)
     };
     // Quit right away: an in-flight DNS lookup on a blocking thread must not
     // keep the process alive after the terminal is restored.
@@ -126,7 +115,7 @@ fn main() -> anyhow::Result<()> {
     result
 }
 
-fn run(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> {
+fn run_dashboard(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> {
     let _session = TerminalSession::enter()?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).context("opening terminal")?;

@@ -129,7 +129,7 @@ Darwin)
       "$ROOT/packaging/launchd/$PLIST_NAME" >"$plist"
     chmod 0600 "$plist"
   fi
-  next="launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$PLIST_NAME"
+  next="launchctl bootout gui/\$(id -u)/${PLIST_NAME%.plist} 2>/dev/null || true; launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$PLIST_NAME"
   ;;
 *)
   next="$PREFIX/bin/tasks-pending serve"

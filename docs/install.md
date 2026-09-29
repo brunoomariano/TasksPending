@@ -111,8 +111,8 @@ systemctl --user restart tasks-pending        # after editing the env file
 **macOS (launchd)**
 
 ```sh
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.brunoomariano.tasks-pending.plist
 launchctl bootout gui/$(id -u)/com.github.brunoomariano.tasks-pending   # stop
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.brunoomariano.tasks-pending.plist
 tail -f ~/Library/Logs/tasks-pending.log
 ```
 

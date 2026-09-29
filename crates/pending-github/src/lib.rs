@@ -379,7 +379,21 @@ impl GithubSource {
         let mut warnings = Vec::new();
         let mut failures = Vec::new();
         let mut retry_at = None;
+        // 404 means the alert type is not set up for the repository (e.g. no
+        // code scanning analysis yet): no alerts, no warning. A repository
+        // where every type answers 404 is more likely a typo, though.
+        let mut missing: HashMap<&str, usize> = HashMap::new();
         for ((repo, kind), result) in requests.iter().zip(results) {
+            let result = match result {
+                Err(failure)
+                    if failure.status == Some(StatusCode::NOT_FOUND)
+                        && failure.retry_at.is_none() =>
+                {
+                    *missing.entry(*repo).or_default() += 1;
+                    Ok(Vec::new())
+                }
+                other => other,
+            };
             match result {
                 Ok(cards) => {
                     if cards.len() >= ALERT_PAGE_SIZE {
@@ -397,10 +411,8 @@ impl GithubSource {
                 }
                 Err(failure) => {
                     let hint = match failure.status {
-                        Some(StatusCode::FORBIDDEN | StatusCode::NOT_FOUND)
-                            if failure.retry_at.is_none() =>
-                        {
-                            " (not enabled for the repository, or the token cannot read it)"
+                        Some(StatusCode::FORBIDDEN) if failure.retry_at.is_none() => {
+                            " (disabled for the repository, or the token cannot read it)"
                         }
                         _ => "",
                     };
@@ -414,7 +426,16 @@ impl GithubSource {
             }
         }
 
-        if failures.len() == requests.len() {
+        for repo in repos {
+            if missing.get(repo.as_str()) == Some(&AlertKind::ALL.len()) {
+                warnings.push(format!(
+                    "{repo}: no alerts could be read (404 for every alert type); \
+                     check the repository name and that the token can see it"
+                ));
+            }
+        }
+
+        if !failures.is_empty() && failures.len() == requests.len() {
             return Err(SearchFailure {
                 message: failures.join("; "),
                 retry_at,
@@ -434,7 +455,11 @@ impl GithubSource {
     ) -> Result<Vec<PendingCard>, SearchFailure> {
         let path = format!("/repos/{repo}/{}/alerts", kind.path());
         let per_page = ALERT_PAGE_SIZE.to_string();
-        let query = [("state", "open"), ("per_page", per_page.as_str())];
+        let mut query = vec![("state", "open"), ("per_page", per_page.as_str())];
+        if kind == AlertKind::SecretScanning {
+            // Otherwise the reply carries the secret itself.
+            query.push(("hide_secret", "true"));
+        }
         Ok(match kind {
             AlertKind::Dependabot => self
                 .get_json::<Vec<DependabotAlert>>(token, &path, &query)

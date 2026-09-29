@@ -146,11 +146,15 @@ async fn alerts(
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let key = format!("{owner}/{repo}/{kind}");
-    stub.alert_requests.lock().unwrap().push(format!(
+    let mut request = format!(
         "{key}?state={}&per_page={}",
         params.get("state").cloned().unwrap_or_default(),
         params.get("per_page").cloned().unwrap_or_default()
-    ));
+    );
+    if let Some(hide) = params.get("hide_secret") {
+        request.push_str(&format!("&hide_secret={hide}"));
+    }
+    stub.alert_requests.lock().unwrap().push(request);
     let reply = stub.alerts.lock().unwrap().get(&key).cloned();
     match reply {
         Some(reply) => (reply.status, axum::Json(reply.body)).into_response(),
@@ -1057,10 +1061,10 @@ async fn open_security_alerts_become_cards() {
         [
             "o/api/code-scanning?state=open&per_page=100",
             "o/api/dependabot?state=open&per_page=100",
-            "o/api/secret-scanning?state=open&per_page=100",
+            "o/api/secret-scanning?state=open&per_page=100&hide_secret=true",
             "o/web/code-scanning?state=open&per_page=100",
             "o/web/dependabot?state=open&per_page=100",
-            "o/web/secret-scanning?state=open&per_page=100",
+            "o/web/secret-scanning?state=open&per_page=100&hide_secret=true",
         ]
     );
     assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
@@ -1111,9 +1115,11 @@ async fn open_security_alerts_become_cards() {
     assert_eq!(ids.len(), 4, "ids are unique: {ids:?}");
 }
 
-/// An alert type that a repository has disabled, or that the token may not
-/// read (403 or 404), becomes a warning naming the repository and the alert
-/// type; the other types and repositories still show.
+/// An alert type that is not set up for a repository (404, e.g. no code
+/// scanning analysis yet) just has no alerts: no warning, so a normal repo
+/// does not keep the source degraded. One the token may not read, or that is
+/// disabled (403), is a warning naming the repository and the alert type;
+/// the other types and repositories still show.
 #[tokio::test]
 async fn unavailable_alert_types_are_warnings_naming_repo_and_type() {
     let stub = Stub::default();
@@ -1146,24 +1152,40 @@ async fn unavailable_alert_types_are_warnings_naming_repo_and_type() {
 
     assert_eq!(batch.items.len(), 1);
     assert_eq!(batch.items[0].card.severity, CardSeverity::Warning);
-    assert_eq!(batch.warnings.len(), 2, "{:?}", batch.warnings);
-    let secret = batch
-        .warnings
-        .iter()
-        .find(|w| w.contains("secret scanning"))
-        .expect("secret scanning warning");
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    let code = &batch.warnings[0];
     assert!(
-        secret.contains("Security") && secret.contains("o/api"),
-        "{secret}"
+        code.contains("code scanning") && code.contains("o/web") && code.contains("403"),
+        "{code}"
     );
-    assert!(secret.contains("404"), "{secret}");
-    let code = batch
-        .warnings
-        .iter()
-        .find(|w| w.contains("code scanning"))
-        .expect("code scanning warning");
-    assert!(code.contains("o/web") && code.contains("403"), "{code}");
     assert!(batch.warnings.iter().all(|w| !w.contains(TOKEN)));
+}
+
+/// A repository where every alert type answers 404 is most likely a typo or
+/// a repository the token cannot see: that is a warning naming it.
+#[tokio::test]
+async fn a_repo_with_no_alert_endpoints_is_a_warning() {
+    let stub = Stub::default();
+    for kind in ["dependabot", "secret-scanning", "code-scanning"] {
+        stub.alerts.lock().unwrap().insert(
+            format!("o/typo/{kind}"),
+            Reply::status(StatusCode::NOT_FOUND, "Not Found"),
+        );
+    }
+    stub.alerts.lock().unwrap().insert(
+        "o/api/dependabot".to_owned(),
+        ok(json!([dependabot_alert(1, "lodash", "high", "Bug")])),
+    );
+    let base = serve(stub).await;
+
+    let batch = alerts_source(base, &["o/api", "o/typo"])
+        .refresh()
+        .await
+        .expect("o/api still loads");
+
+    assert_eq!(batch.items.len(), 1);
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    assert!(batch.warnings[0].contains("o/typo"), "{:?}", batch.warnings);
 }
 
 /// When no alert of a stack can be read, the stack fails like a failed

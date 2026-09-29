@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "pending-api"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1720,7 +1720,7 @@ dependencies = [
 
 [[package]]
 name = "pending-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "serde",
@@ -1733,7 +1733,7 @@ dependencies = [
 
 [[package]]
 name = "pending-github"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "axum",
  "chrono",
@@ -1748,7 +1748,7 @@ dependencies = [
 
 [[package]]
 name = "pending-google"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "axum",
  "chrono",
@@ -1766,14 +1766,14 @@ dependencies = [
 
 [[package]]
 name = "pending-http"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "reqwest",
 ]
 
 [[package]]
 name = "pending-ical"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "axum",
  "chrono",
@@ -1789,7 +1789,7 @@ dependencies = [
 
 [[package]]
 name = "pending-plane"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "axum",
  "chrono",
@@ -1803,7 +1803,7 @@ dependencies = [
 
 [[package]]
 name = "pending-runtime"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "chrono",
  "pending-core",
@@ -1822,7 +1822,7 @@ dependencies = [
 
 [[package]]
 name = "pending-todoist"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "axum",
  "chrono",
@@ -1837,7 +1837,7 @@ dependencies = [
 
 [[package]]
 name = "pending-tui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2819,7 +2819,7 @@ dependencies = [
 
 [[package]]
 name = "tasks-pending"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "clap",

@@ -100,6 +100,8 @@ chmod 600 ~/.config/tasks-pending/env
 $EDITOR ~/.config/tasks-pending/env
 ```
 
+On Linux, the installer warns when this file is absent. It does not create it or import values from other applications; create it yourself and restart the user service after changing it.
+
 | Source | Variables |
 |---|---|
 | `github` | `GITHUB_TOKEN` or `GH_TOKEN`; else `gh auth token` (the service's PATH includes `~/.local/bin` and mise shims) |

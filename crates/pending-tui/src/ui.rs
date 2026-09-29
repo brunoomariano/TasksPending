@@ -2,19 +2,23 @@
 //! by source.
 
 use chrono::{DateTime, Local, Utc};
-use pending_core::{CardSeverity, SourceHealth, SourceStatus};
+use pending_core::{CardSeverity, PendingCard, SourceHealth, SourceStatus};
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, List, ListItem, ListState, Paragraph, StatefulWidget, Widget,
+    Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
 };
 
-use crate::app::{App, ColumnRef};
+use crate::app::{App, ColumnRef, Popup, Viewport};
 use crate::clock;
 
-const HELP: &str = "1-9/tab boards · h/l columns · j/k cards · enter open · r refresh · q quit";
+const HELP: &str = "1-9/tab boards · h/l columns · j/k cards · enter open · space details · s sources · r refresh · q quit";
+/// Largest details popup, so long lines stay readable on wide terminals.
+const POPUP_MAX_WIDTH: u16 = 110;
+const POPUP_MAX_HEIGHT: u16 = 30;
 /// Narrowest useful column; with less room the board scrolls sideways.
 const MIN_COLUMN_WIDTH: u16 = 26;
 /// Fewest rows the board keeps (about three cards per column); the clock
@@ -32,8 +36,17 @@ fn local(at: DateTime<Utc>) -> String {
 }
 
 /// `header` describes where the config came from.
-/// `now` is the local time the clock shows.
-pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str, now: DateTime<Local>) {
+/// `now` is the local time the clock shows. Returns the geometry the keys
+/// need (see `App::set_viewport`).
+pub fn render(
+    area: Rect,
+    buf: &mut Buffer,
+    app: &App,
+    header: &str,
+    now: DateTime<Local>,
+) -> Viewport {
+    let screen = area;
+    let mut viewport = Viewport::default();
     let snapshot = app.snapshot();
     let sources_height =
         snapshot.sources.len().max(1) as u16 + u16::from(snapshot.config_error.is_some()) + 2;
@@ -106,6 +119,158 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str, now: DateTi
         None => Span::styled(HELP, Style::default().fg(Color::DarkGray)),
     };
     Paragraph::new(footer).render(layout[4], buf);
+
+    if let Some(popup) = app.popup() {
+        render_popup(screen, buf, app, popup, &mut viewport);
+    }
+    viewport
+}
+
+/// The popup's area: centered, at most `POPUP_MAX_WIDTH` × `POPUP_MAX_HEIGHT`,
+/// with a margin around it on smaller terminals.
+fn popup_area(screen: Rect) -> Rect {
+    let width = POPUP_MAX_WIDTH.min(screen.width.saturating_sub(4));
+    let height = POPUP_MAX_HEIGHT.min(screen.height.saturating_sub(2));
+    Rect::new(
+        screen.x + (screen.width - width) / 2,
+        screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    )
+}
+
+/// Draws `popup` over the screen, scrolled as far as the app asks within its
+/// text, and records its page size and scroll limit in `viewport`.
+fn render_popup(screen: Rect, buf: &mut Buffer, app: &App, popup: Popup, viewport: &mut Viewport) {
+    let (title, lines, hint) = match popup {
+        Popup::Card => {
+            let Some(card) = app.selected_card() else {
+                return;
+            };
+            (
+                " Details ",
+                card_details(app, card),
+                " j/k scroll · enter open · esc close ",
+            )
+        }
+        Popup::Sources => (" Sources ", source_details(app), " j/k scroll · esc close "),
+    };
+
+    let area = popup_area(screen);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .padding(Padding::horizontal(1))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(
+            Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))).right_aligned(),
+        );
+    let inner = block.inner(area);
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+    let total = u16::try_from(paragraph.line_count(inner.width)).unwrap_or(u16::MAX);
+    let max_scroll = total.saturating_sub(inner.height);
+    let scroll = app.popup_scroll().min(max_scroll);
+
+    Clear.render(area, buf);
+    paragraph.block(block).scroll((scroll, 0)).render(area, buf);
+    if max_scroll > 0 {
+        let mut state = ScrollbarState::new(usize::from(max_scroll)).position(usize::from(scroll));
+        Scrollbar::new(ScrollbarOrientation::VerticalRight).render(
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            buf,
+            &mut state,
+        );
+    }
+
+    viewport.popup_page = inner.height;
+    viewport.popup_max_scroll = max_scroll;
+}
+
+/// The selected card in full: title, where it comes from, dates, link and
+/// the whole body.
+fn card_details<'a>(app: &App, card: &'a PendingCard) -> Vec<Line<'a>> {
+    let field = |name: &str, value: String| {
+        Line::from(vec![
+            Span::styled(format!("{name:<9}"), Style::default().fg(Color::DarkGray)),
+            Span::raw(value),
+        ])
+    };
+    let mut lines = vec![
+        Line::from(Span::styled(
+            card.title.as_str(),
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::default(),
+    ];
+    if let Some(column) = app.columns().get(app.selected_column()) {
+        lines.push(field("Source", column.source.to_owned()));
+        if let Some(board) = app.current_board() {
+            lines.push(field("Board", board.name.clone()));
+        }
+        lines.push(field("Column", column.column.name.clone()));
+    }
+    if let Some(due) = card.due_at {
+        lines.push(field("Due", local(due)));
+    }
+    lines.push(field("Updated", local(card.updated_at)));
+    if let Some(url) = &card.url {
+        lines.push(field("Link", url.clone()));
+    }
+    if !card.body.is_empty() {
+        lines.push(Line::default());
+        lines.extend(card.body.lines().map(Line::raw));
+    }
+    lines
+}
+
+/// Every source with its status, last refresh and full message, after the
+/// config error if there is one.
+fn source_details(app: &App) -> Vec<Line<'_>> {
+    let snapshot = app.snapshot();
+    let mut lines = Vec::new();
+    if let Some(error) = &snapshot.config_error {
+        lines.push(Line::from(Span::styled(
+            format!("config not reloaded (previous one still running): {error}"),
+            Style::default().fg(Color::Red),
+        )));
+        lines.push(Line::default());
+    }
+    if snapshot.sources.is_empty() {
+        lines.push(Line::raw(
+            "No sources configured: add [[sources]] to the config file.",
+        ));
+    }
+    for source in &snapshot.sources {
+        let (label, color) = status_label(source.status);
+        let mut header = vec![
+            Span::styled(
+                source.name.as_str(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(label, Style::default().fg(color)),
+        ];
+        if let Some(at) = source.last_refresh_at {
+            header.push(Span::styled(
+                format!("  last refresh {}", local(at)),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        lines.push(Line::from(header));
+        if let Some(message) = &source.message {
+            lines.extend(message.lines().map(|line| Line::raw(format!("  {line}"))));
+        }
+        lines.push(Line::default());
+    }
+    lines
 }
 
 /// The clock's glyph size for a terminal of `area` whose other panels (all
@@ -155,13 +320,17 @@ fn render_tabs(area: Rect, buf: &mut Buffer, app: &App) {
     Paragraph::new(Line::from(spans)).render(area, buf);
 }
 
-fn source_line(source: &SourceHealth) -> Line<'_> {
-    let (label, color) = match source.status {
+fn status_label(status: SourceStatus) -> (&'static str, Color) {
+    match status {
         SourceStatus::Ready => ("ready", Color::Green),
         SourceStatus::Refreshing => ("refreshing", Color::Blue),
         SourceStatus::Degraded => ("degraded", Color::Yellow),
         SourceStatus::Failed => ("failed", Color::Red),
-    };
+    }
+}
+
+fn source_line(source: &SourceHealth) -> Line<'_> {
+    let (label, color) = status_label(source.status);
     let mut spans = vec![
         Span::raw(format!("{} ", source.name)),
         Span::styled(label, Style::default().fg(color)),
@@ -318,19 +487,25 @@ mod tests {
     }
 
     fn screen(app: &App, width: u16, height: u16) -> String {
+        render_screen(app, width, height).0
+    }
+
+    /// The screen as text, and the geometry `render` reports back.
+    fn render_screen(app: &App, width: u16, height: u16) -> (String, Viewport) {
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
-        render(
+        let viewport = render(
             area,
             &mut buf,
             app,
             "config: ~/.config/tasks-pending/config.toml",
             now(),
         );
-        (0..height)
+        let text = (0..height)
             .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>())
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        (text, viewport)
     }
 
     fn card(column: &str, id: &str, title: &str) -> SourceItem {
@@ -558,5 +733,107 @@ mod tests {
 
         let too_narrow = screen(&work(), 61, 40);
         assert_eq!(clock_rows(&too_narrow), 0, "{too_narrow}");
+    }
+
+    /// One Work card with a long title, a body of `body_lines` lines, a due
+    /// date and a link.
+    fn detailed(body_lines: usize) -> App {
+        let body = (0..body_lines)
+            .map(|i| format!("body line {i:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut item = card("Mine", "API-7", "");
+        item.card.title =
+            "Migrate the billing service to the new queue and retire the old worker".to_owned();
+        item.card.body = body;
+        item.card.url = Some("https://plane.example/api/7".to_owned());
+        item.card.due_at = Some(Utc.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap());
+        app(vec![fresh("plane", "Work", &["Mine"], vec![item])])
+    }
+
+    /// Space opens a popup with the whole card: title, source, board and
+    /// column, due date, link and the full body, over the board.
+    #[test]
+    fn card_details_show_the_whole_card() {
+        let mut app = detailed(3);
+        app.handle_key(KeyEvent::from(KeyCode::Char(' ')));
+        let screen = screen(&app, 120, 40);
+
+        let due = local(Utc.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap());
+        for expected in [
+            "Migrate the billing service to the new queue and retire the old worker",
+            "plane",
+            "Work",
+            "Mine",
+            &due,
+            "https://plane.example/api/7",
+            "body line 00",
+            "body line 01",
+            "body line 02",
+            "esc close",
+        ] {
+            assert!(
+                screen.contains(expected),
+                "missing {expected:?} in\n{screen}"
+            );
+        }
+    }
+
+    /// The popup is centered and at most 110 × 30, however big the terminal.
+    #[test]
+    fn card_details_are_centered_and_capped() {
+        let mut app = detailed(3);
+        app.handle_key(KeyEvent::from(KeyCode::Char(' ')));
+        let area = Rect::new(0, 0, 200, 60);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, "", now());
+
+        // (200 - 110) / 2 = 45 and (60 - 30) / 2 = 15.
+        assert_eq!(buf[(45, 15)].symbol(), "┌");
+        assert_eq!(buf[(154, 15)].symbol(), "┐");
+        assert_eq!(buf[(45, 44)].symbol(), "└");
+        assert_eq!(buf[(154, 44)].symbol(), "┘");
+    }
+
+    /// A long body scrolls: the screen reports how far, and End shows the
+    /// last line.
+    #[test]
+    fn long_card_details_scroll() {
+        let mut app = detailed(50);
+        app.handle_key(KeyEvent::from(KeyCode::Char(' ')));
+
+        let (top, viewport) = render_screen(&app, 100, 30);
+        assert!(top.contains("body line 00"), "{top}");
+        assert!(!top.contains("body line 49"), "{top}");
+        assert!(viewport.popup_max_scroll > 0, "{viewport:?}");
+        assert!(viewport.popup_page > 0, "{viewport:?}");
+
+        app.set_viewport(viewport);
+        app.handle_key(KeyEvent::from(KeyCode::End));
+        let bottom = screen(&app, 100, 30);
+        assert!(bottom.contains("body line 49"), "{bottom}");
+        assert!(!bottom.contains("body line 00"), "{bottom}");
+    }
+
+    /// The Sources panel clips long failure messages; s shows them whole.
+    #[test]
+    fn source_details_show_the_full_failure_message() {
+        let message = format!("feed returned 404 {} END", "x".repeat(150));
+        let mut app = app(vec![SourceReport {
+            name: "calendar".to_owned(),
+            board: "Personal".to_owned(),
+            columns: vec!["Today".to_owned()],
+            icon: None,
+            outcome: SourceOutcome::Failed(SourceError::new(message)),
+        }]);
+        let panel = screen(&app, 100, 30);
+        assert!(!panel.contains("END"), "{panel}");
+
+        app.handle_key(KeyEvent::from(KeyCode::Char('s')));
+        let screen = screen(&app, 100, 30);
+
+        assert!(screen.contains("END"), "{screen}");
+        assert!(screen.contains("calendar"), "{screen}");
+        assert!(screen.contains("failed"), "{screen}");
     }
 }

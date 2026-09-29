@@ -20,7 +20,7 @@ use pending_runtime::live::{Live, process_env};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::app::{Action, App};
+use crate::app::{Action, App, Viewport};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -120,17 +120,19 @@ fn run(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> {
 
     loop {
         app.update(dashboard.snapshot());
+        let mut viewport = Viewport::default();
         terminal
             .draw(|frame| {
-                ui::render(
+                viewport = ui::render(
                     frame.area(),
                     frame.buffer_mut(),
                     &app,
                     header,
                     chrono::Local::now(),
-                )
+                );
             })
             .context("drawing TUI")?;
+        app.set_viewport(viewport);
 
         if !event::poll(TICK)? {
             continue;

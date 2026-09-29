@@ -29,6 +29,25 @@ pub struct ColumnRef<'a> {
     pub column: &'a Column,
 }
 
+/// A popup over the board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Popup {
+    /// The selected card, in full.
+    Card,
+    /// Every source's status and full message.
+    Sources,
+}
+
+/// Screen geometry the last render reported, which the keys need: how far
+/// the popup scrolls and how much of it fits.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Viewport {
+    /// Popup lines that fit on screen at once.
+    pub popup_page: u16,
+    /// The furthest the popup scrolls, in lines.
+    pub popup_max_scroll: u16,
+}
+
 /// Where the selection is, by name, so it survives refreshes.
 struct Anchor {
     board: String,
@@ -47,6 +66,10 @@ pub struct App {
     /// Last action feedback, shown until the next key press.
     notice: Option<Notice>,
     last_refresh: Option<Instant>,
+    popup: Option<Popup>,
+    /// First popup line shown.
+    popup_scroll: u16,
+    viewport: Viewport,
 }
 
 impl App {
@@ -58,7 +81,23 @@ impl App {
             card: 0,
             notice: None,
             last_refresh: None,
+            popup: None,
+            popup_scroll: 0,
+            viewport: Viewport::default(),
         }
+    }
+
+    pub fn popup(&self) -> Option<Popup> {
+        self.popup
+    }
+
+    pub fn popup_scroll(&self) -> u16 {
+        self.popup_scroll
+    }
+
+    /// Records the geometry of the frame just drawn.
+    pub fn set_viewport(&mut self, viewport: Viewport) {
+        self.viewport = viewport;
     }
 
     pub fn snapshot(&self) -> &DashboardSnapshot {
@@ -114,6 +153,7 @@ impl App {
         self.snapshot = snapshot;
         let Some(anchor) = anchor else {
             self.clamp();
+            self.close_card_popup_without_card();
             return;
         };
 
@@ -142,6 +182,13 @@ impl App {
             }
         }
         self.clamp();
+        self.close_card_popup_without_card();
+    }
+
+    fn close_card_popup_without_card(&mut self) {
+        if self.popup == Some(Popup::Card) && self.selected_card().is_none() {
+            self.popup = None;
+        }
     }
 
     fn anchor(&self) -> Option<Anchor> {
@@ -197,6 +244,9 @@ impl App {
 
     pub fn handle_key_at(&mut self, key: KeyEvent, now: Instant) -> Action {
         self.notice = None;
+        if let Some(popup) = self.popup {
+            return self.handle_popup_key(popup, key);
+        }
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Quit,
             KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
@@ -232,12 +282,64 @@ impl App {
                 self.move_card(-1);
                 Action::None
             }
-            KeyCode::Enter => self
-                .selected_card()
-                .and_then(|card| card.url.clone())
-                .map_or(Action::None, Action::Open),
+            KeyCode::Enter => self.open_selected(),
+            KeyCode::Char(' ' | 'd') => {
+                if self.selected_card().is_some() {
+                    self.open_popup(Popup::Card);
+                }
+                Action::None
+            }
+            KeyCode::Char('s') => {
+                self.open_popup(Popup::Sources);
+                Action::None
+            }
             _ => Action::None,
         }
+    }
+
+    /// Keys while a popup is open: they scroll or close it, and never quit
+    /// except for Ctrl-C.
+    fn handle_popup_key(&mut self, popup: Popup, key: KeyEvent) -> Action {
+        let page = i32::from(self.viewport.popup_page.max(1));
+        match key.code {
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Action::Quit;
+            }
+            KeyCode::Char('q') | KeyCode::Esc => self.popup = None,
+            KeyCode::Char(' ' | 'd') if popup == Popup::Card => self.popup = None,
+            KeyCode::Char('s') if popup == Popup::Sources => self.popup = None,
+            KeyCode::Enter if popup == Popup::Card => return self.open_selected(),
+            KeyCode::Char('j') | KeyCode::Down => self.scroll_popup(1),
+            KeyCode::Char('k') | KeyCode::Up => self.scroll_popup(-1),
+            KeyCode::PageDown => self.scroll_popup(page),
+            KeyCode::PageUp => self.scroll_popup(-page),
+            KeyCode::Home | KeyCode::Char('g') => self.popup_scroll = 0,
+            KeyCode::End | KeyCode::Char('G') => {
+                self.popup_scroll = self.viewport.popup_max_scroll;
+            }
+            _ => {}
+        }
+        Action::None
+    }
+
+    fn open_popup(&mut self, popup: Popup) {
+        self.popup = Some(popup);
+        self.popup_scroll = 0;
+        // Unknown until the popup is drawn.
+        self.viewport.popup_max_scroll = 0;
+    }
+
+    /// Scrolls the open popup by `delta` lines, within its text.
+    pub fn scroll_popup(&mut self, delta: i32) {
+        let scroll = (i32::from(self.popup_scroll) + delta)
+            .clamp(0, i32::from(self.viewport.popup_max_scroll));
+        self.popup_scroll = scroll as u16;
+    }
+
+    fn open_selected(&self) -> Action {
+        self.selected_card()
+            .and_then(|card| card.url.clone())
+            .map_or(Action::None, Action::Open)
     }
 
     fn switch_board(&mut self, board: usize) {
@@ -489,6 +591,105 @@ mod tests {
             Action::Quit
         );
         assert_eq!(app.handle_key(key(KeyCode::Char('c'))), Action::None);
+    }
+
+    /// Space (or d) opens the selected card's details; while they are open,
+    /// q and Esc close them instead of quitting, and Enter still opens the
+    /// link. Without a selected card nothing opens.
+    #[test]
+    fn space_opens_card_details_and_esc_or_q_close_them() {
+        let mut app = App::new(sample());
+
+        assert_eq!(app.handle_key(key(KeyCode::Char(' '))), Action::None);
+        assert_eq!(app.popup(), Some(Popup::Card));
+        assert_eq!(app.handle_key(key(KeyCode::Char('q'))), Action::None);
+        assert_eq!(app.popup(), None);
+
+        app.handle_key(key(KeyCode::Char('d')));
+        assert_eq!(app.popup(), Some(Popup::Card));
+        assert_eq!(app.handle_key(key(KeyCode::Esc)), Action::None);
+        assert_eq!(app.popup(), None);
+
+        app.handle_key(key(KeyCode::Char('l')));
+        app.handle_key(key(KeyCode::Char('l')));
+        app.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Enter)),
+            Action::Open("https://github.com/o/r/pull/1".to_owned())
+        );
+        assert_eq!(app.popup(), Some(Popup::Card), "stays open after Enter");
+        app.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(app.popup(), None, "Space toggles");
+
+        // A refresh leaves the board without cards.
+        app.update(snapshot(vec![report("plane", "Work", &["Mine"], vec![])]));
+        app.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(app.popup(), None, "no card, no details");
+    }
+
+    /// While details are open, j/k, arrows, PageUp/PageDown and Home/End
+    /// scroll them, within what the screen last reported as scrollable; the
+    /// selection stays put.
+    #[test]
+    fn details_scroll_within_the_rendered_bounds() {
+        let mut app = App::new(sample());
+        app.handle_key(key(KeyCode::Char(' ')));
+        app.set_viewport(Viewport {
+            popup_page: 5,
+            popup_max_scroll: 12,
+        });
+
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(app.popup_scroll(), 1);
+        app.handle_key(key(KeyCode::PageDown));
+        assert_eq!(app.popup_scroll(), 6);
+        app.handle_key(key(KeyCode::PageDown));
+        assert_eq!(app.popup_scroll(), 11);
+        app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(app.popup_scroll(), 12, "stops at the end");
+        app.handle_key(key(KeyCode::PageUp));
+        assert_eq!(app.popup_scroll(), 7);
+        app.handle_key(key(KeyCode::Up));
+        assert_eq!(app.popup_scroll(), 6);
+        app.handle_key(key(KeyCode::Home));
+        assert_eq!(app.popup_scroll(), 0);
+        app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(app.popup_scroll(), 0);
+        app.handle_key(key(KeyCode::End));
+        assert_eq!(app.popup_scroll(), 12);
+        assert_eq!(selected(&app), Some("p1"), "selection unchanged");
+
+        app.handle_key(key(KeyCode::Esc));
+        app.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(app.popup_scroll(), 0, "reopening starts at the top");
+    }
+
+    /// s opens the sources' details (full status messages); s, q or Esc
+    /// close them.
+    #[test]
+    fn s_opens_source_details() {
+        let mut app = App::new(sample());
+
+        app.handle_key(key(KeyCode::Char('s')));
+        assert_eq!(app.popup(), Some(Popup::Sources));
+        app.handle_key(key(KeyCode::Char('s')));
+        assert_eq!(app.popup(), None);
+
+        app.handle_key(key(KeyCode::Char('s')));
+        app.handle_key(key(KeyCode::Char('q')));
+        assert_eq!(app.popup(), None);
+    }
+
+    /// Card details close when a refresh removes every card of the column.
+    #[test]
+    fn card_details_close_when_the_card_is_gone() {
+        let mut app = App::new(sample());
+        app.handle_key(key(KeyCode::Char(' ')));
+
+        app.update(snapshot(Vec::new()));
+
+        assert_eq!(app.popup(), None);
     }
 
     /// r requests a refresh and says so in the footer; pressing it again right

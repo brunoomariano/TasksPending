@@ -1,6 +1,6 @@
 # Install and run TasksPending
 
-TasksPending is one executable. `tasks-pending serve` runs the local daemon: it refreshes your sources in the background and serves the dashboard at <http://127.0.0.1:8080>, on this machine only. `tasks-pending tui` is the same dashboard in the terminal; it reads the same config and does not need the daemon. Release builds include the web page inside the executable.
+TasksPending is one executable. `tasks-pending serve` runs the local daemon: it refreshes your sources in the background and serves the dashboard at <http://127.0.0.1:61000>, on this machine only. `tasks-pending tui` is the same dashboard in the terminal; it reads the same config and does not need the daemon. Release builds include the web page inside the executable.
 
 ## Platform focus
 
@@ -8,7 +8,7 @@ Arch Linux is the supported operational target right now. The release workflow a
 
 ## 1. Install and run
 
-The supported path is one command. It installs the latest compatible release, validates the downloaded SHA-256, and starts the dashboard at <http://127.0.0.1:8080>.
+The supported path is one command. It installs the latest compatible release, validates the downloaded SHA-256, and starts the dashboard at <http://127.0.0.1:61000>.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh
@@ -133,7 +133,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.brunoomariano
 tail -f ~/Library/Logs/tasks-pending.log
 ```
 
-Then open <http://127.0.0.1:8080>. The server only accepts loopback listen addresses, and the API only answers requests addressed to `localhost`, `127.0.0.1` or `[::1]`.
+Then open <http://127.0.0.1:61000>. The server only accepts loopback listen addresses, and the API only answers requests addressed to `localhost`, `127.0.0.1` or `[::1]`.
 
 To use another port on Linux, override the command with a drop-in, which survives reinstalls (the installer rewrites the unit file itself):
 
@@ -154,7 +154,7 @@ With the daemon running:
 
 ```sh
 make webapp            # from the repo, or:
-omarchy-webapp-install "TasksPending" http://127.0.0.1:8080 ~/.local/share/tasks-pending/tasks-pending.png
+omarchy-webapp-install "TasksPending" http://127.0.0.1:61000 ~/.local/share/tasks-pending/tasks-pending.png
 ```
 
 It adds **TasksPending** to the app launcher, opening the dashboard in its own window. Remove it with `omarchy-webapp-remove TasksPending`. Elsewhere, open the URL in a Chromium-based browser and install it as an app from the address bar.
@@ -169,7 +169,7 @@ The last successful data of each source is cached in `$XDG_STATE_HOME/tasks-pend
 
 ## Troubleshooting
 
-- **The page says the API is unavailable**: `systemctl --user status tasks-pending`; if port 8080 is taken, use another port (see "Run the daemon").
+- **The page says the API is unavailable**: `systemctl --user status tasks-pending`; if port 61000 is taken, use another port (see "Run the daemon").
 - **A source shows "not configured"**: its variables are missing from the env file; fix it and restart the service.
 - **GitHub works in the terminal but not in the daemon**: `gh` is not on the service's PATH; set `GITHUB_TOKEN` in the env file.
 - **Google Calendar fails in the daemon**: the service must run inside your desktop session (it does when started with `systemctl --user` after login).

@@ -20,8 +20,8 @@ Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Board` (a tab
 - `make ci-check`: read-only verification gate.
 - `make ci`: format, then run the verification gate.
 - `make test`: Rust tests.
-- `make up`: run the API on `127.0.0.1:8080`.
-- `make serve`: build the frontend and run the API serving it on `127.0.0.1:8080`.
+- `make up`: run the API on `127.0.0.1:61000`.
+- `make serve`: build the frontend and run the API serving it on `127.0.0.1:61000`.
 - `make tui`: run the TUI.
 - `make contract`: regenerate `frontend/src/contract.gen.ts` from the `pending-core` model.
 - `make release-installer-test` / `make release-assets-test`: validate the public release installer and its stable download aliases without network access.

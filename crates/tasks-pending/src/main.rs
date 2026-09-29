@@ -6,6 +6,8 @@ use clap::{Args, Parser, Subcommand};
 use pending_api::{ServeOptions, serve};
 use pending_tui::{TuiOptions, run};
 
+const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:61000";
+
 #[derive(Debug, Parser)]
 #[command(name = "tasks-pending", about = "TasksPending dashboard", version)]
 struct Cli {
@@ -25,7 +27,7 @@ enum Command {
 struct ServeCommand {
     /// Loopback address and port for the local dashboard. Non-loopback
     /// addresses are rejected because the API has no authentication.
-    #[arg(long, default_value = "127.0.0.1:8080")]
+    #[arg(long, default_value = DEFAULT_LISTEN_ADDR)]
     listen: SocketAddr,
     /// Config file. Defaults to $TASKS_PENDING_CONFIG, then
     /// $XDG_CONFIG_HOME/tasks-pending/config.toml, then
@@ -107,7 +109,7 @@ fn run_tui(command: TuiCommand) -> anyhow::Result<()> {
 mod tests {
     use clap::{CommandFactory, Parser};
 
-    use super::{Cli, LegacyServeCli, LegacyTuiCli};
+    use super::{Cli, Command, LegacyServeCli, LegacyTuiCli};
 
     #[test]
     fn cli_exposes_serve_and_tui_commands() {
@@ -125,6 +127,16 @@ mod tests {
                 .try_get_matches_from(["tasks-pending", "tui", "--config", "dashboard.toml"])
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn serve_uses_the_uncommon_local_default_port() {
+        let cli = Cli::try_parse_from(["tasks-pending", "serve"]).unwrap();
+        let Command::Serve(command) = cli.command else {
+            panic!("expected the serve command");
+        };
+
+        assert_eq!(command.listen, "127.0.0.1:61000".parse().unwrap());
     }
 
     #[test]

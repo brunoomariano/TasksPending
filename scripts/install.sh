@@ -116,20 +116,24 @@ Linux)
 Darwin)
   install -d "$AGENT_DIR" "$HOME/Library/Logs"
   plist="$AGENT_DIR/$PLIST_NAME"
+  launchd_restart="launchctl bootout gui/\$(id -u)/${PLIST_NAME%.plist} 2>/dev/null || true; launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$PLIST_NAME"
   if [[ -f $plist ]] && migrate_legacy_launchd_service "$plist"; then
     chmod 0600 "$plist"
     echo "Updated $PLIST_NAME for tasks-pending and kept its tokens and listen address."
+    next="$launchd_restart"
   else
     # The installed plist holds user-managed tokens and settings.
     if [[ -f $plist ]]; then
       plist="$plist.new"
       echo "Kept your $PLIST_NAME; the new one is $plist."
+      next="copy ProgramArguments from $PLIST_NAME.new into $PLIST_NAME, then $launchd_restart"
+    else
+      next="$launchd_restart"
     fi
     sed -e "s|@BINDIR@|$PREFIX/bin|g" -e "s|@LOGDIR@|$HOME/Library/Logs|g" \
       "$ROOT/packaging/launchd/$PLIST_NAME" >"$plist"
     chmod 0600 "$plist"
   fi
-  next="launchctl bootout gui/\$(id -u)/${PLIST_NAME%.plist} 2>/dev/null || true; launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$PLIST_NAME"
   ;;
 *)
   next="$PREFIX/bin/tasks-pending serve"

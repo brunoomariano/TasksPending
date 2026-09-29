@@ -21,8 +21,8 @@ First release: one local dashboard for the work waiting on you across GitHub, Pl
 - **GitHub:**
   - stacks of search queries (review requests, your PRs, issues);
   - notifications (`unread` or `all`);
-  - Dependabot, secret scanning and code scanning alerts for chosen repos;
-  - pull request review state and draft status;
+  - Dependabot, secret scanning and code scanning alerts for chosen repos (`alerts = ["owner/repo"]`);
+  - pull request review state (approved, changes requested, review required) and draft status;
   - comment counts on cards.
 - **Plane:**
   - work items filtered by assignee, state, state group, project and priority, with the issue reference as the card title;
@@ -41,9 +41,9 @@ First release: one local dashboard for the work waiting on you across GitHub, Pl
   - a big block clock, with Sources, Refresh and Settings beside it;
   - Settings: board filter, show/hide switches for any board, group or stack, and auto-refresh (default every minute).
 - **TUI:**
-  - the same block clock (hidden on short terminals);
-  - a details popup for the selected card;
-  - page and mouse-wheel scrolling.
+  - the same block clock (hidden on small terminals);
+  - a details popup for the selected card (`Space`) and one for the sources (`s`);
+  - PageUp/PageDown, Home/End, mouse wheel and click to move around.
 - **Stack sorting:** stacks can list oldest items first (`sort = "oldest"`) to surface stale work.
 
 ### Reliability

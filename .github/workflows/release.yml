@@ -83,18 +83,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux binaries need the glibc of the runner or newer (2.39).
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            cargo: cargo
+            os: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            cargo: cross
+            os: ubuntu-24.04
           - target: aarch64-apple-darwin
             os: macos-latest
-            cargo: cargo
           - target: x86_64-apple-darwin
             os: macos-latest
-            cargo: cargo
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -104,17 +101,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - name: Install cross
-        if: matrix.cargo == 'cross'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cross
+      # Cross-compiled with the distribution's compiler (the TLS library
+      # builds C code).
+      - name: Install the aarch64 compiler
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          {
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
+            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"
+            echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++"
+          } >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v5
         with:
           name: frontend-dist
           path: frontend/dist
       - name: Build
-        run: ${{ matrix.cargo }} build --release --locked --target ${{ matrix.target }} -p pending-api -p pending-tui
+        run: cargo build --release --locked --target ${{ matrix.target }} -p pending-api -p pending-tui
       - name: Package
         env:
           TARGET: ${{ matrix.target }}

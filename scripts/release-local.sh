@@ -5,19 +5,17 @@
 #
 #   TARGET      Rust target triple (default: this machine's)
 #   SKIP_BUILD  1 to package already built binaries and frontend
-#   CARGO       build command (default cargo; CI uses `cross` for some targets)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${TARGET:-$(rustc -vV | sed -n 's/^host: //p')}"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
-CARGO="${CARGO:-cargo}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 NAME="tasks-pending-$VERSION-$TARGET"
 DIST="$ROOT/dist/$NAME"
 
 if [[ ${SKIP_BUILD:-0} != 1 ]]; then
-  $CARGO build --release --locked --target "$TARGET" -p pending-api -p pending-tui
+  cargo build --release --locked --target "$TARGET" -p pending-api -p pending-tui
   npm --prefix "$ROOT/frontend" run build
 fi
 

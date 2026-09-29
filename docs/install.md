@@ -22,7 +22,7 @@ tar xzf tasks-pending-*.tar.gz
 cd tasks-pending-*/ && ./scripts/install.sh
 ```
 
-It installs under `~/.local` (set `PREFIX` to change it). The bundle also runs in place: `./bin/pending-api` serves the `frontend/` next to it.
+It installs under `~/.local` (set `PREFIX` to change it). The Linux binaries need glibc 2.39 or newer (Ubuntu 24.04, Debian 13, Fedora 40, Arch); on older systems, build from source. The bundle also runs in place: `./bin/pending-api` serves the `frontend/` next to it.
 
 macOS may block binaries downloaded by a browser; if it does, run `xattr -d com.apple.quarantine bin/*` in the unpacked folder before installing.
 

@@ -82,7 +82,7 @@ Visual style: simple and quiet. Colours come from the design tokens at the top o
   3. Land it on `master`, then push the tag `v<version>`.
 - **What the workflow does:**
   - It checks that the tag matches the version, then runs `make ci-check`.
-  - It builds bundles for `x86_64`/`aarch64` Linux and macOS (`scripts/release-local.sh`, with `cross` for aarch64 Linux) and an Arch package from the x86_64 bundle (`packaging/arch/PKGBUILD`).
+  - It builds bundles for `x86_64`/`aarch64` Linux and macOS (`scripts/release-local.sh`; aarch64 Linux is cross-compiled with Ubuntu's `gcc-aarch64-linux-gnu`) and an Arch package from the x86_64 bundle (`packaging/arch/PKGBUILD`).
   - It installs the Arch package in a container to check it, then publishes everything with `SHA256SUMS`.
   - Run it by hand (`workflow_dispatch`, dry run by default) to build without publishing.
 - **Local checks:** `make release-local` builds the bundle for this machine; `make install` / `make uninstall` install from source under `PREFIX` (default `~/.local`).

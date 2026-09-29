@@ -906,6 +906,7 @@ mod tests {
             board: "Personal".to_owned(),
             columns: vec!["Today".to_owned()],
             icon: None,
+            sorts: Default::default(),
             outcome: SourceOutcome::Failed(SourceError::new(message)),
         }]);
         let panel = screen(&app, 100, 30);

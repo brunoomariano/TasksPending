@@ -35,6 +35,13 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
             exit 1
           fi
+          # A manual run that publishes needs the tag already pushed.
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "${{ inputs.dry_run }}" == false ]]; then
+            git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || {
+              echo "::error::push the tag v$version before publishing"
+              exit 1
+            }
+          fi
           grep -q "^## $version\$" CHANGELOG.md || {
             echo "::error::CHANGELOG.md has no '## $version' section"
             exit 1
@@ -136,6 +143,10 @@ jobs:
         with:
           name: bundle-x86_64-unknown-linux-gnu
           path: pkg
+      - uses: actions/download-artifact@v5
+        with:
+          name: bundle-aarch64-unknown-linux-gnu
+          path: sums
       - name: Build the package
         env:
           VERSION: ${{ needs.quality.outputs.version }}
@@ -143,8 +154,10 @@ jobs:
           cp packaging/arch/PKGBUILD pkg/
           cd pkg
           sum="$(cut -d' ' -f1 "tasks-pending-$VERSION-x86_64-unknown-linux-gnu.tar.gz.sha256")"
+          arm="$(cut -d' ' -f1 "../sums/tasks-pending-$VERSION-aarch64-unknown-linux-gnu.tar.gz.sha256")"
           sed -i -e "s/^pkgver=.*/pkgver=$VERSION/" \
-                 -e "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('$sum')/" PKGBUILD
+                 -e "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('$sum')/" \
+                 -e "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('$arm')/" PKGBUILD
           useradd -m builder
           chown -R builder: .
           # The bundle is already next to PKGBUILD, so makepkg does not download it.

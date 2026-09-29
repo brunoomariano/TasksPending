@@ -116,7 +116,18 @@ launchctl bootout gui/$(id -u)/com.github.brunoomariano.tasks-pending   # stop
 tail -f ~/Library/Logs/tasks-pending.log
 ```
 
-Then open <http://127.0.0.1:8080>. The API only answers requests addressed to `localhost`, `127.0.0.1` or `[::1]`. To use another port, change `--listen` in the service file (and the web app URL below).
+Then open <http://127.0.0.1:8080>. The API only answers requests addressed to `localhost`, `127.0.0.1` or `[::1]`.
+
+To use another port on Linux, override the command with a drop-in, which survives reinstalls (the installer rewrites the unit file itself):
+
+```sh
+systemctl --user edit tasks-pending
+# [Service]
+# ExecStart=
+# ExecStart=/usr/bin/pending-api --listen 127.0.0.1:8090   (or ~/.local/bin/pending-api)
+```
+
+On macOS, edit `--listen` in the plist. Reinstalling keeps your plist (it holds your tokens) and writes the new one next to it as `.plist.new`. Use the new port in the web app URL too.
 
 ## 5. Omarchy web app
 
@@ -139,7 +150,7 @@ The last successful data of each source is cached in `$XDG_STATE_HOME/tasks-pend
 
 ## Troubleshooting
 
-- **The page says the API is unavailable**: `systemctl --user status tasks-pending`; if port 8080 is taken, change `--listen`.
+- **The page says the API is unavailable**: `systemctl --user status tasks-pending`; if port 8080 is taken, use another port (see "Run the daemon").
 - **A source shows "not configured"**: its variables are missing from the env file; fix it and restart the service.
 - **GitHub works in the terminal but not in the daemon**: `gh` is not on the service's PATH; set `GITHUB_TOKEN` in the env file.
 - **Google Calendar fails in the daemon**: the service must run inside your desktop session (it does when started with `systemctl --user` after login).

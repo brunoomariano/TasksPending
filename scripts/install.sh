@@ -60,7 +60,7 @@ fi
 
 # Build unless told to reuse existing artifacts.
 if [[ ${SKIP_BUILD:-0} != 1 ]]; then
-  cargo build --release --locked -p pending-api -p pending-tui
+  cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" -p pending-api -p pending-tui
   npm --prefix "$ROOT/frontend" ci --no-audit --no-fund
   npm --prefix "$ROOT/frontend" run build
 fi
@@ -92,9 +92,15 @@ Linux)
   ;;
 Darwin)
   install -d "$AGENT_DIR" "$HOME/Library/Logs"
+  # The installed plist holds your tokens: never overwrite it.
+  plist="$AGENT_DIR/$PLIST_NAME"
+  if [[ -f $plist ]]; then
+    plist="$plist.new"
+    echo "Kept your $PLIST_NAME (it holds your tokens); the new one is $plist."
+  fi
   sed -e "s|@BINDIR@|$PREFIX/bin|g" -e "s|@LOGDIR@|$HOME/Library/Logs|g" \
-    "$ROOT/packaging/launchd/$PLIST_NAME" >"$AGENT_DIR/$PLIST_NAME"
-  chmod 0600 "$AGENT_DIR/$PLIST_NAME"
+    "$ROOT/packaging/launchd/$PLIST_NAME" >"$plist"
+  chmod 0600 "$plist"
   next="launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/$PLIST_NAME"
   ;;
 *)

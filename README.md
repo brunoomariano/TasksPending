@@ -11,6 +11,10 @@ The first source target is inspired by:
 
 Download a release (Arch package, or a bundle for Linux or macOS) or build from source with `make install`, then run the daemon and open http://127.0.0.1:8080. [docs/install.md](docs/install.md) covers the daemon (systemd or launchd), tokens, the config file and the Omarchy web app.
 
+## Platform Focus
+
+Arch Linux is the supported operational target right now. Release automation also builds generic Linux and macOS bundles to catch portability regressions, but Arch receives the package and installation validation.
+
 ## Quick Start (development)
 
 ```sh

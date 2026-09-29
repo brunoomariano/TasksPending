@@ -2,6 +2,10 @@
 
 TasksPending is one executable. `tasks-pending serve` runs the local daemon: it refreshes your sources in the background and serves the dashboard at <http://127.0.0.1:8080>, on this machine only. `tasks-pending tui` is the same dashboard in the terminal; it reads the same config and does not need the daemon. Release builds include the web page inside the executable.
 
+## Platform focus
+
+Arch Linux is the supported operational target right now. The release workflow also builds generic Linux and macOS bundles to catch portability regressions, but those artifacts do not have the same installation and operational coverage as the Arch package.
+
 ## 1. Install
 
 Pick one. Each installs `tasks-pending` and a user service.

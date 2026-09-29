@@ -6,12 +6,20 @@ on:
   pull_request:
     branches: ["master", "main"]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -34,9 +42,35 @@ jobs:
       - name: Check
         run: make ci-check
 
+  # Exercise the exact Linux archive users download, including embedded assets.
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bundle-x86_64-unknown-linux-gnu
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "26.10.0"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm --prefix frontend ci
+      - name: Build the release bundle
+        env:
+          TARGET: x86_64-unknown-linux-gnu
+        run: ./scripts/release-local.sh
+      - name: Smoke test the release bundle
+        env:
+          TARGET: x86_64-unknown-linux-gnu
+        run: ./scripts/test-release-bundle.sh
+
   # Releases ship macOS binaries: keep the Rust suite green there too.
   macos:
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.95.0
@@ -47,8 +81,11 @@ jobs:
   # The release scripts must stay valid shell.
   scripts:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
+      - name: Check workflow syntax
+        run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.8@sha256:96d4a8c87dbbfb3bdd324f8fdc285fc3df5261e2decc619a4dd7e8ee52bbfd46
       - name: Shellcheck
         # Warnings and errors fail; style notes differ between versions.
         run: shellcheck --severity=warning scripts/*.sh

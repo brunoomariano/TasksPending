@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap doctor ci ci-check test fmt lint build up serve down logs tui contract frontend-dev frontend-build frontend-test install-test release-local install uninstall webapp
+.PHONY: help bootstrap doctor ci ci-check test fmt lint build up serve down logs tui contract frontend-dev frontend-build frontend-test install-test release-local release-smoke install uninstall webapp
 
 help: ## Show this list of targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -70,6 +70,9 @@ install-test: ## Check installer behavior without changing the local system
 
 release-local: ## Build a release bundle for this machine under dist/
 	./scripts/release-local.sh
+
+release-smoke: release-local ## Build a native release bundle and smoke test it
+	./scripts/test-release-bundle.sh
 
 # Build a release and install it under PREFIX (default ~/.local), plus the
 # user service (systemd on Linux, launchd on macOS). Config and tokens are

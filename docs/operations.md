@@ -7,6 +7,11 @@
 - TUI: `make tui`
 - Frontend: `make frontend-dev`
 - Verification: `make ci-check`
+- Native release bundle: `make release-smoke`
+
+## Repository maintenance
+
+Once the repository is public, run `./scripts/enable-public-branch-protection.sh` from an account with repository administration permission. It requires the `ci`, `bundle`, `macos`, and `scripts` checks on `master`, requires a linear history and resolved review conversations, and blocks force pushes and branch deletion.
 
 ## Boards and Stacks
 

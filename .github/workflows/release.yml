@@ -1,9 +1,10 @@
 name: Release
 
-# Push a tag `v<version>` matching Cargo.toml's version to build and publish
-# a release: bundles for Linux and macOS, an Arch package, checksums.
+# Every master push verifies release artifacts. A tag `v<version>` matching
+# Cargo.toml publishes those bundles, the Arch package, and checksums.
 on:
   push:
+    branches: ["master"]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
@@ -12,8 +13,12 @@ on:
         type: boolean
         default: true
 
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,6 +26,7 @@ env:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -59,26 +65,14 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm --prefix frontend ci
       - run: make ci-check
-
-  frontend:
-    needs: quality
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "26.10.0"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm --prefix frontend ci
-      - run: npm --prefix frontend run build
       - uses: actions/upload-artifact@v5
         with:
           name: frontend-dist
           path: frontend/dist
 
   build:
-    needs: frontend
+    needs: quality
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -155,6 +149,7 @@ jobs:
   arch:
     needs: [quality, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container: archlinux:base-devel
     steps:
       - uses: actions/checkout@v5
@@ -200,8 +195,11 @@ jobs:
 
   release:
     needs: [quality, build, arch]
-    if: github.ref_type == 'tag' || inputs.dry_run == false
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v5

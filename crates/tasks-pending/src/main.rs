@@ -23,6 +23,8 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct ServeCommand {
+    /// Loopback address and port for the local dashboard. Non-loopback
+    /// addresses are rejected because the API has no authentication.
     #[arg(long, default_value = "127.0.0.1:8080")]
     listen: SocketAddr,
     /// Config file. Defaults to $TASKS_PENDING_CONFIG, then

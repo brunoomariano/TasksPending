@@ -1,0 +1,51 @@
+name: Bug report
+description: Report behavior that differs from the documented or expected result.
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include tokens, private feed URLs, source data or other confidential information.
+  - type: input
+    id: version
+    attributes:
+      label: TasksPending version
+      description: Include the output of `tasks-pending --version`.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Include your operating system and architecture.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - HTTP API or web dashboard
+        - Terminal UI
+        - Installation or update
+        - GitHub source
+        - Plane source
+        - Google Calendar source
+        - iCal source
+        - Todoist source
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include sanitized steps to reproduce and relevant logs.
+    validations:
+      required: true

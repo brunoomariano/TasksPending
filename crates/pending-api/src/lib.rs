@@ -64,6 +64,7 @@ struct Health {
 }
 
 pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
+    validate_listen_addr(options.listen)?;
     init_tracing();
 
     let env = process_env();
@@ -104,6 +105,15 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
         .await
         .context("serving API")?;
     Ok(())
+}
+
+fn validate_listen_addr(listen: SocketAddr) -> anyhow::Result<()> {
+    if listen.ip().is_loopback() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "refusing to listen on {listen}: TasksPending has no authentication; use a loopback address"
+    )
 }
 
 /// How often the config file is checked for changes.
@@ -348,6 +358,15 @@ mod tests {
 
     fn idle_aggregator() -> Aggregator {
         Aggregator::start(Vec::new(), Duration::from_secs(30))
+    }
+
+    #[test]
+    fn server_rejects_non_loopback_addresses() {
+        assert!(validate_listen_addr("127.0.0.1:8080".parse().unwrap()).is_ok());
+        assert!(validate_listen_addr("[::1]:8080".parse().unwrap()).is_ok());
+
+        let error = validate_listen_addr("0.0.0.0:8080".parse().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("has no authentication"));
     }
 
     /// With the built frontend available, the API serves the page and assets

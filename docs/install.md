@@ -106,7 +106,7 @@ $EDITOR ~/.config/tasks-pending/env
 | `plane` | `PLANE_BASE_URL`, `PLANE_WORKSPACE` (or `PLANE_WORKSPACE_SLUG`), `PLANE_TOKEN` (or `PLANE_API_KEY`) |
 | `todoist` | `TODOIST_API_TOKEN` |
 | `google` | none: uses your GNOME Online Accounts login over the session bus (Linux desktop only) |
-| `ical` | none: the feed URL is in the config (keep it private) |
+| `ical` | `TASKS_PENDING_ICAL_URL` (the feed URL is a secret) |
 
 On macOS, put them in the `EnvironmentVariables` block of `~/Library/LaunchAgents/com.github.brunoomariano.tasks-pending.plist` (the installer makes it readable only by you).
 
@@ -133,7 +133,7 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.github.brunoomariano
 tail -f ~/Library/Logs/tasks-pending.log
 ```
 
-Then open <http://127.0.0.1:8080>. The API only answers requests addressed to `localhost`, `127.0.0.1` or `[::1]`.
+Then open <http://127.0.0.1:8080>. The server only accepts loopback listen addresses, and the API only answers requests addressed to `localhost`, `127.0.0.1` or `[::1]`.
 
 To use another port on Linux, override the command with a drop-in, which survives reinstalls (the installer rewrites the unit file itself):
 

@@ -1,6 +1,6 @@
 # TasksPending
 
-TasksPending is a local-first pending-work dashboard. It will collect auto-refreshing sources and show the same model through a Rust TUI, a Rust HTTP API, and a lightweight TypeScript frontend.
+TasksPending is a local-first pending-work dashboard. It collects auto-refreshing sources and shows the same model through a Rust TUI, a Rust HTTP API, and a lightweight TypeScript frontend.
 
 ## Install
 

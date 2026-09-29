@@ -64,6 +64,8 @@ It shows events that are not over yet, starting within 30 days, at most 25, soon
 
 `pending-tui` runs the same aggregator as the API in-process, so it works without the API running. It reads the same config (`--config` or the default locations) and redraws every 250 ms.
 
+A big clock sits at the top, as on the web page: the date, then the local time as `HH:MM:SS` in block digits, centered. The digits grow with the terminal (up to a third of its height) and the clock hides when the terminal is narrower than 62 columns or when showing it would leave the board fewer than 10 rows.
+
 Keys: `1`–`9` or `Tab`/`Shift+Tab` switch boards; `h`/`l` or left/right move between columns (the board scrolls sideways when they don't fit); `j`/`k` or up/down move within a column (it scrolls to keep the selection visible); `Enter` opens the selected card's link (`xdg-open`, or `open` on macOS), `r` refreshes every source now (at most once every 10 s, to respect provider rate limits), `q`/`Esc`/`Ctrl-C` quit. The Sources panel shows one line per source with its status and failure reason; feedback and failures show in the footer.
 
 ## Web Dashboard

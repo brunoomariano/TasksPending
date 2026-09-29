@@ -4,7 +4,7 @@
 use chrono::{DateTime, Local, Utc};
 use pending_core::{CardSeverity, SourceHealth, SourceStatus};
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -12,10 +12,18 @@ use ratatui::widgets::{
 };
 
 use crate::app::{App, ColumnRef};
+use crate::clock;
 
 const HELP: &str = "1-9/tab boards · h/l columns · j/k cards · enter open · r refresh · q quit";
 /// Narrowest useful column; with less room the board scrolls sideways.
 const MIN_COLUMN_WIDTH: u16 = 26;
+/// Fewest rows the board keeps (about three cards per column); the clock
+/// hides rather than take them.
+const MIN_BOARD_ROWS: u16 = 10;
+/// Glyphs in `HH:MM:SS`.
+const CLOCK_TEXT_LEN: usize = 8;
+/// The same calm accent as the source titles and the selected tab.
+const CLOCK_COLOR: Color = Color::Cyan;
 
 fn local(at: DateTime<Utc>) -> String {
     at.with_timezone(&Local)
@@ -24,18 +32,28 @@ fn local(at: DateTime<Utc>) -> String {
 }
 
 /// `header` describes where the config came from.
-pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
+/// `now` is the local time the clock shows.
+pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str, now: DateTime<Local>) {
     let snapshot = app.snapshot();
+    let sources_height =
+        snapshot.sources.len().max(1) as u16 + u16::from(snapshot.config_error.is_some()) + 2;
+    // Header, tabs, Sources panel and footer.
+    let chrome = 1 + 1 + sources_height + 1;
+    let clock_size = clock_size(area, chrome);
+    let clock_height = clock_size.map_or(0, |size| 1 + clock::GLYPH_ROWS * size);
+
+    let [clock_area, area] =
+        Layout::vertical([Constraint::Length(clock_height), Constraint::Min(0)]).areas(area);
+    if let Some(size) = clock_size {
+        render_clock(clock_area, buf, size, now);
+    }
+
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Length(1),
-            Constraint::Length(
-                snapshot.sources.len().max(1) as u16
-                    + u16::from(snapshot.config_error.is_some())
-                    + 2,
-            ),
+            Constraint::Length(sources_height),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
@@ -88,6 +106,35 @@ pub fn render(area: Rect, buf: &mut Buffer, app: &App, header: &str) {
         None => Span::styled(HELP, Style::default().fg(Color::DarkGray)),
     };
     Paragraph::new(footer).render(layout[4], buf);
+}
+
+/// The clock's glyph size for a terminal of `area` whose other panels (all
+/// but the board) take `chrome` rows, or `None` to hide it. The clock (the
+/// date line plus the digits) takes at most a third of the height and never
+/// leaves the board fewer than `MIN_BOARD_ROWS`.
+fn clock_size(area: Rect, chrome: u16) -> Option<u16> {
+    let budget = (area.height / 3).min(
+        area.height
+            .saturating_sub(chrome)
+            .saturating_sub(MIN_BOARD_ROWS),
+    );
+    clock::fit(CLOCK_TEXT_LEN, area.width, budget.saturating_sub(1))
+}
+
+/// The date on one line, then `HH:MM:SS` in block digits, centered.
+fn render_clock(area: Rect, buf: &mut Buffer, size: u16, now: DateTime<Local>) {
+    let [date, digits] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    Paragraph::new(now.format("%A, %B %-d, %Y").to_string())
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .render(date, buf);
+    clock::draw(
+        &now.format("%H:%M:%S").to_string(),
+        size,
+        digits,
+        Style::default().fg(CLOCK_COLOR),
+        buf,
+    );
 }
 
 fn render_tabs(area: Rect, buf: &mut Buffer, app: &App) {
@@ -253,7 +300,7 @@ fn render_column(area: Rect, buf: &mut Buffer, app: &App, index: usize, column: 
 
 #[cfg(test)]
 mod tests {
-    use chrono::{TimeZone, Utc};
+    use chrono::{Local, TimeZone, Utc};
     use crossterm::event::{KeyCode, KeyEvent};
     use pending_core::{
         CardSeverity, PendingCard, SourceBatch, SourceError, SourceItem, SourceOutcome,
@@ -265,6 +312,11 @@ mod tests {
     use super::*;
     use crate::app::App;
 
+    /// Tuesday, 2026-09-29 14:05:09, local time.
+    fn now() -> DateTime<Local> {
+        Local.with_ymd_and_hms(2026, 9, 29, 14, 5, 9).unwrap()
+    }
+
     fn screen(app: &App, width: u16, height: u16) -> String {
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
@@ -273,6 +325,7 @@ mod tests {
             &mut buf,
             app,
             "config: ~/.config/tasks-pending/config.toml",
+            now(),
         );
         (0..height)
             .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>())
@@ -431,12 +484,12 @@ mod tests {
 
         app.set_info("refreshing all sources…");
         let mut buf = Buffer::empty(area);
-        render(area, &mut buf, &app, "");
+        render(area, &mut buf, &app, "", now());
         assert_ne!(buf[(0, footer_y)].fg, ratatui::style::Color::Red);
 
         app.set_notice("could not open link: xdg-open not found");
         let mut buf = Buffer::empty(area);
-        render(area, &mut buf, &app, "");
+        render(area, &mut buf, &app, "", now());
         assert_eq!(buf[(0, footer_y)].fg, ratatui::style::Color::Red);
     }
 
@@ -454,5 +507,56 @@ mod tests {
 
         assert!(screen.contains("config not reloaded"), "{screen}");
         assert!(screen.contains("unknown kind"), "{screen}");
+    }
+
+    fn clock_rows(screen: &str) -> usize {
+        screen.lines().filter(|line| line.contains('█')).count()
+    }
+
+    /// A big clock tops the screen: the date on one line, then the local time
+    /// in block digits, centered.
+    #[test]
+    fn big_clock_shows_the_date_and_time_centered() {
+        let screen = screen(&work(), 100, 30);
+        let lines: Vec<&str> = screen.lines().collect();
+
+        assert_eq!(lines[0].trim(), "Tuesday, September 29, 2026", "{screen}");
+        assert_eq!(
+            lines[1].trim(),
+            "████    ██  ██          ██████  ██████          ██████  ██████",
+            "{screen}"
+        );
+        // 62 cells wide in 100: 19 blank cells on the left.
+        assert!(
+            lines[1].starts_with(&format!("{}█", " ".repeat(19))),
+            "{screen}"
+        );
+        assert_eq!(clock_rows(&screen), 5, "{screen}");
+        assert!(lines[6].contains("TasksPending"), "{screen}");
+    }
+
+    /// The digits grow with the terminal, taking at most a third of its height.
+    #[test]
+    fn clock_grows_with_the_terminal() {
+        assert_eq!(clock_rows(&screen(&work(), 100, 30)), 5);
+        assert_eq!(clock_rows(&screen(&work(), 120, 40)), 10);
+        assert_eq!(clock_rows(&screen(&work(), 180, 60)), 15);
+    }
+
+    /// The clock disappears when the board would get fewer than ten rows, or
+    /// when the digits don't fit the width.
+    #[test]
+    fn clock_hides_when_the_board_would_be_squeezed() {
+        // Chrome with three sources: header, tabs, a 5-row Sources panel and
+        // the footer take 8 rows; the clock takes 6 at the smallest size.
+        let tall_enough = screen(&work(), 100, 24);
+        assert_eq!(clock_rows(&tall_enough), 5, "{tall_enough}");
+
+        let too_short = screen(&work(), 100, 23);
+        assert_eq!(clock_rows(&too_short), 0, "{too_short}");
+        assert!(too_short.lines().next().unwrap().contains("TasksPending"));
+
+        let too_narrow = screen(&work(), 61, 40);
+        assert_eq!(clock_rows(&too_narrow), 0, "{too_narrow}");
     }
 }

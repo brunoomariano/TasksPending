@@ -1,4 +1,5 @@
 mod app;
+mod clock;
 mod ui;
 
 use std::io;
@@ -38,7 +39,9 @@ struct Cli {
 /// How often the config file is checked for changes.
 const CONFIG_WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
-/// How often the screen reads the dashboard and checks for keys.
+/// How often the screen reads the dashboard and checks for keys. Well under a
+/// second, so the clock's seconds never skip; waiting for input in between
+/// keeps the loop idle.
 const TICK: Duration = Duration::from_millis(250);
 
 struct TerminalSession;
@@ -118,7 +121,15 @@ fn run(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> {
     loop {
         app.update(dashboard.snapshot());
         terminal
-            .draw(|frame| ui::render(frame.area(), frame.buffer_mut(), &app, header))
+            .draw(|frame| {
+                ui::render(
+                    frame.area(),
+                    frame.buffer_mut(),
+                    &app,
+                    header,
+                    chrono::Local::now(),
+                )
+            })
             .context("drawing TUI")?;
 
         if !event::poll(TICK)? {

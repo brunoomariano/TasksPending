@@ -5,6 +5,7 @@
 - Release one self-contained `tasks-pending` executable per platform instead of separate API and TUI binaries plus a frontend folder.
 - Run the local dashboard with `tasks-pending serve` and the terminal dashboard with `tasks-pending tui`.
 - Embed the production frontend in release builds while retaining `--static-dir` as a local development override.
+- Keep `pending-api` and `pending-tui` aliases in the Arch package so existing service overrides continue to work during an upgrade.
 
 ## 0.1.0
 

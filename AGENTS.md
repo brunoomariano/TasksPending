@@ -25,6 +25,7 @@ Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Board` (a tab
 - `make tui`: run the TUI.
 - `make contract`: regenerate `frontend/src/contract.gen.ts` from the `pending-core` model.
 - `make frontend-dev`: run the frontend dev server.
+- `make install-test`: test installer behavior without changing the local system.
 - `make release-local`: build a local release bundle under `dist/`.
 - `make install` / `make uninstall`: build a release and install it under `PREFIX` (default `~/.local`) with the user service, or remove it.
 - `make webapp`: create the Omarchy web app for the dashboard.

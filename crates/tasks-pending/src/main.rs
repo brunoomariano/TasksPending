@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
@@ -44,27 +44,68 @@ struct TuiCommand {
     config: Option<PathBuf>,
 }
 
+/// Compatibility parser for package upgrades that still invoke `pending-api`.
+#[derive(Debug, Parser)]
+#[command(name = "pending-api", about = "TasksPending dashboard API", version)]
+struct LegacyServeCli {
+    #[command(flatten)]
+    command: ServeCommand,
+}
+
+/// Compatibility parser for package upgrades that still invoke `pending-tui`.
+#[derive(Debug, Parser)]
+#[command(
+    name = "pending-tui",
+    about = "TasksPending terminal dashboard",
+    version
+)]
+struct LegacyTuiCli {
+    #[command(flatten)]
+    command: TuiCommand,
+}
+
 fn main() -> anyhow::Result<()> {
-    match Cli::parse().command {
-        Command::Serve(command) => {
-            let runtime = tokio::runtime::Runtime::new().context("starting async runtime")?;
-            runtime.block_on(serve(ServeOptions {
-                listen: command.listen,
-                config: command.config,
-                static_dir: command.static_dir,
-            }))
-        }
-        Command::Tui(command) => run(TuiOptions {
-            config: command.config,
-        }),
+    if is_invoked_as("pending-api") {
+        return run_serve(LegacyServeCli::parse().command);
     }
+    if is_invoked_as("pending-tui") {
+        return run_tui(LegacyTuiCli::parse().command);
+    }
+
+    match Cli::parse().command {
+        Command::Serve(command) => run_serve(command),
+        Command::Tui(command) => run_tui(command),
+    }
+}
+
+fn is_invoked_as(name: &str) -> bool {
+    std::env::args_os()
+        .next()
+        .as_deref()
+        .and_then(|path| Path::new(path).file_name())
+        .is_some_and(|file| file == name)
+}
+
+fn run_serve(command: ServeCommand) -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Runtime::new().context("starting async runtime")?;
+    runtime.block_on(serve(ServeOptions {
+        listen: command.listen,
+        config: command.config,
+        static_dir: command.static_dir,
+    }))
+}
+
+fn run_tui(command: TuiCommand) -> anyhow::Result<()> {
+    run(TuiOptions {
+        config: command.config,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
+    use clap::{CommandFactory, Parser};
 
-    use super::Cli;
+    use super::{Cli, LegacyServeCli, LegacyTuiCli};
 
     #[test]
     fn cli_exposes_serve_and_tui_commands() {
@@ -81,6 +122,18 @@ mod tests {
             Cli::command()
                 .try_get_matches_from(["tasks-pending", "tui", "--config", "dashboard.toml"])
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn legacy_package_aliases_accept_their_previous_arguments() {
+        LegacyServeCli::command().debug_assert();
+        LegacyTuiCli::command().debug_assert();
+        assert!(
+            LegacyServeCli::try_parse_from(["pending-api", "--listen", "127.0.0.1:9000"]).is_ok()
+        );
+        assert!(
+            LegacyTuiCli::try_parse_from(["pending-tui", "--config", "dashboard.toml"]).is_ok()
         );
     }
 }

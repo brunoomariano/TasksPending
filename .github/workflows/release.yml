@@ -131,6 +131,20 @@ jobs:
           "$dir/bin/tasks-pending" --help >/dev/null
           "$dir/bin/tasks-pending" serve --help >/dev/null
           "$dir/bin/tasks-pending" tui --help >/dev/null
+          "$dir/bin/tasks-pending" serve --listen 127.0.0.1:18080 >/dev/null 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.1
+          done
+          page="$(curl -fsS http://127.0.0.1:18080/)"
+          [[ "$page" == *'id="app"'* ]]
+          asset="$(printf '%s' "$page" | sed -n 's/.*src="\([^"]*\.js\)".*/\1/p')"
+          test -n "$asset"
+          curl -fsSI "http://127.0.0.1:18080$asset" | grep -Fi 'content-type: application/javascript; charset=utf-8'
       - uses: actions/upload-artifact@v5
         with:
           name: bundle-${{ matrix.target }}
@@ -173,6 +187,8 @@ jobs:
           tasks-pending --help >/dev/null
           tasks-pending serve --help >/dev/null
           tasks-pending tui --help >/dev/null
+          pending-api --help >/dev/null
+          pending-tui --help >/dev/null
           test ! -e /usr/share/tasks-pending/frontend
           test -f /usr/lib/systemd/user/tasks-pending.service
       - uses: actions/upload-artifact@v5

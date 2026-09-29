@@ -52,7 +52,7 @@ uninstall() {
 migrate_legacy_launchd_service() {
   local plist=$1
   local plistbuddy=/usr/libexec/PlistBuddy
-  local program flag listen
+  local program flag listen staged
 
   [[ -x $plistbuddy ]] || return 1
   program="$($plistbuddy -c "Print :ProgramArguments:0" "$plist" 2>/dev/null)" || return 1
@@ -63,14 +63,59 @@ migrate_legacy_launchd_service() {
     return 1
   fi
 
-  "$plistbuddy" \
+  staged="$plist.migrate.$$"
+  cp "$plist" "$staged" || return 1
+  if ! "$plistbuddy" \
     -c "Delete :ProgramArguments" \
     -c "Add :ProgramArguments array" \
     -c "Add :ProgramArguments:0 string $PREFIX/bin/tasks-pending" \
     -c "Add :ProgramArguments:1 string serve" \
     -c "Add :ProgramArguments:2 string --listen" \
     -c "Add :ProgramArguments:3 string $listen" \
-    "$plist"
+    "$staged"; then
+    rm -f "$staged"
+    return 1
+  fi
+  if ! mv "$staged" "$plist"; then
+    rm -f "$staged"
+    return 1
+  fi
+}
+
+# `systemctl --user edit tasks-pending` stores custom ports in a drop-in. The
+# documented 0.1 form needs the new subcommand as well as the new executable.
+migrate_legacy_systemd_overrides() {
+  local directory="$UNIT_DIR/tasks-pending.service.d"
+  local override staged line listen changed
+
+  for override in "$directory"/*.conf; do
+    [[ -f $override ]] || continue
+    grep -Fqx 'ExecStart=' "$override" || continue
+
+    staged="$override.migrate.$$"
+    changed=0
+    while IFS= read -r line || [[ -n $line ]]; do
+      if [[ $line == "ExecStart=$PREFIX/bin/pending-api --listen "* ]]; then
+        listen="${line#"ExecStart=$PREFIX/bin/pending-api --listen "}"
+        if [[ -n $listen && $listen != *[[:space:]]* ]]; then
+          printf 'ExecStart=%s/bin/tasks-pending serve --listen %s\n' "$PREFIX" "$listen"
+          changed=1
+          continue
+        fi
+      fi
+      printf '%s\n' "$line"
+    done <"$override" >"$staged"
+
+    if ((changed)); then
+      mv "$staged" "$override"
+      echo "Updated $(basename "$override") for tasks-pending and kept its listen address."
+    else
+      rm -f "$staged"
+    fi
+    if grep -Fq "ExecStart=$PREFIX/bin/pending-api" "$override"; then
+      legacy_command_remaining=1
+    fi
+  done
 }
 
 if [[ ${1:-} == --uninstall ]]; then
@@ -95,12 +140,11 @@ RELEASE_BIN="${RELEASE_BIN:-$TARGET_DIR/release}"
 
 install -d "$BIN" "$SHARE"
 install -m 0755 "$RELEASE_BIN/tasks-pending" "$BIN/tasks-pending"
-rm -f "$BIN/pending-api" "$BIN/pending-tui"
-rm -rf "$SHARE/frontend"
 install -m 0644 "$ROOT/config.example.toml" "$SHARE/config.example.toml"
 install -m 0644 "$ROOT/packaging/env.example" "$SHARE/env.example"
 install -m 0644 "$ROOT/packaging/icons/tasks-pending.png" "$SHARE/tasks-pending.png"
 install -m 0644 "$ROOT/packaging/icons/tasks-pending.svg" "$SHARE/tasks-pending.svg"
+legacy_command_remaining=0
 
 case $OS in
 Linux)
@@ -108,10 +152,21 @@ Linux)
   sed "s|@BINDIR@|$PREFIX/bin|g" "$ROOT/packaging/systemd/tasks-pending.service" \
     >"$UNIT_DIR/tasks-pending.service"
   chmod 0644 "$UNIT_DIR/tasks-pending.service"
+  migrate_legacy_systemd_overrides
+  service_was_active=0
   if [[ -z $DESTDIR ]] && command -v systemctl >/dev/null; then
+    if systemctl --user is-active --quiet tasks-pending.service >/dev/null 2>&1; then
+      service_was_active=1
+    fi
     systemctl --user daemon-reload || true
   fi
-  next="systemctl --user enable --now tasks-pending"
+  if ((legacy_command_remaining)); then
+    next="update the remaining pending-api command in $UNIT_DIR/tasks-pending.service.d, then systemctl --user daemon-reload && systemctl --user restart tasks-pending"
+  elif ((service_was_active)); then
+    next="systemctl --user restart tasks-pending"
+  else
+    next="systemctl --user enable --now tasks-pending"
+  fi
   ;;
 Darwin)
   install -d "$AGENT_DIR" "$HOME/Library/Logs"
@@ -124,6 +179,9 @@ Darwin)
   else
     # The installed plist holds user-managed tokens and settings.
     if [[ -f $plist ]]; then
+      if grep -Fq "$PREFIX/bin/pending-api" "$plist"; then
+        legacy_command_remaining=1
+      fi
       plist="$plist.new"
       echo "Kept your $PLIST_NAME; the new one is $plist."
       next="copy ProgramArguments from $PLIST_NAME.new into $PLIST_NAME, then $launchd_restart"
@@ -139,6 +197,13 @@ Darwin)
   next="$PREFIX/bin/tasks-pending serve"
   ;;
 esac
+
+if ((legacy_command_remaining)); then
+  echo "Kept the legacy pending-api and frontend until its custom command is updated."
+else
+  rm -f "$BIN/pending-api" "$BIN/pending-tui"
+  rm -rf "$SHARE/frontend"
+fi
 
 [[ -n $DESTDIR ]] && exit 0
 

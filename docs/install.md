@@ -124,8 +124,10 @@ To use another port on Linux, override the command with a drop-in, which survive
 systemctl --user edit tasks-pending
 # [Service]
 # ExecStart=
-# ExecStart=/usr/bin/tasks-pending serve --listen 127.0.0.1:8090   (or ~/.local/bin/tasks-pending)
+# ExecStart=/usr/bin/tasks-pending serve --listen 127.0.0.1:8090
 ```
+
+For a local install, replace `/usr/bin` with the absolute path to your own `tasks-pending` executable. Reinstalling migrates the documented 0.1 drop-in to `tasks-pending serve` and keeps its listen address. Custom commands that still name `pending-api` need the same change before restarting the service; the installer keeps the legacy binary and frontend in place until then. Arch package upgrades retain `pending-api` and `pending-tui` aliases for existing service overrides.
 
 On macOS, edit `--listen` in the plist. Reinstalling migrates the standard 0.1 plist to `tasks-pending serve` while keeping its tokens and listen address. A customized plist stays untouched and the installer writes `.plist.new`; copy its `ProgramArguments` change into your version before restarting it. Use the new port in the web app URL too.
 

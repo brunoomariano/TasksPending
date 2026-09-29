@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap doctor ci ci-check test fmt lint build up serve down logs tui contract frontend-dev frontend-build frontend-test release-local install uninstall webapp
+.PHONY: help bootstrap doctor ci ci-check test fmt lint build up serve down logs tui contract frontend-dev frontend-build frontend-test install-test release-local install uninstall webapp
 
 help: ## Show this list of targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -21,7 +21,7 @@ doctor: ## Check that the required tools are installed
 
 ci: fmt ci-check ## Format, then run the verification gate
 
-ci-check: lint test frontend-test frontend-build ## Verification gate: lint, tests and frontend build (read-only)
+ci-check: lint test frontend-test frontend-build install-test ## Verification gate: lint, tests and frontend build (read-only)
 
 fmt: ## Format Rust and frontend code
 	cargo fmt --all
@@ -64,6 +64,9 @@ frontend-build: ## Build the frontend
 
 frontend-test: ## Run the frontend tests
 	npm --prefix frontend test
+
+install-test: ## Check installer behavior without changing the local system
+	./scripts/test-install.sh
 
 release-local: ## Build a release bundle for this machine under dist/
 	./scripts/release-local.sh

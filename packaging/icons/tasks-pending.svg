@@ -1,9 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">TasksPending</title>
   <rect width="256" height="256" rx="56" fill="#16181d"/>
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="18">
-    <path d="m52 78 16 16 28-30" stroke="#7c8cff"/>
-    <path d="m52 150 16 16 28-30" stroke="#7c8cff"/>
-    <path d="M124 82h80M124 154h80" stroke="#e7e9ee"/>
-    <path d="M60 206h144" stroke="#6d7482"/>
-  </g>
+  <rect x="43" y="48" width="170" height="160" rx="24" fill="#1c1f25" stroke="#343a43" stroke-width="8"/>
+  <path d="M99 72v112M157 72v112" fill="none" stroke="#343a43" stroke-width="8" stroke-linecap="round"/>
+  <rect x="61" y="75" width="20" height="20" rx="6" fill="#7c8cff"/>
+  <rect x="118" y="75" width="20" height="20" rx="6" fill="#4ccb8f"/>
+  <rect x="176" y="75" width="20" height="20" rx="6" fill="#f2c14e"/>
+  <rect x="60" y="116" width="24" height="50" rx="8" fill="#7c8cff"/>
+  <rect x="60" y="174" width="24" height="11" rx="5.5" fill="#7c8cff" opacity=".55"/>
+  <rect x="117" y="116" width="24" height="31" rx="8" fill="#4ccb8f"/>
+  <rect x="117" y="155" width="24" height="30" rx="8" fill="#4ccb8f" opacity=".6"/>
+  <rect x="175" y="116" width="24" height="69" rx="8" fill="#f2c14e"/>
 </svg>

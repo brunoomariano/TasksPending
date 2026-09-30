@@ -84,6 +84,33 @@ pub enum SourceKind {
     Todoist,
 }
 
+const GITHUB_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github.svg";
+const GITHUB_DARK_ICON: &str =
+    "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github-light.svg";
+const GOOGLE_CALENDAR_ICON: &str =
+    "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/google-calendar.svg";
+const PLANE_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/plane.svg";
+const TODOIST_ICON: &str =
+    "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/todoist.svg";
+
+impl SourceKind {
+    /// The built-in provider logo, if this kind has one.
+    pub fn default_icon(self) -> Option<Icon> {
+        let (url, dark_url) = match self {
+            Self::Github => (GITHUB_ICON, Some(GITHUB_DARK_ICON)),
+            Self::Google => (GOOGLE_CALENDAR_ICON, None),
+            Self::Plane => (PLANE_ICON, None),
+            Self::Todoist => (TODOIST_ICON, None),
+            Self::Ical | Self::Sample => return None,
+        };
+
+        Some(Icon {
+            url: url.to_owned(),
+            dark_url: dark_url.map(str::to_owned),
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ConfigError {
     #[error("source name `{0}` is used more than once")]
@@ -178,12 +205,15 @@ impl SourceConfig {
             .collect()
     }
 
-    /// The configured icon, if any.
+    /// A configured icon, or the built-in provider logo when available.
     pub fn icon(&self) -> Option<Icon> {
-        Some(Icon {
-            url: self.icon.clone()?,
-            dark_url: self.icon_dark.clone(),
-        })
+        match &self.icon {
+            Some(url) => Some(Icon {
+                url: url.clone(),
+                dark_url: self.icon_dark.clone(),
+            }),
+            None => self.kind.default_icon(),
+        }
     }
 }
 
@@ -346,6 +376,58 @@ mod tests {
             let error = parse(text).validate().expect_err(text);
             assert!(error.to_string().contains("icon"), "{error}");
         }
+    }
+
+    #[test]
+    fn known_sources_use_provider_icons_by_default() {
+        let config = parse(
+            r#"
+            [[sources]]
+            name = "github"
+            kind = "github"
+
+            [[sources]]
+            name = "agenda"
+            kind = "google"
+
+            [[sources]]
+            name = "plane"
+            kind = "plane"
+
+            [[sources]]
+            name = "todoist"
+            kind = "todoist"
+            "#,
+        );
+
+        assert_eq!(
+            config.sources[0].icon(),
+            Some(Icon {
+                url: GITHUB_ICON.to_owned(),
+                dark_url: Some(GITHUB_DARK_ICON.to_owned()),
+            })
+        );
+        assert_eq!(
+            config.sources[1]
+                .icon()
+                .as_ref()
+                .map(|icon| icon.url.as_str()),
+            Some(GOOGLE_CALENDAR_ICON)
+        );
+        assert_eq!(
+            config.sources[2]
+                .icon()
+                .as_ref()
+                .map(|icon| icon.url.as_str()),
+            Some(PLANE_ICON)
+        );
+        assert_eq!(
+            config.sources[3]
+                .icon()
+                .as_ref()
+                .map(|icon| icon.url.as_str()),
+            Some(TODOIST_ICON)
+        );
     }
 
     /// A typo in the source kind must fail loading the config, not become a

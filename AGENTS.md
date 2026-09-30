@@ -22,6 +22,7 @@ Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Board` (a tab
 - `make test`: Rust tests.
 - `make up`: run the API on `127.0.0.1:61000`.
 - `make serve`: build the frontend and run the API serving it on `127.0.0.1:61000`.
+- `make sandbox`: build the frontend and run deterministic simulated cards on `127.0.0.1:61001`, without reading config, credentials, cache, or external sources.
 - `make tui`: run the TUI.
 - `make contract`: regenerate `frontend/src/contract.gen.ts` from the `pending-core` model.
 - `make release-installer-test` / `make release-assets-test`: validate the public release installer and its stable download aliases without network access.

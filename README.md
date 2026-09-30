@@ -4,6 +4,13 @@
 
 TasksPending is a local-first pending-work dashboard. It collects auto-refreshing sources and shows the same model through a Rust TUI, a Rust HTTP API, and a lightweight TypeScript frontend.
 
+![TasksPending dashboard with simulated cards](docs/assets/tasks-pending-sandbox.png)
+
+<p align="center">
+  <img src="docs/assets/tasks-pending-sources.png" alt="TasksPending source health dialog" width="49%">
+  <img src="docs/assets/tasks-pending-settings.png" alt="TasksPending settings dialog" width="49%">
+</p>
+
 ## Install
 
 Install the latest release and start the dashboard:
@@ -41,6 +48,14 @@ Run the API and the built web dashboard together, then open http://127.0.0.1:610
 ```sh
 make serve
 ```
+
+Run a credential-free dashboard with deterministic simulated cards at http://127.0.0.1:61001:
+
+```sh
+make sandbox
+```
+
+The sandbox ignores your config, environment, cache, and external sources. It is intended for trying the dashboard and capturing documentation screenshots.
 
 Or run the frontend dev server (proxies `/api` to `make up`):
 

@@ -2,6 +2,7 @@ pub mod config;
 pub mod contract;
 pub mod model;
 pub mod sample;
+pub mod sandbox;
 pub mod snapshot;
 pub mod source;
 
@@ -13,5 +14,6 @@ pub use model::{
     SourceStatus,
 };
 pub use sample::{SampleSource, sample_snapshot};
+pub use sandbox::sandbox_snapshot;
 pub use snapshot::{SourceOutcome, SourceReport, build_snapshot};
 pub use source::{BoxFuture, PendingSource, SourceBatch, SourceError, SourceItem};

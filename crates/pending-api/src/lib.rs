@@ -9,7 +9,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header::CONTENT_TYPE};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use pending_core::DashboardSnapshot;
+use pending_core::{DashboardSnapshot, sandbox_snapshot};
 use pending_runtime::Dashboard;
 use pending_runtime::config::{Origin, cache_path};
 use pending_runtime::live::{Live, process_env};
@@ -26,6 +26,12 @@ pub struct ServeOptions {
     /// $XDG_CONFIG_HOME/tasks-pending/config.toml, then
     /// ~/.config/tasks-pending/config.toml.
     pub config: Option<PathBuf>,
+    pub static_dir: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub struct SandboxOptions {
+    pub listen: SocketAddr,
     pub static_dir: Option<PathBuf>,
 }
 
@@ -107,6 +113,24 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Serves deterministic simulated cards without loading user configuration,
+/// credentials, cache, or provider integrations.
+pub async fn serve_sandbox(options: SandboxOptions) -> anyhow::Result<()> {
+    validate_listen_addr(options.listen)?;
+    init_tracing();
+
+    let frontend = resolve_frontend(options.static_dir)?;
+    let listener = tokio::net::TcpListener::bind(options.listen)
+        .await
+        .with_context(|| format!("binding {}", options.listen))?;
+    info!(addr = %options.listen, "TasksPending sandbox listening");
+
+    axum::serve(listener, app(SandboxDashboard, frontend))
+        .await
+        .context("serving sandbox API")?;
+    Ok(())
+}
+
 fn validate_listen_addr(listen: SocketAddr) -> anyhow::Result<()> {
     if listen.ip().is_loopback() {
         return Ok(());
@@ -131,6 +155,17 @@ const DASHBOARD_HEADER: (&str, &str) = ("x-requested-with", "tasks-pending");
 struct AppState {
     dashboard: Arc<dyn Dashboard>,
     last_refresh: Arc<Mutex<Option<Instant>>>,
+}
+
+#[derive(Clone, Copy)]
+struct SandboxDashboard;
+
+impl Dashboard for SandboxDashboard {
+    fn snapshot(&self) -> DashboardSnapshot {
+        sandbox_snapshot()
+    }
+
+    fn refresh_now(&self) {}
 }
 
 /// API routes, plus the configured frontend for any other path.
@@ -342,6 +377,35 @@ mod tests {
         assert_eq!(snapshot.sources[0].name, "sample");
         assert_eq!(snapshot.sources[0].status, SourceStatus::Ready);
         assert_eq!(snapshot.boards[0].name, "Inbox");
+    }
+
+    /// The sandbox uses the regular API route but never reads configuration or
+    /// contacts a provider before returning its simulated cards.
+    #[tokio::test]
+    async fn sandbox_snapshot_endpoint_serves_simulated_cards() {
+        let response = app(SandboxDashboard, None)
+            .oneshot(
+                Request::get("/api/v1/snapshot")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let snapshot: DashboardSnapshot = serde_json::from_slice(&body).unwrap();
+        assert!(
+            snapshot
+                .boards
+                .iter()
+                .flat_map(|board| &board.groups)
+                .flat_map(|group| &group.columns)
+                .flat_map(|column| &column.cards)
+                .any(|card| card.title == "Review the release checklist")
+        );
     }
 
     async fn get(app: Router, path: &str) -> (StatusCode, String) {

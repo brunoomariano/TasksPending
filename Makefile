@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap doctor ci ci-check test fmt lint build up serve down logs tui contract frontend-dev frontend-build frontend-test install-test release-installer-test release-assets-test release-local release-smoke install uninstall webapp
+.PHONY: help bootstrap doctor ci ci-check test fmt lint build up serve sandbox down logs tui contract frontend-dev frontend-build frontend-test install-test release-installer-test release-assets-test release-local release-smoke install uninstall webapp
 
 help: ## Show this list of targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -43,6 +43,9 @@ up: ## Run the API on 127.0.0.1:61000
 
 serve: frontend-build ## Build the frontend and run the API serving it on 127.0.0.1:61000
 	cargo run -p tasks-pending -- serve --listen 127.0.0.1:61000 --static-dir frontend/dist
+
+sandbox: frontend-build ## Run simulated dashboard cards on 127.0.0.1:61001
+	cargo run -p tasks-pending -- sandbox --listen 127.0.0.1:61001 --static-dir frontend/dist
 
 down: ## Placeholder: no background services are managed
 	@echo "No background services are managed yet."

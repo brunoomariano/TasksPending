@@ -4,7 +4,7 @@
 //! and keeps the latest [`SourceOutcome`] of each one in memory. Reading a
 //! snapshot never waits for a source.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
@@ -20,6 +20,7 @@ use tracing::{info, warn};
 
 pub mod cache;
 pub mod config;
+pub mod exclude;
 pub mod live;
 pub mod marks;
 
@@ -60,6 +61,7 @@ impl Dashboard for live::Live {
 }
 
 use crate::cache::Cache;
+use crate::exclude::Excludes;
 
 /// A source plus how the dashboard names, schedules and places it.
 pub struct SourceSpec {
@@ -75,6 +77,9 @@ pub struct SourceSpec {
     pub icon: Option<Icon>,
     /// Card order per stack (column) name, from the configuration.
     pub sorts: BTreeMap<String, StackSort>,
+    /// Cards each stack leaves out, from the configuration. Applied to every
+    /// batch before it is kept, so snapshots and the cache never see them.
+    pub excludes: Excludes,
 }
 
 impl std::fmt::Debug for SourceSpec {
@@ -98,6 +103,9 @@ pub struct Aggregator {
 /// State the refresh loops and the handles share.
 struct Shared {
     reports: RwLock<Vec<SourceReport>>,
+    /// Per source, the cards of its current batch that `exclude` patterns
+    /// left in no stack.
+    hidden: RwLock<Vec<HashSet<String>>>,
     wake: Notify,
     cache: Option<Cache>,
 }
@@ -169,25 +177,35 @@ impl Aggregator {
         cache: Option<Cache>,
     ) -> Self {
         let mut cached = cache.as_ref().map(Cache::load).unwrap_or_default();
-        let reports = specs
+        let (reports, hidden) = specs
             .iter()
-            .map(|spec| SourceReport {
-                name: spec.name.clone(),
-                board: spec.board.clone(),
-                columns: spec.source.columns(),
-                icon: spec.icon.clone(),
-                sorts: spec.sorts.clone(),
-                outcome: match cached.remove(&spec.name) {
-                    Some((refreshed_at, batch)) => SourceOutcome::Cached {
-                        batch,
-                        refreshed_at,
-                    },
+            .map(|spec| {
+                let mut hidden = HashSet::new();
+                let outcome = match cached.remove(&spec.name) {
+                    // The cache may predate the current `exclude` patterns.
+                    Some((refreshed_at, mut batch)) => {
+                        hidden = spec.excludes.apply(&mut batch);
+                        SourceOutcome::Cached {
+                            batch,
+                            refreshed_at,
+                        }
+                    }
                     None => SourceOutcome::Pending,
-                },
+                };
+                let report = SourceReport {
+                    name: spec.name.clone(),
+                    board: spec.board.clone(),
+                    columns: spec.source.columns(),
+                    icon: spec.icon.clone(),
+                    sorts: spec.sorts.clone(),
+                    outcome,
+                };
+                (report, hidden)
             })
-            .collect();
+            .unzip();
         let shared = Arc::new(Shared {
             reports: RwLock::new(reports),
+            hidden: RwLock::new(hidden),
             wake: Notify::new(),
             cache,
         });
@@ -213,6 +231,20 @@ impl Aggregator {
     pub fn snapshot(&self) -> DashboardSnapshot {
         build_snapshot(Utc::now(), self.shared.reports())
     }
+
+    /// Ids of the cards that `exclude` patterns left in no stack: still
+    /// pending at their source, just not on the dashboard. Marks use it to
+    /// tell a hidden card from a finished one.
+    pub fn hidden_ids(&self) -> HashSet<String> {
+        self.shared
+            .hidden
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .flatten()
+            .cloned()
+            .collect()
+    }
 }
 
 async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared: Arc<Shared>) {
@@ -221,7 +253,9 @@ async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared:
     let mut failures: u32 = 0;
     loop {
         let started = Instant::now();
-        let result = refresh_once(&spec.source, timeout).await;
+        let mut result = refresh_once(&spec.source, timeout).await;
+        // A failed refresh keeps the previous batch, and its hidden cards.
+        let hidden = result.as_mut().ok().map(|batch| spec.excludes.apply(batch));
         let elapsed_ms = started.elapsed().as_millis();
 
         match &result {
@@ -254,6 +288,14 @@ async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared:
                 wait
             }
         };
+        // Before the batch, so a reader never sees the new batch with the
+        // old hidden cards and takes a hidden card for a finished one.
+        if let Some(hidden) = hidden {
+            shared
+                .hidden
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)[index] = hidden;
+        }
         {
             let mut reports = shared
                 .reports

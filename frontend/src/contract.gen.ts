@@ -13,7 +13,7 @@ config_error: string | null,
 /**
  * Ids of the cards marked as in progress, in the order they were
  * marked. A marked card may be absent from the boards while its source
- * is failing.
+ * is failing or an `exclude` pattern hides it.
  */
 marked: Array<string>, 
 /**

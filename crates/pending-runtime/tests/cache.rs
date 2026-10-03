@@ -63,6 +63,7 @@ fn spec(result: Result<SourceBatch, SourceError>, delay_secs: u64) -> SourceSpec
         timeout: None,
         icon: None,
         sorts: Default::default(),
+        excludes: Default::default(),
     }
 }
 
@@ -162,6 +163,36 @@ async fn a_corrupt_cache_is_ignored_and_rewritten() {
     let entries = Cache::new(path).load();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries["github"].1.items[0].card.id, "fresh");
+}
+
+/// Cards cached before a pattern was added to the config are filtered on
+/// startup too: an excluded card does not show until the first refresh.
+#[tokio::test(start_paused = true)]
+async fn cached_cards_are_filtered_by_the_current_exclude_patterns() {
+    let path = cache_file("exclude");
+    let mut cached = batch("bump-serde");
+    cached.items.extend(batch("fix-login").items);
+    Cache::new(path.clone())
+        .save(&[("github".to_owned(), Utc::now(), cached)])
+        .unwrap();
+    let source: pending_core::SourceConfig = toml::from_str(
+        "name = \"github\"\nkind = \"plane\"\n[[stacks]]\nname = \"Review\"\nexclude = [\"^bump\"]",
+    )
+    .expect("valid toml");
+
+    let aggregator = Aggregator::start_with_cache(
+        vec![SourceSpec {
+            excludes: pending_runtime::exclude::Excludes::from_stacks(&source.stacks)
+                .expect("valid patterns"),
+            ..spec(Ok(batch("fresh")), 10)
+        }],
+        Duration::from_secs(30),
+        Some(Cache::new(path)),
+    );
+    advance(1).await;
+
+    assert_eq!(card_ids(&aggregator), vec!["fix-login"]);
+    assert_eq!(status(&aggregator), SourceStatus::Refreshing);
 }
 
 /// Several sources finishing at once write the cache concurrently without

@@ -91,7 +91,10 @@ impl Live {
         };
         let mut snapshot = aggregator.snapshot();
         snapshot.config_error = error;
-        self.inner.marks.apply(&mut snapshot);
+        // Read after the snapshot: see the refresh loop's write order.
+        self.inner
+            .marks
+            .apply_hiding(&mut snapshot, &aggregator.hidden_ids());
         snapshot
     }
 

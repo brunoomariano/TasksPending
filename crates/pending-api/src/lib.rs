@@ -411,6 +411,7 @@ mod tests {
                 timeout: None,
                 icon: None,
                 sorts: Default::default(),
+                excludes: Default::default(),
             }],
             Duration::from_secs(30),
         );
@@ -564,6 +565,7 @@ mod tests {
                 timeout: None,
                 icon: None,
                 sorts: Default::default(),
+                excludes: Default::default(),
             }],
             Duration::from_secs(30),
         );

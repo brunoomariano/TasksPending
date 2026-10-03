@@ -15,6 +15,7 @@ pending-google = { path = "../pending-google" }
 pending-ical = { path = "../pending-ical" }
 pending-plane = { path = "../pending-plane" }
 pending-todoist = { path = "../pending-todoist" }
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

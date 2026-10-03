@@ -582,3 +582,89 @@ fn google_sources_are_scheduled_with_columns() {
 
     assert_eq!(plan.specs[0].source.columns(), vec!["Today", "Team"]);
 }
+
+/// Any stack of any source kind takes `exclude`: the patterns never reach
+/// the kind's own filter (which rejects unknown keys) and travel with the
+/// scheduled source, which leaves matching cards out of that stack.
+#[test]
+fn stack_exclude_patterns_reach_the_scheduled_source_for_every_kind() {
+    use pending_core::{CardSeverity, PendingCard, SourceBatch, SourceItem};
+
+    let path = scratch("stack-exclude").join("config.toml");
+    // Each kind with the filter key its stacks need, if any.
+    let kinds = [
+        ("github", "query = \"is:open is:pr\"\n"),
+        ("google", ""),
+        ("ical", "when = [\"today\"]\n"),
+        ("plane", ""),
+        ("todoist", "filter = \"today\"\n"),
+    ];
+    let text: String = kinds
+        .iter()
+        .map(|(kind, filter)| {
+            format!(
+                "[[sources]]\nname = \"{kind}\"\nkind = \"{kind}\"\n[[sources.stacks]]\nname = \"Quiet\"\n{filter}exclude = [\"dependabot\\\\[bot\\\\]\", \"^chore\\\\(deps\\\\)\"]\n[[sources.stacks]]\nname = \"All\"\n{filter}"
+            )
+        })
+        .collect();
+    std::fs::write(&path, text).unwrap();
+
+    let (plan, _) = load_plan_with(Some(path), &env(&[("GITHUB_TOKEN", "t")]), &|| None)
+        .expect("exclude is accepted");
+
+    assert_eq!(plan.specs.len(), kinds.len());
+    for spec in &plan.specs {
+        assert_eq!(spec.source.columns(), vec!["Quiet", "All"], "{}", spec.name);
+        let item = |column: &str, id: &str, title: &str| SourceItem {
+            column: column.to_owned(),
+            card: PendingCard {
+                id: id.to_owned(),
+                title: title.to_owned(),
+                body: String::new(),
+                source: spec.name.clone(),
+                url: None,
+                due_at: None,
+                severity: CardSeverity::Info,
+                updated_at: chrono::Utc::now(),
+            },
+        };
+        let mut batch = SourceBatch {
+            items: vec![
+                item("Quiet", "1", "Chore(deps): bump serde"),
+                item("Quiet", "2", "Fix login"),
+                item("All", "1", "Chore(deps): bump serde"),
+            ],
+            warnings: Vec::new(),
+        };
+        spec.excludes.apply(&mut batch);
+        let left: Vec<(&str, &str)> = batch
+            .items
+            .iter()
+            .map(|item| (item.column.as_str(), item.card.id.as_str()))
+            .collect();
+        assert_eq!(left, [("Quiet", "2"), ("All", "1")], "{}", spec.name);
+    }
+}
+
+/// A pattern that is not a valid regular expression is rejected when the
+/// config loads, naming the file, the source, the stack and the pattern.
+#[test]
+fn invalid_exclude_patterns_name_the_file_the_source_and_the_stack() {
+    let path = scratch("bad-exclude").join("config.toml");
+    std::fs::write(
+        &path,
+        "[[sources]]\nname = \"plane\"\nkind = \"plane\"\n[[sources.stacks]]\nname = \"Mine\"\nexclude = [\"bot\", \"(unclosed\"]\n",
+    )
+    .unwrap();
+
+    let error = load_plan_with(Some(path.clone()), &env(&[]), &|| None).expect_err("bad regex");
+
+    assert!(matches!(error, LoadError::Column { .. }), "{error:?}");
+    let message = error.to_string();
+    assert!(message.contains(&path.display().to_string()), "{message}");
+    assert!(
+        message.contains("source `plane`, stack `Mine`"),
+        "{message}"
+    );
+    assert!(message.contains("`(unclosed`"), "{message}");
+}

@@ -10,6 +10,7 @@ use pending_core::{
     BoxFuture, CardSeverity, DashboardSnapshot, PendingCard, PendingSource, SourceBatch,
     SourceError, SourceHealth, SourceItem, SourceStatus,
 };
+use pending_runtime::exclude::Excludes;
 use pending_runtime::{Aggregator, SourceSpec};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -100,6 +101,7 @@ fn named_spec(name: &str, source: Arc<dyn PendingSource>, interval_secs: u64) ->
         timeout: None,
         icon: None,
         sorts: Default::default(),
+        excludes: Default::default(),
     }
 }
 
@@ -473,4 +475,92 @@ async fn refresh_now_respects_rate_limits() {
 
     advance(300).await;
     assert_eq!(limited_calls.load(Ordering::SeqCst), 2);
+}
+
+/// Test source with two stacks: a dependency bump listed in both, and
+/// cards of its own in each.
+struct TwoStacks;
+
+impl PendingSource for TwoStacks {
+    fn columns(&self) -> Vec<String> {
+        vec!["Review".to_owned(), "Everything".to_owned()]
+    }
+
+    fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
+        let item = |column: &str, id: &str, title: &str, body: &str| SourceItem {
+            column: column.to_owned(),
+            card: PendingCard {
+                title: title.to_owned(),
+                body: body.to_owned(),
+                ..batch(id).items.remove(0).card
+            },
+        };
+        let bot = "acme/web · dependabot[bot]";
+        let batch = SourceBatch {
+            items: vec![
+                item("Review", "bump", "Bump serde", bot),
+                item("Review", "login", "Fix login", "acme/web · alice"),
+                item("Review", "draft", "[WIP] parser", "acme/web · bob"),
+                item("Everything", "bump", "Bump serde", bot),
+                item("Everything", "cache", "Add cache", "acme/api · bob"),
+            ],
+            warnings: Vec::new(),
+        };
+        Box::pin(async move { Ok(batch) })
+    }
+}
+
+/// Cards matching a stack's `exclude` patterns are simply absent from that
+/// stack: the source's other stacks keep them, the source stays ready, and
+/// nothing is counted or warned about.
+#[tokio::test(start_paused = true)]
+async fn excluded_cards_are_absent_from_their_stack_only() {
+    let source: pending_core::SourceConfig = toml::from_str(
+        r#"
+        name = "github"
+        kind = "plane"
+
+          [[stacks]]
+          name = "Review"
+          exclude = ["Dependabot\\[bot\\]", "^\\[wip\\]"]
+
+          [[stacks]]
+          name = "Everything"
+        "#,
+    )
+    .expect("valid toml");
+    let aggregator = Aggregator::start(
+        vec![SourceSpec {
+            excludes: Excludes::from_stacks(&source.stacks).expect("valid patterns"),
+            ..named_spec("github", Arc::new(TwoStacks), 60)
+        }],
+        TIMEOUT,
+    );
+    advance(1).await;
+
+    let snapshot = aggregator.snapshot();
+    let stacks: Vec<(&str, Vec<&str>)> = snapshot.boards[0].groups[0]
+        .columns
+        .iter()
+        .map(|column| {
+            let mut ids: Vec<&str> = column.cards.iter().map(|card| card.id.as_str()).collect();
+            ids.sort_unstable();
+            (column.name.as_str(), ids)
+        })
+        .collect();
+    assert_eq!(
+        stacks,
+        [
+            ("Review", vec!["login"]),
+            ("Everything", vec!["bump", "cache"])
+        ]
+    );
+    let health = health(&snapshot, "github");
+    assert_eq!(health.status, SourceStatus::Ready);
+    assert_eq!(health.message, None);
+    // Only the card left in no stack at all is reported as hidden.
+    assert_eq!(
+        aggregator.hidden_ids().into_iter().collect::<Vec<_>>(),
+        ["draft"]
+    );
 }

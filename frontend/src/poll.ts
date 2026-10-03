@@ -80,9 +80,10 @@ function viewKey(state: ViewState): string {
       return `unavailable:${state.error}`;
     case "ready":
     case "stale": {
-      const { boards, sources } = state.snapshot;
+      // Everything in the snapshot but its timestamp.
+      const { generated_at: _, ...shown } = state.snapshot;
       const error = state.kind === "stale" ? state.error : "";
-      return JSON.stringify([state.kind, error, boards, sources]);
+      return JSON.stringify([state.kind, error, shown]);
     }
   }
 }

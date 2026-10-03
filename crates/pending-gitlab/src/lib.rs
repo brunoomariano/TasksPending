@@ -305,6 +305,12 @@ impl GitlabSource {
             )
         });
         let base_url = non_empty(BASE_URL_ENV).unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
+        // The token is a header on every request: never send it unencrypted.
+        let token = token.and_then(|token| {
+            pending_http::require_encrypted(&base_url, BASE_URL_ENV)
+                .map(|()| token)
+                .map_err(|problem| format!("GitLab is not configured: {problem}"))
+        });
         Self::new(base_url, token)
     }
 

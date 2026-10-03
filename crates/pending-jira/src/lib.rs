@@ -143,14 +143,10 @@ impl JiraSettings {
 
         match (base_url, auth) {
             (Some(base_url), Ok(auth)) => {
-                let lower = base_url.to_ascii_lowercase();
-                if !lower.starts_with("https://") && !lower.starts_with("http://") {
-                    return Err(
-                        "Jira is not configured: JIRA_BASE_URL must start with https:// \
-                         (or http://); fix it, then restart"
-                            .to_owned(),
-                    );
-                }
+                // The credentials are a header on every request: never
+                // send them unencrypted.
+                pending_http::require_encrypted(&base_url, "JIRA_BASE_URL")
+                    .map_err(|problem| format!("Jira is not configured: {problem}"))?;
                 Ok(Self { base_url, auth })
             }
             (base_url, auth) => {

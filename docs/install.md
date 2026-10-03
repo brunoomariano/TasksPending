@@ -115,6 +115,8 @@ On Linux, the installer warns when this file is absent. It does not create it or
 
 On macOS, put them in the `EnvironmentVariables` block of `~/Library/LaunchAgents/com.github.brunoomariano.tasks-pending.plist` (the installer makes it readable only by you).
 
+Addresses that receive a token (`GITLAB_BASE_URL`, `JIRA_BASE_URL`, `LINEAR_API_URL`) must start with `https://`, so the token is never sent in the clear; `http://` is accepted only for `localhost`.
+
 The TUI, run from your shell, uses your shell's environment instead.
 
 ## 4. Manage the daemon

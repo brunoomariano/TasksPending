@@ -130,6 +130,7 @@ async fn graphql(
     );
     let query = request["query"].as_str().unwrap_or_default();
     assert!(query.contains("reviewDecision"), "{query}");
+    assert!(query.contains("statusCheckRollup"), "{query}");
     let ids: Vec<String> = request["variables"]["ids"]
         .as_array()
         .expect("ids variable")
@@ -206,6 +207,15 @@ fn node_id(repo: &str, number: u64) -> String {
 fn pr_state(repo: &str, number: u64, draft: bool, decision: Option<&str>) -> (String, Value) {
     let id = node_id(repo, number);
     let state = json!({ "id": id, "isDraft": draft, "reviewDecision": decision });
+    (id, state)
+}
+
+/// A pull request state whose last commit has this check rollup; `None` is
+/// a repository without checks (GraphQL answers `null`).
+fn pr_checks(repo: &str, number: u64, rollup: Option<&str>) -> (String, Value) {
+    let (id, mut state) = pr_state(repo, number, false, None);
+    let rollup = rollup.map(|state| json!({ "state": state }));
+    state["commits"] = json!({ "nodes": [{ "commit": { "statusCheckRollup": rollup } }] });
     (id, state)
 }
 
@@ -740,6 +750,128 @@ async fn pull_requests_show_draft_and_review_state_from_one_lookup() {
     let issue = card("Assigned issues", "github:o/api#9");
     assert_eq!(issue.body, "o/api#9 · @octocat");
     assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
+}
+
+/// Pull request cards say how the checks of their last commit are doing:
+/// passing, pending (also when GitHub still expects a check to report) or
+/// failing (a failure or an error). A repository without checks adds nothing
+/// to the card. The answer comes in the same single lookup as the review
+/// state.
+#[tokio::test]
+async fn pull_requests_show_the_state_of_their_checks_from_the_same_lookup() {
+    let stub = stub_with(vec![(
+        WAITING,
+        Reply::items(
+            (1..=7)
+                .map(|number| item("o/api", number, "PR", true))
+                .collect(),
+        ),
+    )]);
+    stub.pr_states.lock().unwrap().extend([
+        pr_checks("o/api", 1, Some("SUCCESS")),
+        pr_checks("o/api", 2, Some("PENDING")),
+        pr_checks("o/api", 3, Some("EXPECTED")),
+        pr_checks("o/api", 4, Some("FAILURE")),
+        pr_checks("o/api", 5, Some("ERROR")),
+        pr_checks("o/api", 6, None),
+        // No `commits` at all, as before the lookup asked for checks.
+        pr_state("o/api", 7, false, None),
+    ]);
+    let requests = stub.graphql_requests.clone();
+
+    let batch = refresh(stub).await.expect("refresh succeeds");
+
+    assert!(batch.warnings.is_empty(), "{:?}", batch.warnings);
+    assert_eq!(requests.lock().unwrap().len(), 1, "one lookup");
+    let bodies: Vec<&str> = batch.items.iter().map(|i| i.card.body.as_str()).collect();
+    assert_eq!(
+        bodies,
+        [
+            "o/api#1 · @octocat · checks passing",
+            "o/api#2 · @octocat · checks pending",
+            "o/api#3 · @octocat · checks pending",
+            "o/api#4 · @octocat · checks failing",
+            "o/api#5 · @octocat · checks failing",
+            "o/api#6 · @octocat",
+            "o/api#7 · @octocat",
+        ]
+    );
+}
+
+/// Failing checks make the card at least a warning, like changes requested:
+/// an info stack's card is raised and a critical one stays critical. Passing
+/// and pending checks leave the severity alone.
+#[tokio::test]
+async fn failing_checks_make_the_card_at_least_a_warning() {
+    use pending_github::GithubColumn;
+
+    let stub = stub_with(vec![
+        (
+            "info-stack",
+            Reply::items(vec![
+                item("o/api", 1, "Broken", true),
+                item("o/api", 2, "Green", true),
+                item("o/api", 3, "Running", true),
+            ]),
+        ),
+        (
+            "critical-stack",
+            Reply::items(vec![item("o/api", 1, "Broken", true)]),
+        ),
+    ]);
+    stub.pr_states.lock().unwrap().extend([
+        pr_checks("o/api", 1, Some("FAILURE")),
+        pr_checks("o/api", 2, Some("SUCCESS")),
+        pr_checks("o/api", 3, Some("PENDING")),
+    ]);
+    let base = serve(stub).await;
+    let column = |name: &str, severity| GithubColumn {
+        name: name.to_owned(),
+        query: Some(name.to_owned()),
+        notifications: None,
+        alerts: None,
+        severity: Some(severity),
+    };
+
+    let batch = GithubSource::new(base, Some(TOKEN.to_owned()))
+        .with_columns(vec![
+            column("info-stack", CardSeverity::Info),
+            column("critical-stack", CardSeverity::Critical),
+        ])
+        .refresh()
+        .await
+        .expect("refresh succeeds");
+
+    let severities: Vec<CardSeverity> = batch.items.iter().map(|i| i.card.severity).collect();
+    assert_eq!(
+        severities,
+        [
+            CardSeverity::Warning,
+            CardSeverity::Info,
+            CardSeverity::Info,
+            CardSeverity::Critical,
+        ]
+    );
+}
+
+/// The card reads in a fixed order: reference, author, draft, review state,
+/// checks, then comments.
+#[tokio::test]
+async fn checks_come_after_the_review_state_and_before_the_comments() {
+    let mut discussed = item("o/api", 2, "Approved", true);
+    discussed["comments"] = json!(2);
+    let stub = stub_with(vec![(DRAFTS, Reply::items(vec![discussed]))]);
+    let (id, mut state) = pr_checks("o/api", 2, Some("FAILURE"));
+    state["isDraft"] = json!(true);
+    state["reviewDecision"] = json!("APPROVED");
+    stub.pr_states.lock().unwrap().insert(id, state);
+
+    let batch = refresh(stub).await.expect("refresh succeeds");
+
+    assert_eq!(
+        batch.items[0].card.body,
+        "o/api#2 · @octocat · draft · approved · checks failing · 2 comments"
+    );
 }
 
 /// A refresh without pull requests makes no GraphQL request.

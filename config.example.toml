@@ -128,6 +128,27 @@ enabled = true
 #   state = ["In Review"]
 #   # also: state_group = ["started"], project = ["API"], priority = ["urgent"]
 
+# Jira: every stack is a JQL query (the syntax of Jira's issue search).
+# Needs JIRA_BASE_URL, plus JIRA_EMAIL and JIRA_API_TOKEN (Jira Cloud) or
+# JIRA_TOKEN alone (Jira Data Center personal access token).
+# [[sources]]
+# name = "jira"
+# kind = "jira"
+# board = "Work"
+#
+#   [[sources.stacks]]
+#   name = "In progress"
+#   jql = 'assignee = currentUser() AND statusCategory = "In Progress" ORDER BY updated DESC'
+#
+#   [[sources.stacks]]
+#   name = "Sprint"
+#   jql = "assignee = currentUser() AND sprint in openSprints()"
+#
+#   [[sources.stacks]]
+#   name = "Watching"
+#   jql = "watcher = currentUser() AND statusCategory != Done"
+#   severity = "info"             # optional: info, warning, critical
+
 # Google Calendar through GNOME Online Accounts: install gnome-online-accounts
 # and gnome-online-accounts-gtk, add the Google account with Calendar enabled.
 # No token or URL here or in the environment.

@@ -67,7 +67,7 @@ timeout_seconds = 60         # a slower refresh counts as a failure
 
 [[sources]]
 name = "agenda"              # unique; shown in the page and Sources dialog
-kind = "google"              # github, plane, google, ical, todoist, sample
+kind = "google"              # github, jira, plane, google, ical, todoist, sample
 board = "Personal"           # area: web filter and TUI tab
 icon = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/google-calendar.svg"
 
@@ -107,6 +107,7 @@ On Linux, the installer warns when this file is absent. It does not create it or
 | `github` | `GITHUB_TOKEN` or `GH_TOKEN`; else `gh auth token` (the service's PATH includes `~/.local/bin` and mise shims) |
 | `gitlab` | `GITLAB_TOKEN` (personal access token with `read_api`); `GITLAB_BASE_URL` for a self-managed instance (default `https://gitlab.com`) |
 | `plane` | `PLANE_BASE_URL`, `PLANE_WORKSPACE` (or `PLANE_WORKSPACE_SLUG`), `PLANE_TOKEN` (or `PLANE_API_KEY`) |
+| `jira` | `JIRA_BASE_URL`, plus `JIRA_EMAIL` and `JIRA_API_TOKEN` (Jira Cloud) or `JIRA_TOKEN` alone (Jira Data Center personal access token) |
 | `todoist` | `TODOIST_API_TOKEN` |
 | `google` | none: uses your GNOME Online Accounts login over the session bus (Linux desktop only) |
 | `ical` | `TASKS_PENDING_ICAL_URL` (the feed URL is a secret) |

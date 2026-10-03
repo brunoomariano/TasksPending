@@ -401,6 +401,68 @@ fn plane_sources_are_scheduled() {
     assert_eq!(plan.specs[0].name, "plane");
 }
 
+/// A `jira` source in the config becomes a scheduled source with its JQL
+/// stacks; credentials come from the environment, never the file.
+#[test]
+fn jira_sources_are_scheduled() {
+    let path = scratch("jira").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "jira"
+        kind = "jira"
+        board = "Work"
+
+        [[sources.stacks]]
+        name = "Sprint"
+        jql = "assignee = currentUser() AND sprint in openSprints()"
+        severity = "warning"
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) = load_plan_with(Some(path), &env(&[]), &|| None).expect("jira is supported");
+
+    assert_eq!(plan.specs.len(), 1);
+    assert_eq!(plan.specs[0].name, "jira");
+    assert_eq!(plan.specs[0].source.columns(), ["Sprint"]);
+    assert!(
+        plan.specs[0]
+            .icon
+            .as_ref()
+            .is_some_and(|icon| icon.url.ends_with("/jira.svg") && icon.dark_url.is_none())
+    );
+}
+
+/// A Jira stack without `jql`, with a blank one or with an unknown key fails
+/// at startup, naming the source and the stack.
+#[test]
+fn jira_stacks_need_a_jql_query() {
+    let dir = scratch("bad-jira-stacks");
+    for (name, body) in [
+        ("missing.toml", "severity = \"warning\""),
+        ("blank.toml", "jql = \"  \""),
+        ("typo.toml", "jql = \"project = OPS\"\nfilter = \"x\""),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "[[sources]]\nname = \"tracker\"\nkind = \"jira\"\n[[sources.stacks]]\nname = \"Mine\"\n{body}\n"
+            ),
+        )
+        .unwrap();
+
+        let error = load_plan_with(Some(path), &env(&[]), &|| None).expect_err(name);
+        let message = error.to_string();
+        assert!(
+            message.contains("tracker") && message.contains("Mine"),
+            "{message}"
+        );
+    }
+}
+
 /// An `ical` source in the config becomes a scheduled source; the secret URL
 /// comes from the environment, never the file.
 #[test]

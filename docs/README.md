@@ -10,6 +10,7 @@ TasksPending is organized around one shared model and several delivery surfaces.
 - `pending-google`: Google Calendar source adapter (GNOME Online Accounts).
 - `pending-ical`: iCal/Google Calendar source adapter.
 - `pending-plane`: Plane source adapter.
+- `pending-jira`: Jira source adapter (Cloud and Data Center).
 - `pending-github`: GitHub source adapter; provider details stay here.
 - `pending-runtime`: refresh scheduling and the in-memory state of every source.
 - `pending-api`: HTTP routes, logging, and embedded frontend delivery.

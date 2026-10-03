@@ -70,6 +70,7 @@ make frontend-dev
 - `crates/pending-github`: GitHub source adapter.
 - `crates/pending-gitlab`: GitLab source adapter.
 - `crates/pending-plane`: Plane source adapter.
+- `crates/pending-jira`: Jira source adapter (Cloud and Data Center).
 - `crates/pending-google`: Google Calendar source adapter (GNOME Online Accounts).
 - `crates/pending-ical`: calendar (iCal) source adapter.
 - `crates/pending-todoist`: Todoist source adapter.

@@ -58,6 +58,8 @@ impl Frontend {
     }
 }
 
+pub mod weather;
+
 mod embedded_frontend {
     use super::EmbeddedFile;
 
@@ -126,7 +128,9 @@ pub async fn serve_sandbox(options: SandboxOptions) -> anyhow::Result<()> {
         .with_context(|| format!("binding {}", options.listen))?;
     info!(addr = %options.listen, "TasksPending sandbox listening");
 
-    axum::serve(listener, app(SandboxDashboard::default(), frontend))
+    let weather = weather::WeatherService::sample();
+    let app = app_with_weather(SandboxDashboard::default(), frontend, weather);
+    axum::serve(listener, app)
         .await
         .context("serving sandbox API")?;
     Ok(())
@@ -188,6 +192,15 @@ impl Dashboard for SandboxDashboard {
 
 /// API routes, plus the configured frontend for any other path.
 pub fn app(dashboard: impl Dashboard + 'static, frontend: Option<Frontend>) -> Router {
+    app_with_weather(dashboard, frontend, weather::WeatherService::omarchy())
+}
+
+/// [`app`] with the weather route answered by `weather`.
+pub fn app_with_weather(
+    dashboard: impl Dashboard + 'static,
+    frontend: Option<Frontend>,
+    weather: weather::WeatherService,
+) -> Router {
     let state = AppState {
         dashboard: Arc::new(dashboard),
         last_refresh: Arc::new(Mutex::new(None)),
@@ -196,7 +209,8 @@ pub fn app(dashboard: impl Dashboard + 'static, frontend: Option<Frontend>) -> R
         .route("/healthz", get(healthz))
         .route("/api/v1/snapshot", get(snapshot))
         .route("/api/v1/refresh", post(refresh))
-        .route("/api/v1/marks", post(set_mark));
+        .route("/api/v1/marks", post(set_mark))
+        .merge(weather::routes(weather));
     let router = match frontend {
         Some(Frontend::Directory(dir)) => router.fallback_service(ServeDir::new(dir)),
         Some(Frontend::Embedded(files)) => {

@@ -61,6 +61,9 @@ EOF
   test -x "$home/.local/bin/tasks-pending"
   grep -Fqx "ExecStart=$home/.local/bin/tasks-pending serve --listen 127.0.0.1:61000" \
     "$home/.config/systemd/user/tasks-pending.service"
+  # The weather widget runs Omarchy's commands, which may live outside /usr/bin.
+  grep -Eq '^Environment=PATH=.*:/usr/share/omarchy/bin:%h/\.local/share/omarchy/bin$' \
+    "$home/.config/systemd/user/tasks-pending.service"
   if [[ $override == custom ]]; then
     grep -Fqx "$custom_command" \
       "$home/.config/systemd/user/tasks-pending.service.d/override.conf"

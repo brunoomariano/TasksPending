@@ -19,7 +19,7 @@ Each source is a group of stacks, one per `[[sources.stacks]]` entry (or the sou
 
 | kind | stack keys | default stacks |
 |---|---|---|
-| `github` | `query` (search syntax), `notifications` (`unread`/`all`) or `alerts` (`owner/repo` list), `severity` | Review requested, My pull requests, Assigned issues |
+| `github` | `query` (search syntax), `notifications` (`unread`/`all`) or `alerts` (`owner/repo` list), `severity` | Review requested, Returned to you, Ready to merge, Waiting on reviewers, Drafts, Assigned issues |
 | `plane` | `assignee` (me/none/others/any), `state_group`, `state`, `project`, `priority` | In progress, To do, Backlog (yours) |
 | `google` | `when` (now/today/tomorrow/later), `calendar` (names) | Now, Today, Tomorrow, Next 30 days |
 | `ical` | `when` (now/today/tomorrow/later) | Now, Today, Tomorrow, Next 30 days |
@@ -153,7 +153,20 @@ Edits are picked up while running: the API and the TUI check the file every 2 se
 
 ## GitHub Source
 
-`kind = "github"` runs one search per stack (`query`, github.com search syntax; optional `severity`), or reads notifications (`notifications = "unread"`, matching github.com's Unread tab, or `"all"` for read and unread — the REST API cannot tell which ones you marked as done on github.com, so those show too; `inbox` is accepted as the old name of `all`; unread ones are warnings, cards link to the pull request or issue, or to the repository for other kinds), or shows security alerts (`alerts = ["owner/repo", ...]`, see below). A stack sets exactly one of the three. The notifications API needs a classic token with the `repo` or `notifications` scope, as `gh auth token` provides; fine-grained tokens cannot read it. By default: review requests (warning), your open pull requests and your assigned issues. An item found by several searches shows in each of those stacks.
+`kind = "github"` runs one search per stack (`query`, github.com search syntax; optional `severity`), or reads notifications (`notifications = "unread"`, matching github.com's Unread tab, or `"all"` for read and unread — the REST API cannot tell which ones you marked as done on github.com, so those show too; `inbox` is accepted as the old name of `all`; unread ones are warnings, cards link to the pull request or issue, or to the repository for other kinds), or shows security alerts (`alerts = ["owner/repo", ...]`, see below). A stack sets exactly one of the three. The notifications API needs a classic token with the `repo` or `notifications` scope, as `gh auth token` provides; fine-grained tokens cannot read it. An item found by several searches shows in each of those stacks.
+
+Without `[[sources.stacks]]`, the stacks say what to do next:
+
+| stack | query | severity |
+|---|---|---|
+| Review requested | `is:open is:pr archived:false review-requested:@me` | warning |
+| Returned to you | `is:open is:pr archived:false author:@me draft:false review:changes_requested` | warning |
+| Ready to merge | `is:open is:pr archived:false author:@me draft:false review:approved` | info |
+| Waiting on reviewers | `is:open is:pr archived:false author:@me draft:false -review:approved -review:changes_requested` | info |
+| Drafts | `is:open is:pr archived:false author:@me draft:true` | info |
+| Assigned issues | `is:open is:issue archived:false assignee:@me` | info |
+
+Each of your open pull requests is in exactly one of the four middle stacks. "Waiting on reviewers" is whatever is neither approved nor returned, so a pull request that only got comments stays there (`review:none` would drop it, and `review:required` only matches repositories that require reviews). "Ready to merge" means approved; it does not look at checks or merge conflicts. To get a single stack of your pull requests back (`is:open is:pr archived:false author:@me`), or to keep to one organization (`org:acme`), declare your own stacks; `config.example.toml` has these as a starting point. The defaults are six searches per refresh.
 
 - Token: `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token` (given up after 5 s; the API logs before running it, the TUI starts silently until then), resolved once at startup for all GitHub sources. Without a token the source shows as failed with a setup hint; restart after logging in.
 - Each stack is one search; they run three at a time (GitHub discourages concurrent searches, and the search API allows 30 requests per minute per user, so keep the number of GitHub stacks modest). Each search is limited to 10 s, so a hanging search becomes a warning for its stack instead of failing the refresh. Keep `timeout_seconds` (default 60) above 10, or the aggregator timeout fails the whole refresh first.

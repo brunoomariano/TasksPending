@@ -1,14 +1,15 @@
 //! Dashboard state and keyboard handling, independent of the terminal.
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use pending_core::{Board, Column, DashboardSnapshot, PendingCard};
+use pending_core::{Board, Column, DashboardSnapshot, Group, PendingCard};
 use ratatui::layout::{Position, Rect};
 
 /// Minimum wait between manual refreshes. Each one queries every source, and
 /// provider APIs rate-limit (GitHub search: 30 requests per minute, and every
-/// GitHub column is one search).
+/// GitHub stack is one search).
 pub const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
 
 struct Notice {
@@ -24,10 +25,15 @@ pub enum Action {
     Open(String),
 }
 
-/// A column of the current board, with the source (group) it belongs to.
-pub struct ColumnRef<'a> {
-    pub source: &'a str,
-    pub column: &'a Column,
+/// One screen row of a group as drawn, before scrolling: the group's stacks
+/// one above another, each a header row followed by its cards unless it is
+/// collapsed or empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Row {
+    /// A stack's header: its name and card count.
+    Header { stack: usize },
+    /// One of the `CARD_ROWS` rows of a card.
+    Card { stack: usize, card: usize },
 }
 
 /// A popup over the board.
@@ -40,12 +46,12 @@ pub enum Popup {
 }
 
 /// Screen geometry the last render reported, which keys and the mouse need:
-/// where the columns are, how many cards fit, how far the popup scrolls.
+/// where the groups are, how many cards fit, how far the popup scrolls.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Viewport {
-    /// The columns on screen.
-    pub columns: Vec<ColumnArea>,
-    /// Cards that fit in a column at once.
+    /// The groups on screen.
+    pub groups: Vec<GroupArea>,
+    /// Cards that fit in a group at once.
     pub card_page: usize,
     /// Popup lines that fit on screen at once.
     pub popup_page: u16,
@@ -53,17 +59,18 @@ pub struct Viewport {
     pub popup_max_scroll: u16,
 }
 
-/// A column as drawn: its title row, then two rows per card.
+/// A group as drawn: `App::rows` from `scroll` on, one per screen row.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ColumnArea {
-    /// Index into `App::columns()`.
+pub struct GroupArea {
+    /// Index into `App::groups()`.
     pub index: usize,
+    /// Where the rows are, inside the group's border.
     pub area: Rect,
-    /// The first card shown (the column scrolls to keep the selection visible).
-    pub offset: usize,
+    /// The first row shown (the group scrolls to keep the selection visible).
+    pub scroll: usize,
 }
 
-/// Rows a card takes in a column: title and body.
+/// Rows a card takes in a stack: title and body.
 pub const CARD_ROWS: u16 = 2;
 /// Popup lines one mouse wheel step scrolls.
 const WHEEL_LINES: i32 = 3;
@@ -72,17 +79,25 @@ const WHEEL_LINES: i32 = 3;
 struct Anchor {
     board: String,
     source: String,
-    column: String,
+    stack: String,
     card: Option<String>,
 }
+
+/// A stack by name (board, source, stack), so collapsing it survives
+/// refreshes and config reorders.
+type StackKey = (String, String, String);
 
 pub struct App {
     snapshot: DashboardSnapshot,
     board: usize,
-    /// Index into `columns()` of the current board.
-    column: usize,
-    /// Index into the selected column's cards.
+    /// Index into `groups()` of the current board.
+    group: usize,
+    /// Index into the selected group's stacks.
+    stack: usize,
+    /// Index into the selected stack's cards. While that stack is collapsed
+    /// the selection rests on its header, and this is the card it returns to.
     card: usize,
+    collapsed: HashSet<StackKey>,
     /// Last action feedback, shown until the next key press.
     notice: Option<Notice>,
     last_refresh: Option<Instant>,
@@ -94,17 +109,21 @@ pub struct App {
 
 impl App {
     pub fn new(snapshot: DashboardSnapshot) -> Self {
-        Self {
+        let mut app = Self {
             snapshot,
             board: 0,
-            column: 0,
+            group: 0,
+            stack: 0,
             card: 0,
+            collapsed: HashSet::new(),
             notice: None,
             last_refresh: None,
             popup: None,
             popup_scroll: 0,
             viewport: Viewport::default(),
-        }
+        };
+        app.select_first();
+        app
     }
 
     pub fn popup(&self) -> Option<Popup> {
@@ -132,51 +151,131 @@ impl App {
         self.snapshot.boards.get(self.board)
     }
 
-    /// Columns of the current board, group after group.
-    pub fn columns(&self) -> Vec<ColumnRef<'_>> {
-        self.current_board()
-            .map(|board| {
-                board
-                    .groups
-                    .iter()
-                    .flat_map(|group| {
-                        group.columns.iter().map(|column| ColumnRef {
-                            source: &group.source,
-                            column,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+    /// Groups (sources) of the current board, in config order.
+    pub fn groups(&self) -> &[Group] {
+        self.current_board().map_or(&[], |board| &board.groups)
     }
 
-    pub fn selected_column(&self) -> usize {
-        self.column
+    pub fn selected_group(&self) -> usize {
+        self.group
+    }
+
+    fn stack_at(&self, group: usize, stack: usize) -> Option<&Column> {
+        self.groups().get(group)?.columns.get(stack)
+    }
+
+    /// The group and stack the selection is in.
+    pub fn selected_stack(&self) -> Option<(&Group, &Column)> {
+        let group = self.groups().get(self.group)?;
+        Some((group, group.columns.get(self.stack)?))
+    }
+
+    fn stack_key(&self, group: usize, stack: usize) -> Option<StackKey> {
+        let board = self.current_board()?;
+        let group = board.groups.get(group)?;
+        let stack = group.columns.get(stack)?;
+        Some((board.name.clone(), group.source.clone(), stack.name.clone()))
+    }
+
+    /// Whether stack `stack` of group `group` shows only its header. Empty
+    /// stacks have nothing to collapse.
+    pub fn is_collapsed(&self, group: usize, stack: usize) -> bool {
+        self.stack_at(group, stack)
+            .is_some_and(|column| !column.cards.is_empty())
+            && self
+                .stack_key(group, stack)
+                .is_some_and(|key| self.collapsed.contains(&key))
+    }
+
+    /// The screen rows of group `group`, top to bottom.
+    pub fn rows(&self, group: usize) -> Vec<Row> {
+        let Some(found) = self.groups().get(group) else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        for (stack, column) in found.columns.iter().enumerate() {
+            rows.push(Row::Header { stack });
+            if !self.is_collapsed(group, stack) {
+                for card in 0..column.cards.len() {
+                    rows.extend([Row::Card { stack, card }; CARD_ROWS as usize]);
+                }
+            }
+        }
+        rows
+    }
+
+    /// Where the selection can rest in group `group`, top to bottom: every
+    /// card of an open stack, and the header of a collapsed one.
+    fn stops(&self, group: usize) -> Vec<Row> {
+        let mut stops = self.rows(group);
+        stops.dedup();
+        stops.retain(|row| match *row {
+            Row::Header { stack } => self.is_collapsed(group, stack),
+            Row::Card { .. } => true,
+        });
+        stops
+    }
+
+    /// What the selection rests on in the selected group: a card, or the
+    /// header of a collapsed stack. `None` when the group has no cards.
+    pub fn selected_row(&self) -> Option<Row> {
+        let column = self.stack_at(self.group, self.stack)?;
+        if self.is_collapsed(self.group, self.stack) {
+            Some(Row::Header { stack: self.stack })
+        } else if self.card < column.cards.len() {
+            Some(Row::Card {
+                stack: self.stack,
+                card: self.card,
+            })
+        } else {
+            None
+        }
     }
 
     pub fn selected_card(&self) -> Option<&PendingCard> {
-        self.columns()
-            .get(self.column)
-            .and_then(|c| c.column.cards.get(self.card))
+        match self.selected_row()? {
+            Row::Card { stack, card } => self.stack_at(self.group, stack)?.cards.get(card),
+            Row::Header { .. } => None,
+        }
     }
 
-    /// Whether the card at `card` in column `column` is the selected one; a
-    /// card shown in several columns is selected in one of them only.
-    pub fn is_selected(&self, column: usize, card: usize) -> bool {
-        column == self.column && card == self.card
+    fn select(&mut self, row: Row) {
+        match row {
+            Row::Header { stack } => {
+                if stack != self.stack {
+                    self.stack = stack;
+                    self.card = 0;
+                }
+            }
+            Row::Card { stack, card } => {
+                self.stack = stack;
+                self.card = card;
+            }
+        }
     }
 
-    /// Replaces the snapshot, keeping the selection on the same board, column
-    /// and card when they still exist, or the nearest position otherwise.
+    /// Moves the selection to the top of the selected group.
+    fn select_first(&mut self) {
+        self.stack = 0;
+        self.card = 0;
+        if let Some(first) = self.stops(self.group).first() {
+            self.select(*first);
+        }
+    }
+
+    /// Replaces the snapshot, keeping the selection on the same board, group,
+    /// stack and card when they still exist, or the nearest position otherwise.
     pub fn update(&mut self, snapshot: DashboardSnapshot) {
         let anchor = self.anchor();
         self.snapshot = snapshot;
-        let Some(anchor) = anchor else {
-            self.clamp();
-            self.close_card_popup_without_card();
-            return;
-        };
+        if let Some(anchor) = anchor {
+            self.restore(anchor);
+        }
+        self.clamp();
+        self.close_card_popup_without_card();
+    }
 
+    fn restore(&mut self, anchor: Anchor) {
         if let Some(board) = self
             .snapshot
             .boards
@@ -185,24 +284,21 @@ impl App {
         {
             self.board = board;
         }
-        if let Some(column) = self
-            .columns()
-            .iter()
-            .position(|c| c.source == anchor.source && c.column.name == anchor.column)
-        {
-            self.column = column;
-            if let Some(card) = anchor.card.and_then(|id| {
-                self.columns()[column]
-                    .column
-                    .cards
-                    .iter()
-                    .position(|c| c.id == id)
-            }) {
-                self.card = card;
-            }
+        let Some(group) = self.groups().iter().position(|g| g.source == anchor.source) else {
+            return;
+        };
+        self.group = group;
+        let stacks = &self.groups()[group].columns;
+        let Some(stack) = stacks.iter().position(|c| c.name == anchor.stack) else {
+            return;
+        };
+        let card = anchor
+            .card
+            .and_then(|id| stacks[stack].cards.iter().position(|c| c.id == id));
+        self.stack = stack;
+        if let Some(card) = card {
+            self.card = card;
         }
-        self.clamp();
-        self.close_card_popup_without_card();
     }
 
     fn close_card_popup_without_card(&mut self) {
@@ -213,25 +309,41 @@ impl App {
 
     fn anchor(&self) -> Option<Anchor> {
         let board = self.current_board()?;
-        let columns = self.columns();
-        let selected = columns.get(self.column)?;
+        let (group, stack) = self.selected_stack()?;
         Some(Anchor {
             board: board.name.clone(),
-            source: selected.source.to_owned(),
-            column: selected.column.name.clone(),
-            card: selected.column.cards.get(self.card).map(|c| c.id.clone()),
+            source: group.source.clone(),
+            stack: stack.name.clone(),
+            card: stack.cards.get(self.card).map(|c| c.id.clone()),
         })
     }
 
+    /// Brings the selection back inside the snapshot: the same position in
+    /// its stack, or else the nearest card or collapsed header after it (or
+    /// before it, at the end of the group).
     fn clamp(&mut self) {
         self.board = self.board.min(self.snapshot.boards.len().saturating_sub(1));
-        let columns = self.columns().len();
-        self.column = self.column.min(columns.saturating_sub(1));
+        self.group = self.group.min(self.groups().len().saturating_sub(1));
+        let stacks = self.groups().get(self.group).map_or(0, |g| g.columns.len());
+        self.stack = self.stack.min(stacks.saturating_sub(1));
         let cards = self
-            .columns()
-            .get(self.column)
-            .map_or(0, |c| c.column.cards.len());
+            .stack_at(self.group, self.stack)
+            .map_or(0, |column| column.cards.len());
         self.card = self.card.min(cards.saturating_sub(1));
+
+        if self.selected_row().is_none() {
+            let stops = self.stops(self.group);
+            let stack_of = |row: &Row| match *row {
+                Row::Header { stack } | Row::Card { stack, .. } => stack,
+            };
+            let nearest = stops
+                .iter()
+                .find(|row| stack_of(row) >= self.stack)
+                .or(stops.last());
+            if let Some(row) = nearest.copied() {
+                self.select(row);
+            }
+        }
     }
 
     /// Shows a failure in the footer until the next key press.
@@ -287,11 +399,15 @@ impl App {
                 Action::None
             }
             KeyCode::Char('l') | KeyCode::Right => {
-                self.move_column(1);
+                self.move_group(1);
                 Action::None
             }
             KeyCode::Char('h') | KeyCode::Left => {
-                self.move_column(-1);
+                self.move_group(-1);
+                Action::None
+            }
+            KeyCode::Char('c') => {
+                self.toggle_stack(self.stack);
                 Action::None
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -311,7 +427,7 @@ impl App {
                 Action::None
             }
             KeyCode::Home | KeyCode::Char('g') => {
-                self.card = 0;
+                self.move_card(isize::MIN);
                 Action::None
             }
             KeyCode::End | KeyCode::Char('G') => {
@@ -372,9 +488,10 @@ impl App {
         self.popup_scroll = scroll as u16;
     }
 
-    /// The wheel scrolls an open popup, or else the column under the pointer
-    /// (focusing it first) or the focused one; a left click selects the card
-    /// under it, or focuses the column.
+    /// The wheel scrolls an open popup, or else moves through the group under
+    /// the pointer (focusing it first) or the focused one; a left click
+    /// selects the card under it, collapses or expands the stack whose header
+    /// is under it, or just focuses the group.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
         let delta = match mouse.kind {
             MouseEventKind::ScrollDown => 1,
@@ -390,45 +507,68 @@ impl App {
             self.scroll_popup(delta * WHEEL_LINES);
             return;
         }
-        match self.column_at(mouse.column, mouse.row) {
-            Some(column) if column.index != self.column => self.focus_column(column.index),
+        match self.group_at(mouse.column, mouse.row) {
+            Some(group) if group.index != self.group => self.focus_group(group.index),
             _ => self.move_card(delta as isize),
         }
     }
 
     fn click(&mut self, x: u16, y: u16) {
-        let Some(column) = self.column_at(x, y) else {
+        let Some(group) = self.group_at(x, y) else {
             return;
         };
         self.notice = None;
-        self.focus_column(column.index);
-        let row = y - column.area.y;
-        if row == 0 {
-            return;
-        }
-        let card = column.offset + usize::from((row - 1) / CARD_ROWS);
-        if card < self.columns()[column.index].column.cards.len() {
-            self.card = card;
+        self.focus_group(group.index);
+        let row = group.scroll + usize::from(y - group.area.y);
+        match self.rows(group.index).get(row).copied() {
+            Some(Row::Header { stack }) => self.toggle_stack(stack),
+            Some(card) => self.select(card),
+            None => {}
         }
     }
 
-    fn column_at(&self, x: u16, y: u16) -> Option<ColumnArea> {
+    fn group_at(&self, x: u16, y: u16) -> Option<GroupArea> {
         self.viewport
-            .columns
+            .groups
             .iter()
-            .find(|column| column.area.contains(Position::new(x, y)))
-            .filter(|column| column.index < self.columns().len())
+            .find(|group| group.area.contains(Position::new(x, y)))
+            .filter(|group| group.index < self.groups().len())
             .cloned()
     }
 
-    fn focus_column(&mut self, column: usize) {
-        if column != self.column {
-            self.column = column;
-            self.card = 0;
+    /// How far group `group` was scrolled when last drawn, in rows.
+    pub fn group_scroll(&self, group: usize) -> usize {
+        self.viewport
+            .groups
+            .iter()
+            .find(|area| area.index == group)
+            .map_or(0, |area| area.scroll)
+    }
+
+    fn focus_group(&mut self, group: usize) {
+        if group != self.group {
+            self.group = group;
+            self.select_first();
         }
     }
 
-    /// Cards PageUp/PageDown move by: as many as fit in a column.
+    /// Collapses or expands stack `stack` of the selected group and puts the
+    /// selection on it: on its header when collapsed, or back on its card.
+    /// Empty stacks have nothing to collapse.
+    fn toggle_stack(&mut self, stack: usize) {
+        let has_cards = self
+            .stack_at(self.group, stack)
+            .is_some_and(|column| !column.cards.is_empty());
+        let Some(key) = self.stack_key(self.group, stack).filter(|_| has_cards) else {
+            return;
+        };
+        if !self.collapsed.remove(&key) {
+            self.collapsed.insert(key);
+        }
+        self.select(Row::Header { stack });
+    }
+
+    /// Cards PageUp/PageDown move by: as many as fit in a group.
     fn card_page(&self) -> isize {
         self.viewport.card_page.max(1) as isize
     }
@@ -442,8 +582,8 @@ impl App {
     fn switch_board(&mut self, board: usize) {
         if board != self.board {
             self.board = board;
-            self.column = 0;
-            self.card = 0;
+            self.group = 0;
+            self.select_first();
         }
     }
 
@@ -455,22 +595,25 @@ impl App {
         }
     }
 
-    fn move_column(&mut self, delta: isize) {
-        let count = self.columns().len();
+    fn move_group(&mut self, delta: isize) {
+        let count = self.groups().len();
         if count > 0 {
-            self.column = self.column.saturating_add_signed(delta).min(count - 1);
-            self.card = 0;
+            self.focus_group(self.group.saturating_add_signed(delta).min(count - 1));
         }
     }
 
+    /// Moves the selection `delta` cards (or collapsed headers) through the
+    /// selected group, across its stacks, stopping at the ends.
     fn move_card(&mut self, delta: isize) {
-        let count = self
-            .columns()
-            .get(self.column)
-            .map_or(0, |c| c.column.cards.len());
-        if count > 0 {
-            self.card = self.card.saturating_add_signed(delta).min(count - 1);
-        }
+        let stops = self.stops(self.group);
+        let Some(current) = self
+            .selected_row()
+            .and_then(|selected| stops.iter().position(|row| *row == selected))
+        else {
+            return;
+        };
+        let next = current.saturating_add_signed(delta).min(stops.len() - 1);
+        self.select(stops[next]);
     }
 
     fn request_refresh(&mut self, now: Instant) -> Action {
@@ -540,7 +683,7 @@ mod tests {
         )
     }
 
-    /// Two boards: Work (plane with two columns + github) and Personal.
+    /// Two boards: Work (plane with two stacks + github) and Personal.
     fn sample() -> DashboardSnapshot {
         snapshot(vec![
             report(
@@ -576,31 +719,131 @@ mod tests {
         app.selected_card().map(|c| c.id.as_str())
     }
 
-    /// h/l move across the board's columns, crossing from one tool to the
-    /// next; j/k move within a column; the ends don't wrap.
+    /// h/l move across the board's groups (sources); j/k move through the
+    /// cards of the group, flowing from the last card of a stack to the first
+    /// card of the next one and back; the ends don't wrap.
     #[test]
-    fn keys_move_across_columns_and_within_a_column() {
+    fn keys_move_across_groups_and_through_the_stacks_of_a_group() {
         let mut app = App::new(sample());
         assert_eq!(selected(&app), Some("p1"));
 
         app.handle_key(key(KeyCode::Char('j')));
         assert_eq!(selected(&app), Some("p2"));
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(selected(&app), Some("p3"), "flows into the next stack");
         app.handle_key(key(KeyCode::Char('j')));
-        assert_eq!(selected(&app), Some("p2"), "stops at the end");
+        assert_eq!(selected(&app), Some("p3"), "stops at the end of the group");
+        app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(selected(&app), Some("p2"), "flows back");
 
         app.handle_key(key(KeyCode::Char('l')));
-        assert_eq!(selected(&app), Some("p3"), "next column starts at the top");
+        assert_eq!(app.selected_group(), 1);
+        assert_eq!(selected(&app), Some("g1"), "next group starts at the top");
         app.handle_key(key(KeyCode::Right));
-        assert_eq!(selected(&app), Some("g1"), "crosses into the next source");
-        app.handle_key(key(KeyCode::Char('l')));
-        assert_eq!(selected(&app), Some("g1"), "stops at the last column");
+        assert_eq!(selected(&app), Some("g1"), "stops at the last group");
 
         app.handle_key(key(KeyCode::Char('h')));
-        app.handle_key(key(KeyCode::Left));
         assert_eq!(selected(&app), Some("p1"));
+        app.handle_key(key(KeyCode::Left));
+        assert_eq!(selected(&app), Some("p1"), "stops at the first group");
     }
 
-    /// Digits and Tab switch boards (tabs); the selection starts at the first column.
+    /// c collapses the stack of the selected card: the selection rests on
+    /// its header, which j/k still reach, while its cards are skipped; c
+    /// there expands it again, back on the same card (or on the first one,
+    /// once the selection has been elsewhere). A header has no details and
+    /// no link.
+    #[test]
+    fn c_collapses_and_expands_the_selected_stack() {
+        let mut app = App::new(sample());
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(selected(&app), Some("p2"));
+
+        assert_eq!(app.handle_key(key(KeyCode::Char('c'))), Action::None);
+        assert!(app.is_collapsed(0, 0));
+        app.handle_key(key(KeyCode::Char('c')));
+        assert!(!app.is_collapsed(0, 0));
+        assert_eq!(selected(&app), Some("p2"), "back on the same card");
+
+        app.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(selected(&app), None);
+        assert_eq!(app.selected_row(), Some(Row::Header { stack: 0 }));
+        assert_eq!(
+            app.rows(0),
+            vec![
+                Row::Header { stack: 0 },
+                Row::Header { stack: 1 },
+                Row::Card { stack: 1, card: 0 },
+                Row::Card { stack: 1, card: 0 },
+            ]
+        );
+
+        app.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(app.popup(), None, "a header has no details");
+        assert_eq!(app.handle_key(key(KeyCode::Enter)), Action::None);
+
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(selected(&app), Some("p3"), "skips the collapsed cards");
+        app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(app.selected_row(), Some(Row::Header { stack: 0 }));
+        app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(app.selected_row(), Some(Row::Header { stack: 0 }));
+
+        app.handle_key(key(KeyCode::Char('c')));
+        assert!(!app.is_collapsed(0, 0));
+        assert_eq!(selected(&app), Some("p1"), "its first card");
+    }
+
+    /// A collapsed stack stays collapsed across refreshes and board
+    /// switches, with the selection still on its header.
+    #[test]
+    fn collapsed_stacks_survive_refreshes() {
+        let mut app = App::new(sample());
+        app.handle_key(key(KeyCode::Char('c')));
+
+        app.update(sample());
+        assert!(app.is_collapsed(0, 0));
+        assert_eq!(app.selected_row(), Some(Row::Header { stack: 0 }));
+
+        app.handle_key(key(KeyCode::Char('2')));
+        assert!(!app.is_collapsed(0, 0), "other boards are untouched");
+        assert_eq!(selected(&app), Some("t1"));
+        app.handle_key(key(KeyCode::Char('1')));
+        assert!(app.is_collapsed(0, 0));
+        assert_eq!(app.selected_row(), Some(Row::Header { stack: 0 }));
+    }
+
+    /// Empty stacks are skipped: the selection starts on the first card of
+    /// the group, and a group with only empty stacks selects nothing (and c
+    /// collapses nothing).
+    #[test]
+    fn empty_stacks_are_skipped_by_the_selection() {
+        let mut app = App::new(snapshot(vec![
+            report(
+                "plane",
+                "Work",
+                &["Empty", "Mine", "Idle", "Inbox"],
+                vec![card("Mine", "p1", None), card("Inbox", "p2", None)],
+            ),
+            report("github", "Work", &["Review"], vec![]),
+        ]));
+        assert_eq!(selected(&app), Some("p1"));
+        app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(selected(&app), Some("p1"));
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(selected(&app), Some("p2"), "jumps over the empty stack");
+
+        app.handle_key(key(KeyCode::Char('l')));
+        assert_eq!(app.selected_group(), 1);
+        assert_eq!(app.selected_row(), None);
+        for code in [KeyCode::Char('j'), KeyCode::Char('c'), KeyCode::End] {
+            app.handle_key(key(code));
+        }
+        assert_eq!(app.selected_row(), None);
+        assert!(!app.is_collapsed(1, 0));
+    }
+
+    /// Digits and Tab switch boards (tabs); the selection starts at the first group.
     #[test]
     fn digits_and_tab_switch_boards() {
         let mut app = App::new(sample());
@@ -626,15 +869,16 @@ mod tests {
         );
     }
 
-    /// When the snapshot updates, the selection stays on the same board, column
-    /// and card; if the card is gone, it keeps the same position in the column.
+    /// When the snapshot updates, the selection stays on the same board, group,
+    /// stack and card; if the card is gone, it keeps the same position in the
+    /// stack, or moves to the nearest card when the stack emptied.
     #[test]
-    fn selection_follows_board_column_and_card_across_refreshes() {
+    fn selection_follows_board_stack_and_card_across_refreshes() {
         let mut app = App::new(sample());
         app.handle_key(key(KeyCode::Char('j')));
         assert_eq!(selected(&app), Some("p2"));
 
-        // A new card above p2 in the same column.
+        // A new card above p2 in the same stack.
         app.update(snapshot(vec![
             report(
                 "plane",
@@ -659,6 +903,15 @@ mod tests {
         )]));
         assert_eq!(selected(&app), Some("p0"));
 
+        // Mine emptied: the nearest card is in the next stack.
+        app.update(snapshot(vec![report(
+            "plane",
+            "Work",
+            &["Mine", "Inbox"],
+            vec![card("Inbox", "p3", None)],
+        )]));
+        assert_eq!(selected(&app), Some("p3"));
+
         app.update(snapshot(Vec::new()));
         assert_eq!(selected(&app), None);
     }
@@ -669,7 +922,6 @@ mod tests {
         let mut app = App::new(sample());
         assert_eq!(app.handle_key(key(KeyCode::Enter)), Action::None);
 
-        app.handle_key(key(KeyCode::Char('l')));
         app.handle_key(key(KeyCode::Char('l')));
         assert_eq!(
             app.handle_key(key(KeyCode::Enter)),
@@ -708,7 +960,6 @@ mod tests {
         assert_eq!(app.handle_key(key(KeyCode::Esc)), Action::None);
         assert_eq!(app.popup(), None);
 
-        app.handle_key(key(KeyCode::Char('l')));
         app.handle_key(key(KeyCode::Char('l')));
         app.handle_key(key(KeyCode::Char(' ')));
         assert_eq!(
@@ -780,7 +1031,7 @@ mod tests {
         assert_eq!(app.popup(), None);
     }
 
-    /// Card details close when a refresh removes every card of the column.
+    /// Card details close when a refresh removes every card of the group.
     #[test]
     fn card_details_close_when_the_card_is_gone() {
         let mut app = App::new(sample());
@@ -791,15 +1042,17 @@ mod tests {
         assert_eq!(app.popup(), None);
     }
 
-    /// Plane's Mine column with cards c0..c29, and a second, empty column.
-    fn long_column() -> App {
+    /// Plane's Mine stack with cards c0..c29, an empty stack, and a last
+    /// stack with the card `last`.
+    fn long_group() -> App {
         let items = (0..30)
             .map(|i| card("Mine", &format!("c{i}"), None))
+            .chain([card("Later", "last", None)])
             .collect();
         App::new(snapshot(vec![report(
             "plane",
             "Work",
-            &["Mine", "Inbox"],
+            &["Mine", "Inbox", "Later"],
             items,
         )]))
     }
@@ -813,15 +1066,17 @@ mod tests {
         }
     }
 
-    /// Three columns side by side, 20 cells wide, from row 10: Mine, Inbox
-    /// and Review of the sample Work board.
-    fn three_columns() -> Viewport {
+    /// The two groups of the sample Work board side by side, 30 cells wide,
+    /// from row 10: plane (Mine's header on row 10, p1 on 11-12, p2 on
+    /// 13-14, Inbox's header on 15, p3 on 16-17) and github (Review's header
+    /// on row 10, g1 on 11-12).
+    fn two_groups() -> Viewport {
         Viewport {
-            columns: (0..3)
-                .map(|index| ColumnArea {
+            groups: (0..2)
+                .map(|index| GroupArea {
                     index,
-                    area: Rect::new(20 * index as u16, 10, 20, 10),
-                    offset: 0,
+                    area: Rect::new(30 * index as u16, 10, 30, 10),
+                    scroll: 0,
                 })
                 .collect(),
             card_page: 4,
@@ -829,11 +1084,11 @@ mod tests {
         }
     }
 
-    /// PageUp/PageDown move the selection by the cards that fit in a column;
-    /// Home/End (or g/G) jump to the first and last card.
+    /// PageUp/PageDown move the selection by the cards that fit in a group;
+    /// Home/End (or g/G) jump to the first and last card of the group.
     #[test]
     fn page_keys_move_by_a_page_and_home_end_jump() {
-        let mut app = long_column();
+        let mut app = long_group();
         app.set_viewport(Viewport {
             card_page: 5,
             ..Viewport::default()
@@ -846,65 +1101,93 @@ mod tests {
         app.handle_key(key(KeyCode::PageUp));
         assert_eq!(selected(&app), Some("c5"));
         app.handle_key(key(KeyCode::End));
-        assert_eq!(selected(&app), Some("c29"));
+        assert_eq!(selected(&app), Some("last"), "the group's last card");
         app.handle_key(key(KeyCode::PageDown));
-        assert_eq!(selected(&app), Some("c29"), "stops at the end");
+        assert_eq!(selected(&app), Some("last"), "stops at the end");
+        app.handle_key(key(KeyCode::PageUp));
+        assert_eq!(selected(&app), Some("c25"), "pages across stacks");
         app.handle_key(key(KeyCode::Home));
         assert_eq!(selected(&app), Some("c0"));
         app.handle_key(key(KeyCode::PageUp));
         assert_eq!(selected(&app), Some("c0"), "stops at the top");
         app.handle_key(key(KeyCode::Char('G')));
-        assert_eq!(selected(&app), Some("c29"));
+        assert_eq!(selected(&app), Some("last"));
         app.handle_key(key(KeyCode::Char('g')));
         assert_eq!(selected(&app), Some("c0"));
     }
 
-    /// The mouse wheel scrolls the column under the pointer, focusing it
-    /// first; away from the columns it scrolls the focused one.
+    /// The mouse wheel moves through the group under the pointer, focusing
+    /// it first; away from the groups it moves through the focused one.
     #[test]
-    fn mouse_wheel_scrolls_the_column_under_the_pointer() {
+    fn mouse_wheel_scrolls_the_group_under_the_pointer() {
         let mut app = App::new(sample());
-        app.set_viewport(three_columns());
+        app.set_viewport(two_groups());
 
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, 5, 12));
         assert_eq!(selected(&app), Some("p2"));
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, 5, 12));
-        assert_eq!(selected(&app), Some("p2"), "stops at the end");
+        assert_eq!(selected(&app), Some("p3"), "flows into the next stack");
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 5, 12));
+        assert_eq!(selected(&app), Some("p3"), "stops at the end");
 
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, 45, 12));
-        assert_eq!(app.selected_column(), 2, "focuses the column under it");
+        assert_eq!(app.selected_group(), 1, "focuses the group under it");
         assert_eq!(selected(&app), Some("g1"));
 
         app.handle_mouse(mouse(MouseEventKind::ScrollUp, 5, 12));
+        assert_eq!(selected(&app), Some("p1"), "focused at its top");
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, 100, 0));
-        assert_eq!(
-            selected(&app),
-            Some("p2"),
-            "outside any column: focused one"
-        );
+        assert_eq!(selected(&app), Some("p2"), "outside any group: focused one");
     }
 
-    /// Clicking a card selects it; clicking elsewhere in a column focuses
-    /// that column.
+    /// Clicking a card selects it; clicking a stack's header collapses or
+    /// expands it; clicking elsewhere in a group focuses that group.
     #[test]
-    fn clicking_a_card_selects_it() {
+    fn clicking_selects_a_card_or_toggles_a_stack() {
         let mut app = App::new(sample());
-        app.set_viewport(three_columns());
+        app.set_viewport(two_groups());
         let click = |column, row| mouse(MouseEventKind::Down(MouseButton::Left), column, row);
 
-        // Row 10 is the column title; each card takes two rows from row 11.
         app.handle_mouse(click(3, 13));
         assert_eq!(selected(&app), Some("p2"));
         app.handle_mouse(click(3, 11));
         assert_eq!(selected(&app), Some("p1"));
-
-        app.handle_mouse(click(45, 10));
-        assert_eq!(selected(&app), Some("g1"), "title focuses the column");
-        app.handle_mouse(click(25, 12));
+        app.handle_mouse(click(3, 17));
         assert_eq!(selected(&app), Some("p3"), "a card's second row");
-        app.handle_mouse(click(3, 18));
-        assert_eq!(app.selected_column(), 0, "below the cards: focus only");
-        assert_eq!(selected(&app), Some("p1"));
+        app.handle_mouse(click(3, 19));
+        assert_eq!(selected(&app), Some("p3"), "below the cards: nothing");
+
+        app.handle_mouse(click(45, 18));
+        assert_eq!(app.selected_group(), 1, "below the cards: focus only");
+        assert_eq!(selected(&app), Some("g1"));
+
+        // Mine's header: its cards go away and Inbox moves up to row 11.
+        app.handle_mouse(click(3, 10));
+        assert_eq!(app.selected_group(), 0);
+        assert!(app.is_collapsed(0, 0));
+        assert_eq!(app.selected_row(), Some(Row::Header { stack: 0 }));
+        app.handle_mouse(click(3, 13));
+        assert_eq!(selected(&app), Some("p3"));
+        app.handle_mouse(click(3, 10));
+        assert!(!app.is_collapsed(0, 0));
+        assert_eq!(selected(&app), Some("p1"), "expanded: its first card");
+    }
+
+    /// A click in a scrolled group lands on the row as drawn.
+    #[test]
+    fn clicks_account_for_the_group_scroll() {
+        let mut app = App::new(sample());
+        let mut viewport = two_groups();
+        // Rows 0-3 (Mine's header, p1, half of p2) are above the area.
+        viewport.groups[0].scroll = 4;
+        app.set_viewport(viewport);
+        assert_eq!(app.group_scroll(0), 4);
+        assert_eq!(app.group_scroll(1), 0);
+
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 3, 10));
+        assert_eq!(selected(&app), Some("p2"));
+        app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 3, 12));
+        assert_eq!(selected(&app), Some("p3"));
     }
 
     /// While details are open, the wheel scrolls them and clicks do nothing.
@@ -915,7 +1198,7 @@ mod tests {
         app.set_viewport(Viewport {
             popup_page: 5,
             popup_max_scroll: 10,
-            ..three_columns()
+            ..two_groups()
         });
 
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, 45, 12));

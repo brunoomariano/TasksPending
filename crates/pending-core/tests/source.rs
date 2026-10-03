@@ -83,3 +83,90 @@ fn sandbox_snapshot_has_simulated_cards_across_boards() {
             .all(|group| group.icon.is_some())
     );
 }
+
+/// The sandbox shows the dashboard as a real setup looks: GitHub's stacks
+/// named by next action with review and check state on the cards, issue
+/// references as titles for trackers, and a group for a newer provider with
+/// its own logo. Card ids are unique, so marking or snoozing one card in
+/// the demo never touches another.
+#[test]
+fn sandbox_shows_the_current_dashboard_features() {
+    let snapshot = sandbox_snapshot();
+    let group = |name: &str| {
+        snapshot
+            .boards
+            .iter()
+            .flat_map(|board| &board.groups)
+            .find(|group| group.source == name)
+            .unwrap_or_else(|| panic!("{name} group"))
+    };
+
+    let github: Vec<&str> = group("GitHub demo")
+        .columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect();
+    assert_eq!(
+        github,
+        [
+            "Review requested",
+            "Returned to you",
+            "Ready to merge",
+            "Not approved yet"
+        ]
+    );
+    let bodies: Vec<&str> = group("GitHub demo")
+        .columns
+        .iter()
+        .flat_map(|column| &column.cards)
+        .map(|card| card.body.as_str())
+        .collect();
+    assert!(bodies.iter().any(|body| body.contains("changes requested")));
+    assert!(bodies.iter().any(|body| body.contains("checks failing")));
+    assert!(bodies.iter().any(|body| body.contains("checks passing")));
+
+    let linear = group("Linear demo");
+    assert_eq!(
+        linear.icon.as_ref().map(|icon| icon.url.as_str()),
+        Some("https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/linear.svg")
+    );
+    assert!(linear.columns[0].cards[0].title.starts_with("ENG-"));
+    assert!(
+        group("Plane demo").columns[0].cards[0]
+            .title
+            .starts_with("OPS-")
+    );
+
+    let mut ids: Vec<&str> = snapshot
+        .boards
+        .iter()
+        .flat_map(|board| &board.groups)
+        .flat_map(|group| &group.columns)
+        .flat_map(|column| &column.cards)
+        .map(|card| card.id.as_str())
+        .collect();
+    let total = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), total);
+    assert!(total >= 14);
+
+    // The cards `scripts/screenshots.mjs` marks, snoozes and opens.
+    let ids: Vec<&str> = snapshot
+        .boards
+        .iter()
+        .flat_map(|board| &board.groups)
+        .flat_map(|group| &group.columns)
+        .flat_map(|column| &column.cards)
+        .map(|card| card.id.as_str())
+        .collect();
+    for id in [
+        "github:pull:220",
+        "linear:ENG-142",
+        "github:review:214",
+        "github:review:218",
+        "todoist:later:1",
+    ] {
+        assert!(ids.contains(&id), "the screenshots need the card {id}");
+    }
+}

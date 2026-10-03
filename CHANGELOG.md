@@ -14,6 +14,7 @@
 - The GitLab, Jira and Linear sources were built from each provider's API documentation and are covered by tests against stand-in servers; they have not yet been run against live accounts. Please report anything that behaves differently.
 - Snooze a card from the web page or the TUI (`z`, and `Z` for the list): it leaves its stacks for an hour, until tomorrow, until next week or until it changes, and always comes back early when its item changes. A quiet "N snoozed" link opens the list to wake a card. Snoozes are kept by the daemon and nothing is written to the provider.
 - A small dot marks the cards that changed since you last looked, and the stacks holding them, on the web page and in the TUI. Coming back after 10 minutes away shows what changed in between, including what the dashboard only fetched after you left; the dots clear on the next return. Only deliberate actions (a click, a key, scrolling) count as looking. No counts, no notifications.
+- `tasks-pending sandbox` shows the current features: GitHub stacks by next action with review and check state, a Linear group, issue references as titles, and some cards flagged as changed. `make screenshots` regenerates the README pictures from it.
 
 ### Fixed
 

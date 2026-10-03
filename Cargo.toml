@@ -3,6 +3,7 @@ members = [
     "crates/pending-api",
     "crates/pending-core",
     "crates/pending-github",
+    "crates/pending-gitlab",
     "crates/pending-google",
     "crates/pending-http",
     "crates/pending-ical",

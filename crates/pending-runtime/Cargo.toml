@@ -11,7 +11,8 @@ homepage.workspace = true
 chrono.workspace = true
 pending-core = { path = "../pending-core" }
 pending-github = { path = "../pending-github" }
-pending-google = { path = "../pending-google" }
+pending-gitlab = { path = "../pending-gitlab" }
+pending-google ={ path = "../pending-google" }
 pending-ical = { path = "../pending-ical" }
 pending-plane = { path = "../pending-plane" }
 pending-todoist = { path = "../pending-todoist" }

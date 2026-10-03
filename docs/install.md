@@ -105,6 +105,7 @@ On Linux, the installer warns when this file is absent. It does not create it or
 | Source | Variables |
 |---|---|
 | `github` | `GITHUB_TOKEN` or `GH_TOKEN`; else `gh auth token` (the service's PATH includes `~/.local/bin` and mise shims) |
+| `gitlab` | `GITLAB_TOKEN` (personal access token with `read_api`); `GITLAB_BASE_URL` for a self-managed instance (default `https://gitlab.com`) |
 | `plane` | `PLANE_BASE_URL`, `PLANE_WORKSPACE` (or `PLANE_WORKSPACE_SLUG`), `PLANE_TOKEN` (or `PLANE_API_KEY`) |
 | `todoist` | `TODOIST_API_TOKEN` |
 | `google` | none: uses your GNOME Online Accounts login over the session bus (Linux desktop only) |

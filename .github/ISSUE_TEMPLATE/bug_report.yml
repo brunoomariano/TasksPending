@@ -29,8 +29,10 @@ body:
         - Terminal UI
         - Installation or update
         - GitHub source
+        - GitLab source
         - Plane source
         - Jira source
+        - Linear source
         - Google Calendar source
         - iCal source
         - Todoist source

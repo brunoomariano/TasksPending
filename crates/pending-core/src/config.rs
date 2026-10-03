@@ -48,8 +48,8 @@ pub struct SourceConfig {
     pub stacks: Vec<StackConfig>,
 }
 
-/// One stack of a source's cards: a name, the order of its cards, plus
-/// kind-specific filter keys.
+/// One stack of a source's cards: a name, the order of its cards, the cards
+/// it leaves out, plus kind-specific filter keys.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackConfig {
     pub name: String,
@@ -59,6 +59,11 @@ pub struct StackConfig {
     /// Card order, for any source kind; not part of `filter`.
     #[serde(default)]
     pub sort: StackSort,
+    /// Patterns (case-insensitive regular expressions) of cards to leave out
+    /// of this stack, matched against title and body; for any source kind,
+    /// not part of `filter`. Compiled and checked when the config loads.
+    #[serde(default)]
+    pub exclude: Vec<String>,
     #[serde(flatten)]
     pub filter: toml::Table,
 }
@@ -357,6 +362,41 @@ mod tests {
         )
         .expect_err("unknown sort");
         assert!(error.to_string().contains("stale"), "{error}");
+    }
+
+    /// Any stack may list `exclude` patterns (none by default); the key is
+    /// read here, not by the source's filter, and it must be a list.
+    #[test]
+    fn stacks_take_exclude_patterns_out_of_the_filter() {
+        let config = parse(
+            r#"
+            [[sources]]
+            name = "plane"
+            kind = "plane"
+
+              [[sources.stacks]]
+              name = "Quiet"
+              exclude = ["dependabot\\[bot\\]", "^chore\\(deps\\)"]
+              state = ["In Review"]
+
+              [[sources.stacks]]
+              name = "Default"
+            "#,
+        );
+        let stacks = &config.sources[0].stacks;
+        assert_eq!(stacks[0].exclude, [r"dependabot\[bot\]", r"^chore\(deps\)"]);
+        assert!(stacks[1].exclude.is_empty());
+        assert!(
+            !stacks[0].filter.contains_key("exclude"),
+            "{:?}",
+            stacks[0].filter
+        );
+        assert!(stacks[0].filter.contains_key("state"));
+
+        toml::from_str::<AppConfig>(
+            "[[sources]]\nname = \"s\"\nkind = \"plane\"\n[[sources.stacks]]\nname = \"A\"\nexclude = \"bot\"",
+        )
+        .expect_err("exclude must be a list");
     }
 
     /// A source may name an icon (and a variant for dark themes) by http(s)

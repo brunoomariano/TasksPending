@@ -16,6 +16,9 @@ timeout_seconds = 60
 # (not queried, not shown anywhere).
 # Any stack may add `sort = "oldest"` to list the least recently updated
 # cards first (default "newest"); severity and due time still come first.
+# Any stack may add `exclude = ["pattern", ...]` to leave out the cards whose
+# title or body matches a pattern (regular expressions, compared without
+# case; write a backslash twice). Other stacks keep those cards.
 # To reorder, move whole blocks up or down. Without [[sources.stacks]] a
 # source uses its default stacks.
 [[sources]]
@@ -44,6 +47,8 @@ enabled = true
 #   name = "Review requested"
 #   query = "is:open is:pr archived:false review-requested:@me"
 #   severity = "warning"          # optional: info (default), warning, critical
+#   # Hide bot noise, a repository, or a word in the title:
+#   exclude = ["dependabot\\[bot\\]", "^chore\\(deps\\)", "^acme/legacy#", "\\bwip\\b"]
 #
 #   [[sources.stacks]]
 #   name = "Notifications"

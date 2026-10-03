@@ -14,7 +14,7 @@ pub struct DashboardSnapshot {
     pub config_error: Option<String>,
     /// Ids of the cards marked as in progress, in the order they were
     /// marked. A marked card may be absent from the boards while its source
-    /// is failing.
+    /// is failing or an `exclude` pattern hides it.
     #[serde(default)]
     pub marked: Vec<String>,
     /// Version of the program that produced the snapshot, e.g. `0.4.0`.

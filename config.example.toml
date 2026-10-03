@@ -25,8 +25,8 @@ board = "Inbox"      # area used by the web filter and TUI tabs (default "Inbox"
 enabled = true
 # refresh_seconds = 60   # overrides the default above
 # timeout_seconds = 120  # overrides the default timeout above
-# GitHub, Google Calendar, Plane and Todoist have built-in Dashboard Icons
-# logos. Set `icon` to override one; use `icon_dark` for a dark-theme variant.
+# Every provider shows its Dashboard Icons logo by default. Set `icon` to
+# override it; use `icon_dark` for a dark-theme variant.
 # Dashboard Icons: https://dashboardicons.com
 # icon = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github.svg"
 # icon_dark = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github-light.svg"

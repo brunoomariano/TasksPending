@@ -16,7 +16,7 @@ use ratatui::widgets::{
 use crate::app::{App, CARD_ROWS, GroupArea, Popup, Row, Viewport};
 use crate::clock;
 
-const HELP: &str = "1-9/tab boards · h/l groups · j/k cards · c collapse · enter open · space details · s sources · r refresh · q quit";
+const HELP: &str = "tab boards · h/l groups · j/k cards · c collapse · m mark · enter open · space details · s sources · r refresh · q quit";
 /// Largest details popup, so long lines stay readable on wide terminals.
 const POPUP_MAX_WIDTH: u16 = 110;
 const POPUP_MAX_HEIGHT: u16 = 30;
@@ -26,6 +26,13 @@ const MIN_GROUP_WIDTH: u16 = 30;
 /// Fewest rows the board keeps (about three cards per group); the clock
 /// hides rather than take them.
 const MIN_BOARD_ROWS: u16 = 10;
+/// Most rows of cards the Now panel shows; with more marked cards, the last
+/// row counts the rest.
+const NOW_MAX_ROWS: usize = 5;
+/// Goes before the title of a card marked as in progress, so the mark shows
+/// without colour too.
+const MARK: &str = "● ";
+const MARK_COLOR: Color = Color::Magenta;
 /// Glyphs in `HH:MM:SS`.
 const CLOCK_TEXT_LEN: usize = 8;
 /// The same calm accent as the source titles and the selected tab.
@@ -54,6 +61,10 @@ pub fn render(
         snapshot.sources.len().max(1) as u16 + u16::from(snapshot.config_error.is_some()) + 2;
     // Header, tabs, Sources panel and footer.
     let chrome = 1 + 1 + sources_height + 1;
+    let marked = app.marked_cards();
+    let now_height = now_height(marked.len(), area.height.saturating_sub(chrome));
+    // The clock gives way before the Now panel does.
+    let chrome = chrome + now_height;
     let clock_size = clock_size(area, chrome);
     let clock_height = clock_size.map_or(0, |size| 1 + clock::GLYPH_ROWS * size);
 
@@ -69,6 +80,7 @@ pub fn render(
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(sources_height),
+            Constraint::Length(now_height),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
@@ -111,7 +123,10 @@ pub fn render(
         .block(Block::default().title("Sources").borders(Borders::ALL))
         .render(layout[2], buf);
 
-    render_board(layout[3], buf, app, &mut viewport);
+    if now_height > 0 {
+        render_now(layout[3], buf, &marked);
+    }
+    render_board(layout[4], buf, app, &mut viewport);
 
     let footer = match app.notice() {
         Some(notice) if app.notice_is_error() => {
@@ -120,12 +135,62 @@ pub fn render(
         Some(notice) => Span::styled(notice, Style::default().fg(Color::Cyan)),
         None => Span::styled(HELP, Style::default().fg(Color::DarkGray)),
     };
-    Paragraph::new(footer).render(layout[4], buf);
+    Paragraph::new(footer).render(layout[5], buf);
 
     if let Some(popup) = app.popup() {
         render_popup(screen, buf, app, popup, &mut viewport);
     }
     viewport
+}
+
+/// Rows the Now panel takes, border included, for `marked` cards when the
+/// panel and the board have `available` rows between them: none without
+/// marked cards, or when the board would be left fewer than
+/// `MIN_BOARD_ROWS`.
+fn now_height(marked: usize, available: u16) -> u16 {
+    if marked == 0 {
+        return 0;
+    }
+    let height = marked.min(NOW_MAX_ROWS) as u16 + 2;
+    if available.saturating_sub(height) < MIN_BOARD_ROWS {
+        0
+    } else {
+        height
+    }
+}
+
+/// The marked cards, one line each: the mark, the title, then the source.
+/// Past `NOW_MAX_ROWS`, the last row tells how many more there are.
+fn render_now(area: Rect, buf: &mut Buffer, marked: &[(&PendingCard, &str)]) {
+    let shown = if marked.len() > NOW_MAX_ROWS {
+        NOW_MAX_ROWS - 1
+    } else {
+        marked.len()
+    };
+    let mut lines: Vec<Line> = marked[..shown]
+        .iter()
+        .map(|(card, source)| {
+            Line::from(vec![
+                Span::styled(MARK, Style::default().fg(MARK_COLOR)),
+                Span::styled(card.title.as_str(), Style::default().fg(Color::White)),
+                Span::styled(format!("  {source}"), Style::default().fg(Color::DarkGray)),
+            ])
+        })
+        .collect();
+    if shown < marked.len() {
+        lines.push(Line::from(Span::styled(
+            format!("  +{} more", marked.len() - shown),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    let block = Block::default()
+        .title(Span::styled(
+            " Now ",
+            Style::default().fg(MARK_COLOR).add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(MARK_COLOR));
+    Paragraph::new(lines).block(block).render(area, buf);
 }
 
 /// The popup's area: centered, at most `POPUP_MAX_WIDTH` × `POPUP_MAX_HEIGHT`,
@@ -152,7 +217,7 @@ fn render_popup(screen: Rect, buf: &mut Buffer, app: &App, popup: Popup, viewpor
             (
                 " Details ",
                 card_details(app, card),
-                " j/k scroll · enter open · esc close ",
+                " j/k scroll · m mark · enter open · esc close ",
             )
         }
         Popup::Sources => (" Sources ", source_details(app), " j/k scroll · esc close "),
@@ -219,6 +284,12 @@ fn card_details<'a>(app: &App, card: &'a PendingCard) -> Vec<Line<'a>> {
         }
         lines.push(field("Stack", stack.name.clone()));
     }
+    let marked = if app.is_marked(&card.id) {
+        "in progress"
+    } else {
+        "no"
+    };
+    lines.push(field("Marked", marked.to_owned()));
     if let Some(due) = card.due_at {
         lines.push(field("Due", local(due)));
     }
@@ -463,7 +534,7 @@ fn render_group(area: Rect, buf: &mut Buffer, app: &App, index: usize, group: &G
                 if position > 0 && rows[position - 1] == *row {
                     card_body(card)
                 } else {
-                    card_title(card, is_selected)
+                    card_title(card, is_selected, app.is_marked(&card.id))
                 }
             }
         };
@@ -519,7 +590,9 @@ fn stack_header(
     ])
 }
 
-fn card_title(card: &PendingCard, selected: bool) -> Line<'_> {
+/// A card's title row: the severity bar, the mark when the card is marked
+/// as in progress, then the title.
+fn card_title(card: &PendingCard, selected: bool, marked: bool) -> Line<'_> {
     let marker = match card.severity {
         CardSeverity::Info => Style::default().fg(Color::Blue),
         CardSeverity::Warning => Style::default().fg(Color::Yellow),
@@ -527,13 +600,19 @@ fn card_title(card: &PendingCard, selected: bool) -> Line<'_> {
     };
     let title = if selected {
         Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+    } else if marked {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
-    Line::from(vec![
-        Span::styled("▍", marker),
-        Span::styled(card.title.as_str(), title),
-    ])
+    let mut spans = vec![Span::styled("▍", marker)];
+    if marked {
+        spans.push(Span::styled(MARK, Style::default().fg(MARK_COLOR)));
+    }
+    spans.push(Span::styled(card.title.as_str(), title));
+    Line::from(spans)
 }
 
 fn card_body(card: &PendingCard) -> Line<'_> {
@@ -680,6 +759,7 @@ mod tests {
             "calendar failed: feed returned 404",
             "h/l groups",
             "c collapse",
+            "m mark",
             "q quit",
         ] {
             assert!(
@@ -899,6 +979,129 @@ mod tests {
         };
         assert_eq!(popup_line("second line"), popup_line("first line") + 2);
         assert_eq!(popup_line("third"), popup_line("first line") + 3);
+    }
+
+    /// The Work and Personal boards of `work`, but with a working calendar
+    /// (one card), and `marked` as the marked card ids.
+    fn marked(marked: &[&str]) -> App {
+        let mut snapshot = build_snapshot(
+            Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap(),
+            vec![
+                fresh(
+                    "plane",
+                    "Work",
+                    &["Mine", "Inbox"],
+                    vec![card("Mine", "API-1", "Fix login")],
+                ),
+                fresh(
+                    "github",
+                    "Work",
+                    &["Review"],
+                    vec![card("Review", "gh-1", "Add cache")],
+                ),
+                fresh(
+                    "calendar",
+                    "Personal",
+                    &["Today"],
+                    vec![card("Today", "ev-1", "Dentist")],
+                ),
+            ],
+        );
+        snapshot.marked = marked.iter().map(|id| (*id).to_owned()).collect();
+        App::new(snapshot)
+    }
+
+    /// Marked cards are repeated in a Now panel above the groups, in marking
+    /// order, one line each (title, then source), whatever the selected
+    /// board; in their stacks they carry a mark. Without marks there is no
+    /// panel and the board starts higher.
+    #[test]
+    fn marked_cards_show_in_a_now_panel_above_the_groups() {
+        let with_marks = screen(&marked(&["ev-1", "API-1"]), 120, 30);
+
+        let (_, now_row) = position(&with_marks, "┌ Now ");
+        let (_, first) = position(&with_marks, "● Dentist");
+        let (_, second) = position(&with_marks, "● Fix login");
+        let (_, board_row) = position(&with_marks, "┌ plane ");
+        assert_eq!((first, second), (now_row + 1, now_row + 2), "{with_marks}");
+        assert_eq!(board_row, now_row + 4, "{with_marks}");
+        let line = |row: u16| with_marks.lines().nth(usize::from(row)).unwrap();
+        assert!(line(first).contains("calendar"), "{with_marks}");
+        assert!(line(second).contains("plane"), "{with_marks}");
+        // In its stack, the marked card carries the mark; the other doesn't.
+        assert!(with_marks.contains("▍● Fix login"), "{with_marks}");
+        assert!(with_marks.contains("▍Add cache"), "{with_marks}");
+
+        let without = screen(&marked(&[]), 120, 30);
+        assert!(!without.contains(" Now "), "{without}");
+        assert!(!without.contains('●'), "{without}");
+        assert_eq!(position(&without, "┌ plane ").1, now_row, "{without}");
+    }
+
+    /// The Now panel shows at most five rows: with more marked cards, four
+    /// of them and how many more there are. Marks without a card on the
+    /// dashboard don't count.
+    #[test]
+    fn now_panel_is_capped() {
+        let items = (0..8)
+            .map(|i| card("Mine", &format!("c{i}"), &format!("Task number {i}")))
+            .collect();
+        let mut snapshot = build_snapshot(
+            Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap(),
+            vec![fresh("plane", "Work", &["Mine"], items)],
+        );
+        snapshot.marked = (0..5).map(|i| format!("c{i}")).collect();
+        snapshot.marked.push("gone".to_owned());
+
+        let five = screen(&App::new(snapshot.clone()), 100, 40);
+        assert!(five.contains("● Task number 4"), "{five}");
+        assert!(!five.contains("more"), "{five}");
+
+        snapshot.marked = (0..8).map(|i| format!("c{i}")).collect();
+        let eight = screen(&App::new(snapshot), 100, 40);
+        let (_, now_row) = position(&eight, "┌ Now ");
+        assert!(eight.contains("● Task number 3"), "{eight}");
+        assert!(!eight.contains("Task number 4  plane"), "{eight}");
+        assert_eq!(position(&eight, "+4 more").1, now_row + 5, "{eight}");
+        assert_eq!(position(&eight, "┌ plane ").1, now_row + 7, "{eight}");
+    }
+
+    /// The Now panel never squeezes the board: the clock gives way first,
+    /// and on a terminal too short to leave the board ten rows the panel
+    /// hides too (the marks still show on the cards).
+    #[test]
+    fn now_panel_hides_when_the_board_would_be_squeezed() {
+        // Chrome with three sources is 8 rows, the panel 3, the board 10.
+        let app = marked(&["API-1"]);
+
+        let roomy = screen(&app, 100, 27);
+        assert_eq!(clock_rows(&roomy), 5, "{roomy}");
+        assert!(roomy.contains(" Now "), "{roomy}");
+
+        let no_clock = screen(&app, 100, 26);
+        assert_eq!(clock_rows(&no_clock), 0, "{no_clock}");
+        assert!(no_clock.contains(" Now "), "{no_clock}");
+        let fits = screen(&app, 100, 21);
+        assert!(fits.contains(" Now "), "{fits}");
+
+        let short = screen(&app, 100, 20);
+        assert!(!short.contains(" Now "), "{short}");
+        assert!(short.contains("▍● Fix login"), "{short}");
+    }
+
+    /// The details popup says whether the card is marked as in progress.
+    #[test]
+    fn card_details_say_whether_the_card_is_marked() {
+        let mut app = marked(&["API-1"]);
+        app.handle_key(KeyEvent::from(KeyCode::Char(' ')));
+        let details = screen(&app, 120, 40);
+        assert!(details.contains("Marked   in progress"), "{details}");
+        assert!(details.contains("m mark"), "{details}");
+
+        let mut app = marked(&[]);
+        app.handle_key(KeyEvent::from(KeyCode::Char(' ')));
+        let details = screen(&app, 120, 40);
+        assert!(details.contains("Marked   no"), "{details}");
     }
 
     /// With no sources, the screen explains that none are configured.

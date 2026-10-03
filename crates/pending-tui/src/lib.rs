@@ -170,12 +170,21 @@ fn run_dashboard(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> 
                     app.set_notice(format!("could not open link: {error}"));
                 }
             }
+            Action::SetMark { id, marked } => set_mark(dashboard, &mut app, &id, marked),
             Action::None => {}
         }
     }
 
     terminal.show_cursor().context("showing cursor")?;
     Ok(())
+}
+
+/// Marks or unmarks a card on the running dashboard; the next frame reads
+/// the result from its snapshot. A failure shows in the footer.
+fn set_mark(dashboard: &dyn Dashboard, app: &mut App, id: &str, marked: bool) {
+    if let Err(error) = dashboard.set_mark(id, marked) {
+        app.set_notice(format!("could not mark card: {error}"));
+    }
 }
 
 /// Opens a card link in the default browser. A background thread reaps the
@@ -200,7 +209,58 @@ fn open_url(url: &str) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use pending_runtime::marks::MarkError;
+
     use super::*;
+
+    /// A dashboard whose marks always fail, and one that records them.
+    struct Marking {
+        fails: bool,
+        calls: std::sync::Mutex<Vec<(String, bool)>>,
+    }
+
+    impl Dashboard for Marking {
+        fn snapshot(&self) -> pending_core::DashboardSnapshot {
+            pending_core::sample_snapshot()
+        }
+
+        fn refresh_now(&self) {}
+
+        fn set_mark(&self, id: &str, marked: bool) -> Result<(), MarkError> {
+            if self.fails {
+                return Err(MarkError::UnknownCard);
+            }
+            self.calls.lock().unwrap().push((id.to_owned(), marked));
+            Ok(())
+        }
+    }
+
+    /// Marking goes to the running dashboard; a failure shows in the footer
+    /// as an error, and success leaves the footer alone.
+    #[test]
+    fn marks_go_to_the_dashboard_and_failures_show_in_the_footer() {
+        let mut app = App::new(pending_core::sample_snapshot());
+        let working = Marking {
+            fails: false,
+            calls: Default::default(),
+        };
+
+        set_mark(&working, &mut app, "card-1", true);
+        assert_eq!(
+            *working.calls.lock().unwrap(),
+            [("card-1".to_owned(), true)]
+        );
+        assert_eq!(app.notice(), None);
+
+        let failing = Marking {
+            fails: true,
+            calls: Default::default(),
+        };
+        set_mark(&failing, &mut app, "card-1", true);
+        let notice = app.notice().unwrap_or_default();
+        assert!(notice.contains("could not mark card"), "{notice}");
+        assert!(app.notice_is_error());
+    }
 
     /// Only a UI-thread panic restores the terminal; a source panicking on
     /// another thread is handled by the runtime and the TUI stays usable.

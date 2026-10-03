@@ -23,6 +23,11 @@ pub enum Action {
     Quit,
     RefreshNow,
     Open(String),
+    /// Mark the card `id` as in progress, or unmark it.
+    SetMark {
+        id: String,
+        marked: bool,
+    },
 }
 
 /// One screen row of a group as drawn, before scrolling: the group's stacks
@@ -239,6 +244,43 @@ impl App {
         }
     }
 
+    /// Whether the card `id` is marked as in progress.
+    pub fn is_marked(&self, id: &str) -> bool {
+        self.snapshot.marked.iter().any(|marked| marked == id)
+    }
+
+    /// The marked cards that are on the dashboard, on any board, in marking
+    /// order, each with its source.
+    pub fn marked_cards(&self) -> Vec<(&PendingCard, &str)> {
+        self.snapshot
+            .marked
+            .iter()
+            .filter_map(|id| {
+                self.snapshot
+                    .boards
+                    .iter()
+                    .flat_map(|board| &board.groups)
+                    .find_map(|group| {
+                        group
+                            .columns
+                            .iter()
+                            .flat_map(|stack| &stack.cards)
+                            .find(|card| card.id == *id)
+                            .map(|card| (card, group.source.as_str()))
+                    })
+            })
+            .collect()
+    }
+
+    /// Asks to mark the selected card, or to unmark it when it is marked.
+    fn toggle_mark(&self) -> Action {
+        self.selected_card()
+            .map_or(Action::None, |card| Action::SetMark {
+                id: card.id.clone(),
+                marked: !self.is_marked(&card.id),
+            })
+    }
+
     fn select(&mut self, row: Row) {
         match row {
             Row::Header { stack } => {
@@ -435,6 +477,7 @@ impl App {
                 Action::None
             }
             KeyCode::Enter => self.open_selected(),
+            KeyCode::Char('m') => self.toggle_mark(),
             KeyCode::Char(' ' | 'd') => {
                 if self.selected_card().is_some() {
                     self.open_popup(Popup::Card);
@@ -461,6 +504,7 @@ impl App {
             KeyCode::Char(' ' | 'd') if popup == Popup::Card => self.popup = None,
             KeyCode::Char('s') if popup == Popup::Sources => self.popup = None,
             KeyCode::Enter if popup == Popup::Card => return self.open_selected(),
+            KeyCode::Char('m') if popup == Popup::Card => return self.toggle_mark(),
             KeyCode::Char('j') | KeyCode::Down => self.scroll_popup(1),
             KeyCode::Char('k') | KeyCode::Up => self.scroll_popup(-1),
             KeyCode::PageDown => self.scroll_popup(page),
@@ -841,6 +885,57 @@ mod tests {
         }
         assert_eq!(app.selected_row(), None);
         assert!(!app.is_collapsed(1, 0));
+    }
+
+    /// m asks to mark the selected card as in progress, or to unmark it when
+    /// it is marked, also while its details are open; on a collapsed header
+    /// there is no card to mark.
+    #[test]
+    fn m_asks_to_toggle_the_mark_of_the_selected_card() {
+        let mut app = App::new(sample());
+        let m = key(KeyCode::Char('m'));
+        let set = |marked| Action::SetMark {
+            id: "p1".to_owned(),
+            marked,
+        };
+
+        assert_eq!(app.handle_key(m), set(true));
+
+        let mut marked = sample();
+        marked.marked = vec!["p1".to_owned()];
+        app.update(marked);
+        assert!(app.is_marked("p1"));
+        assert!(!app.is_marked("p2"));
+        assert_eq!(app.handle_key(m), set(false));
+
+        app.handle_key(key(KeyCode::Char(' ')));
+        assert_eq!(app.handle_key(m), set(false), "from the details too");
+        assert_eq!(app.popup(), Some(Popup::Card), "details stay open");
+        app.handle_key(key(KeyCode::Esc));
+
+        app.handle_key(key(KeyCode::Char('c')));
+        assert_eq!(app.handle_key(m), Action::None, "a header is not a card");
+    }
+
+    /// The marked cards are listed in marking order with their source,
+    /// whatever the board, once each; marks whose card is not on the
+    /// dashboard are left out.
+    #[test]
+    fn marked_cards_are_listed_in_marking_order_across_boards() {
+        let mut snapshot = sample();
+        snapshot.marked = ["t1", "gone", "g1", "p2"].map(str::to_owned).to_vec();
+        let app = App::new(snapshot);
+
+        let listed: Vec<(&str, &str)> = app
+            .marked_cards()
+            .into_iter()
+            .map(|(card, source)| (card.id.as_str(), source))
+            .collect();
+
+        assert_eq!(
+            listed,
+            [("t1", "todoist"), ("g1", "github"), ("p2", "plane")]
+        );
     }
 
     /// Digits and Tab switch boards (tabs); the selection starts at the first group.

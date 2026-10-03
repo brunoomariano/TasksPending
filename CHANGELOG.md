@@ -9,7 +9,7 @@
 ### Features
 
 - `tasks-pending sandbox` (and `make sandbox`) runs the dashboard with simulated cards at <http://127.0.0.1:61001>, without configuration, credentials or network access.
-- Mark any card as in progress with its pin button on the web page. Marked cards are highlighted and repeated in a "Now" row above the stacks, which disappears when nothing is marked. Marks are kept by the daemon, shared by every browser, and dropped when the item is finished.
+- Mark any card as in progress with its pin button on the web page. Marked cards are highlighted and repeated in a "Now" row above the stacks, which disappears when nothing is marked. Marks are kept by the daemon, shared by every browser, and dropped when the item is finished. In the TUI, `m` marks or unmarks the selected card, with the same marks shown in a "Now" panel above the groups.
 - Any stack can be switched off in the config with `enabled = false`: it is not queried and not shown, in the web page or the TUI.
 - On Omarchy, the web dashboard shows a small weather widget beside the clock (condition icon, temperature, place and wind, from Omarchy's weather commands through the new `GET /api/v1/weather`). It is absent when weather is unavailable and hidden in windows narrower than 1440 px. The systemd service's PATH now includes Omarchy's command directories; install again to update an existing service file.
 - The TUI lays the board out like the web page: groups side by side, each with its stacks one above another under a header with the name and count. `j`/`k` flow from one stack to the next, and `c` (or a click on the header) collapses or expands a stack.

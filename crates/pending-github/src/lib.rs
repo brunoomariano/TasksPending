@@ -1,6 +1,6 @@
-//! GitHub as a pending-work source: review requests, open pull requests and
-//! assigned issues of the authenticated user, via the search API, plus
-//! notifications and repositories' open security alerts.
+//! GitHub as a pending-work source: review requests, the authenticated
+//! user's open pull requests split by next action and assigned issues, via
+//! the search API, plus notifications and repositories' open security alerts.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -108,7 +108,13 @@ fn is_repo_name(repo: &str) -> bool {
         .is_some_and(|(owner, name)| valid(owner) && valid(name))
 }
 
-/// Columns used when the configuration declares none.
+/// Columns used when the configuration declares none: one per next action.
+///
+/// The four columns of my pull requests do not overlap. Drafts go only to
+/// "Drafts". "Waiting on reviewers" excludes the two decided states instead of
+/// asking for `review:none` or `review:required`: `review:none` leaves out a
+/// pull request that only got comment reviews, and `review:required` matches
+/// only repositories that require reviews.
 pub fn default_columns() -> Vec<GithubColumn> {
     let column = |name: &str, query: &str, severity| GithubColumn {
         name: name.to_owned(),
@@ -124,8 +130,23 @@ pub fn default_columns() -> Vec<GithubColumn> {
             CardSeverity::Warning,
         ),
         column(
-            "My pull requests",
-            "is:open is:pr archived:false author:@me",
+            "Returned to you",
+            "is:open is:pr archived:false author:@me draft:false review:changes_requested",
+            CardSeverity::Warning,
+        ),
+        column(
+            "Ready to merge",
+            "is:open is:pr archived:false author:@me draft:false review:approved",
+            CardSeverity::Info,
+        ),
+        column(
+            "Waiting on reviewers",
+            "is:open is:pr archived:false author:@me draft:false -review:approved -review:changes_requested",
+            CardSeverity::Info,
+        ),
+        column(
+            "Drafts",
+            "is:open is:pr archived:false author:@me draft:true",
             CardSeverity::Info,
         ),
         column(

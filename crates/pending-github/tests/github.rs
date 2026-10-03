@@ -14,6 +14,13 @@ use serde_json::{Value, json};
 
 const TOKEN: &str = "ghp_secret_test_token";
 
+/// Query fragments that tell the default stacks of my pull requests apart in
+/// the stub: each one is in exactly one default query.
+const RETURNED: &str = "draft:false review:changes_requested";
+const READY: &str = "draft:false review:approved";
+const WAITING: &str = "-review:approved";
+const DRAFTS: &str = "draft:true";
+
 /// Canned reply per section: HTTP status, headers and body.
 #[derive(Clone)]
 struct Reply {
@@ -42,7 +49,8 @@ impl Reply {
 
 #[derive(Clone, Default)]
 struct Stub {
-    /// Reply per query fragment (`review-requested`, `author`, `assignee`).
+    /// Reply per query fragment (`review-requested`, `assignee`, [`WAITING`]…);
+    /// `author` matches every stack of my pull requests.
     replies: Arc<Mutex<HashMap<&'static str, Reply>>>,
     auth_headers: Arc<Mutex<Vec<String>>>,
     /// Notifications served by `/notifications`, and the `all` param seen.
@@ -222,20 +230,32 @@ fn sections(batch: &SourceBatch) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Pending work becomes three sections: reviews requested from me, my open PRs
-/// and issues assigned to me. Each card carries link, repository and number,
-/// and a review request is highlighted as a warning, since it blocks someone else.
+/// Without configured stacks, pending work is split by the next action:
+/// reviews requested from me, my pull requests returned with changes
+/// requested, approved, still waiting on reviewers and drafts, then issues
+/// assigned to me. Each card carries link, repository and number. What blocks
+/// someone else or needs my rework (a review request, a returned pull
+/// request) is a warning; the rest is info.
 #[tokio::test]
-async fn pending_github_work_becomes_cards_in_three_sections() {
+async fn pending_github_work_is_split_by_next_action() {
     let batch = refresh(stub_with(vec![
         (
             "review-requested",
             Reply::items(vec![item("o/api", 7, "Add cache", true)]),
         ),
         (
-            "author",
+            RETURNED,
+            Reply::items(vec![item("o/web", 1, "Rework me", true)]),
+        ),
+        (
+            READY,
+            Reply::items(vec![item("o/web", 2, "Approved", true)]),
+        ),
+        (
+            WAITING,
             Reply::items(vec![item("o/web", 3, "Fix layout", true)]),
         ),
+        (DRAFTS, Reply::items(vec![item("o/web", 4, "Idea", true)])),
         (
             "assignee",
             Reply::items(vec![item("o/api", 9, "Crash on start", false)]),
@@ -248,8 +268,26 @@ async fn pending_github_work_becomes_cards_in_three_sections() {
         sections(&batch),
         vec![
             ("Review requested".to_owned(), "github:o/api#7".to_owned()),
-            ("My pull requests".to_owned(), "github:o/web#3".to_owned()),
+            ("Returned to you".to_owned(), "github:o/web#1".to_owned()),
+            ("Ready to merge".to_owned(), "github:o/web#2".to_owned()),
+            (
+                "Waiting on reviewers".to_owned(),
+                "github:o/web#3".to_owned()
+            ),
+            ("Drafts".to_owned(), "github:o/web#4".to_owned()),
             ("Assigned issues".to_owned(), "github:o/api#9".to_owned()),
+        ]
+    );
+    let severities: Vec<CardSeverity> = batch.items.iter().map(|i| i.card.severity).collect();
+    assert_eq!(
+        severities,
+        [
+            CardSeverity::Warning,
+            CardSeverity::Warning,
+            CardSeverity::Info,
+            CardSeverity::Info,
+            CardSeverity::Info,
+            CardSeverity::Info,
         ]
     );
     let review = &batch.items[0].card;
@@ -260,10 +298,48 @@ async fn pending_github_work_becomes_cards_in_three_sections() {
     );
     assert!(review.body.contains("o/api#7"), "{}", review.body);
     assert_eq!(review.source, "github");
-    assert_eq!(review.severity, CardSeverity::Warning);
-    assert_eq!(batch.items[1].card.severity, CardSeverity::Info);
     assert_eq!(review.updated_at.to_rfc3339(), "2026-09-28T10:00:00+00:00");
     assert!(batch.warnings.is_empty());
+}
+
+/// The default stacks of my pull requests do not overlap: each query asks for
+/// my open pull requests in live repositories, drafts go only to "Drafts",
+/// and "Waiting on reviewers" is whatever is neither approved nor returned
+/// (so a pull request with only comment reviews still shows there).
+#[test]
+fn default_stacks_of_my_pull_requests_do_not_overlap() {
+    let queries: HashMap<String, String> = pending_github::default_columns()
+        .into_iter()
+        .map(|column| {
+            (
+                column.name,
+                column.query.expect("default stacks are searches"),
+            )
+        })
+        .collect();
+    let mine = "is:open is:pr archived:false author:@me";
+
+    assert_eq!(
+        queries["Returned to you"],
+        format!("{mine} draft:false review:changes_requested")
+    );
+    assert_eq!(
+        queries["Ready to merge"],
+        format!("{mine} draft:false review:approved")
+    );
+    assert_eq!(
+        queries["Waiting on reviewers"],
+        format!("{mine} draft:false -review:approved -review:changes_requested")
+    );
+    assert_eq!(queries["Drafts"], format!("{mine} draft:true"));
+    assert_eq!(
+        queries["Review requested"],
+        "is:open is:pr archived:false review-requested:@me"
+    );
+    assert_eq!(
+        queries["Assigned issues"],
+        "is:open is:issue archived:false assignee:@me"
+    );
 }
 
 /// The token goes in the authorization header of every search.
@@ -275,7 +351,7 @@ async fn every_search_is_authenticated_with_the_token() {
     refresh(stub).await.expect("refresh succeeds");
 
     let auth = auth.lock().unwrap();
-    assert_eq!(auth.len(), 3);
+    assert_eq!(auth.len(), 6);
     assert!(
         auth.iter().all(|h| h == &format!("Bearer {TOKEN}")),
         "{auth:?}"
@@ -341,7 +417,7 @@ async fn one_failed_search_keeps_the_other_sections_with_a_warning() {
             Reply::status(StatusCode::BAD_GATEWAY, "upstream"),
         ),
         (
-            "author",
+            WAITING,
             Reply::items(vec![item("o/web", 3, "Fix layout", true)]),
         ),
     ]))
@@ -350,7 +426,10 @@ async fn one_failed_search_keeps_the_other_sections_with_a_warning() {
 
     assert_eq!(
         sections(&batch),
-        vec![("My pull requests".to_owned(), "github:o/web#3".to_owned())]
+        vec![(
+            "Waiting on reviewers".to_owned(),
+            "github:o/web#3".to_owned()
+        )]
     );
     assert_eq!(batch.warnings.len(), 1);
     assert!(
@@ -412,7 +491,7 @@ async fn rate_limit_is_reported_with_the_reset_time() {
 async fn truncated_results_are_reported() {
     let mut reply = Reply::items(vec![item("o/api", 1, "One", true)]);
     reply.body["total_count"] = json!(120);
-    let batch = refresh(stub_with(vec![("author", reply)]))
+    let batch = refresh(stub_with(vec![(WAITING, reply)]))
         .await
         .expect("refresh succeeds");
 
@@ -421,7 +500,7 @@ async fn truncated_results_are_reported() {
         batch
             .warnings
             .iter()
-            .any(|w| w.contains("My pull requests") && w.contains("120")),
+            .any(|w| w.contains("Waiting on reviewers") && w.contains("120")),
         "{:?}",
         batch.warnings
     );
@@ -499,7 +578,7 @@ async fn a_hanging_search_times_out_without_losing_the_other_sections() {
             if q.contains("review-requested") {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             }
-            let items = if q.contains("author") {
+            let items = if q.contains(WAITING) {
                 vec![item("o/web", 3, "Fix layout", true)]
             } else {
                 Vec::new()
@@ -519,7 +598,10 @@ async fn a_hanging_search_times_out_without_losing_the_other_sections() {
 
     assert_eq!(
         sections(&batch),
-        vec![("My pull requests".to_owned(), "github:o/web#3".to_owned())]
+        vec![(
+            "Waiting on reviewers".to_owned(),
+            "github:o/web#3".to_owned()
+        )]
     );
     assert!(
         batch
@@ -537,7 +619,7 @@ async fn a_hanging_search_times_out_without_losing_the_other_sections() {
 async fn incomplete_search_results_are_reported() {
     let mut reply = Reply::items(vec![item("o/api", 1, "One", true)]);
     reply.body["incomplete_results"] = json!(true);
-    let batch = refresh(stub_with(vec![("author", reply)]))
+    let batch = refresh(stub_with(vec![(WAITING, reply)]))
         .await
         .expect("refresh succeeds");
 
@@ -545,7 +627,7 @@ async fn incomplete_search_results_are_reported() {
         batch
             .warnings
             .iter()
-            .any(|w| w.contains("My pull requests") && w.contains("incomplete")),
+            .any(|w| w.contains("Waiting on reviewers") && w.contains("incomplete")),
         "{:?}",
         batch.warnings
     );
@@ -556,7 +638,7 @@ async fn incomplete_search_results_are_reported() {
 async fn draft_pull_requests_are_marked() {
     let mut draft = item("o/api", 7, "Add cache", true);
     draft["draft"] = json!(true);
-    let batch = refresh(stub_with(vec![("author", Reply::items(vec![draft]))]))
+    let batch = refresh(stub_with(vec![(DRAFTS, Reply::items(vec![draft]))]))
         .await
         .expect("refresh succeeds");
 
@@ -578,7 +660,7 @@ async fn comment_counts_are_shown_when_there_are_comments() {
     let mut quiet = item("o/web", 3, "Fix layout", true);
     quiet["comments"] = json!(0);
     let batch = refresh(stub_with(vec![
-        ("author", Reply::items(vec![discussed, quiet])),
+        (WAITING, Reply::items(vec![discussed, quiet])),
         ("assignee", Reply::items(vec![issue])),
     ]))
     .await
@@ -602,10 +684,17 @@ async fn pull_requests_show_draft_and_review_state_from_one_lookup() {
             Reply::items(vec![item("o/api", 1, "Needs review", true)]),
         ),
         (
-            "author",
+            WAITING,
+            Reply::items(vec![item("o/api", 1, "Needs review", true)]),
+        ),
+        (
+            READY,
+            Reply::items(vec![item("o/api", 2, "Approved", true)]),
+        ),
+        // An info stack, to show that the review state raises the card.
+        (
+            DRAFTS,
             Reply::items(vec![
-                item("o/api", 1, "Needs review", true),
-                item("o/api", 2, "Approved", true),
                 item("o/api", 3, "Rework", true),
                 item("o/api", 4, "Draft", true),
             ]),
@@ -645,16 +734,16 @@ async fn pull_requests_show_draft_and_review_state_from_one_lookup() {
     let review = card("Review requested", "github:o/api#1");
     assert!(review.body.contains("review required"), "{}", review.body);
     assert_eq!(review.severity, CardSeverity::Warning);
-    let mine = card("My pull requests", "github:o/api#1");
+    let mine = card("Waiting on reviewers", "github:o/api#1");
     assert!(mine.body.contains("review required"), "{}", mine.body);
     assert_eq!(mine.severity, CardSeverity::Info);
-    let approved = card("My pull requests", "github:o/api#2");
+    let approved = card("Ready to merge", "github:o/api#2");
     assert!(approved.body.contains("approved"), "{}", approved.body);
     assert_eq!(approved.severity, CardSeverity::Info);
-    let rework = card("My pull requests", "github:o/api#3");
+    let rework = card("Drafts", "github:o/api#3");
     assert!(rework.body.contains("changes requested"), "{}", rework.body);
     assert_eq!(rework.severity, CardSeverity::Warning);
-    let draft = card("My pull requests", "github:o/api#4");
+    let draft = card("Drafts", "github:o/api#4");
     assert!(draft.body.contains("draft"), "{}", draft.body);
     assert_eq!(draft.body.matches("draft").count(), 1, "{}", draft.body);
     let issue = card("Assigned issues", "github:o/api#9");
@@ -681,7 +770,7 @@ async fn no_pull_requests_means_no_review_lookup() {
 #[tokio::test]
 async fn a_failed_review_lookup_keeps_the_cards_with_a_warning() {
     let stub = stub_with(vec![(
-        "author",
+        WAITING,
         Reply::items(vec![item("o/api", 3, "Rework", true)]),
     )]);
     *stub.graphql_reply.lock().unwrap() = Some(Reply::status(StatusCode::BAD_GATEWAY, "upstream"));
@@ -690,7 +779,10 @@ async fn a_failed_review_lookup_keeps_the_cards_with_a_warning() {
 
     assert_eq!(
         sections(&batch),
-        vec![("My pull requests".to_owned(), "github:o/api#3".to_owned())]
+        vec![(
+            "Waiting on reviewers".to_owned(),
+            "github:o/api#3".to_owned()
+        )]
     );
     assert_eq!(batch.items[0].card.body, "o/api#3 · @octocat");
     assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
@@ -723,7 +815,7 @@ async fn graphql_errors_become_a_warning() {
         ),
     ] {
         let stub = stub_with(vec![(
-            "author",
+            WAITING,
             Reply::items(vec![item("o/api", 3, "Rework", true)]),
         )]);
         *stub.graphql_reply.lock().unwrap() = Some(Reply {
@@ -793,7 +885,7 @@ async fn review_lookups_ask_for_at_most_a_hundred_pull_requests() {
 #[tokio::test]
 async fn card_id_keeps_owner_and_repo_named_repos() {
     let batch = refresh(stub_with(vec![(
-        "author",
+        WAITING,
         Reply::items(vec![item("repos/repos", 5, "Odd names", true)]),
     )]))
     .await

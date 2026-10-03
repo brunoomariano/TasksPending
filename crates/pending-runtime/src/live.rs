@@ -15,6 +15,7 @@ use tracing::{info, warn};
 use crate::Aggregator;
 use crate::cache::Cache;
 use crate::config::{LoadError, Origin, load_plan, locate};
+use crate::looks::Looks;
 use crate::marks::{MarkError, Marks};
 use crate::snoozes::{SnoozeError, Snoozes};
 
@@ -38,6 +39,7 @@ struct Inner {
     cache: Option<PathBuf>,
     marks: Marks,
     snoozes: Snoozes,
+    looks: Looks,
     state: Mutex<State>,
     generation: AtomicU64,
 }
@@ -73,6 +75,7 @@ impl Live {
         };
         let marks = Marks::load(beside_cache("marks.json"));
         let snoozes = Snoozes::load(beside_cache("snoozes.json"));
+        let looks = Looks::load(beside_cache("looks.json"));
         let live = Self {
             inner: Arc::new(Inner {
                 cli,
@@ -80,6 +83,7 @@ impl Live {
                 cache,
                 marks,
                 snoozes,
+                looks,
                 state: Mutex::new(State {
                     aggregator,
                     text,
@@ -96,9 +100,19 @@ impl Live {
             let state = self.state();
             (state.aggregator.clone(), state.error.clone())
         };
-        let mut snapshot = assemble(&aggregator, &self.inner.marks, &self.inner.snoozes);
+        let mut snapshot = assemble(
+            &aggregator,
+            &self.inner.marks,
+            &self.inner.snoozes,
+            &self.inner.looks,
+        );
         snapshot.config_error = error;
         snapshot
+    }
+
+    /// Records that the user is looking at the dashboard now.
+    pub fn look(&self) {
+        self.inner.looks.look();
     }
 
     /// Hides a card until `until`, or until the item changes when `None`;
@@ -197,12 +211,19 @@ impl Drop for Watch {
 /// The sources' snapshot with the user's state applied to it. The cards
 /// hidden by `exclude` come from the same batches as the snapshot, so a
 /// hidden card is never taken for a finished one.
-fn assemble(aggregator: &Aggregator, marks: &Marks, snoozes: &Snoozes) -> DashboardSnapshot {
+fn assemble(
+    aggregator: &Aggregator,
+    marks: &Marks,
+    snoozes: &Snoozes,
+    looks: &Looks,
+) -> DashboardSnapshot {
     let (mut snapshot, hidden) = aggregator.snapshot_with_hidden();
     // Marks first: they are judged on every card the sources returned,
     // including the ones a snooze is about to hide.
     marks.apply_hiding(&mut snapshot, &hidden);
     snoozes.apply_hiding(&mut snapshot, &hidden);
+    // Last: only cards still on the boards are flagged as changed.
+    looks.apply(&mut snapshot);
     snapshot
 }
 
@@ -283,17 +304,18 @@ mod tests {
     async fn a_mark_survives_its_card_being_excluded() {
         let marks = Marks::load(None);
         let snoozes = Snoozes::load(None);
+        let looks = Looks::load(None);
         let shown = aggregator("");
         tokio::time::sleep(Duration::from_secs(1)).await;
         marks
-            .set(&assemble(&shown, &marks, &snoozes), "parser", true)
+            .set(&assemble(&shown, &marks, &snoozes, &looks), "parser", true)
             .expect("the card is on the dashboard");
 
         // Real time, so that the next refresh is after the mark.
         std::thread::sleep(Duration::from_millis(5));
         let excluding = aggregator("\"wip\"");
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let snapshot = assemble(&excluding, &marks, &snoozes);
+        let snapshot = assemble(&excluding, &marks, &snoozes, &looks);
 
         assert!(snapshot.boards[0].groups[0].columns[0].cards.is_empty());
         assert_eq!(snapshot.marked, ["parser"]);

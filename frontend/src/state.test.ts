@@ -8,6 +8,7 @@ const snapshot = (id: string): DashboardSnapshot => ({
   marked: [],
   version: "0.0.0",
   snoozed: [],
+  changed: [],
   sources: [
     { name: "github", status: "ready", last_refresh_at: null, message: null },
   ],

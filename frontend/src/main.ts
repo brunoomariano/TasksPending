@@ -1,5 +1,12 @@
 import "./styles.css";
-import { loadSnapshot, requestRefresh, setMark, setSnooze } from "./api";
+import { startActivity } from "./activity";
+import {
+  loadSnapshot,
+  requestRefresh,
+  sendLook,
+  setMark,
+  setSnooze,
+} from "./api";
 import { AUTO_REFRESH_CHOICES, startAutoRefresh } from "./autoRefresh";
 import { startClock } from "./clock";
 import { type SnoozeChoice, snoozeUntil } from "./snooze";
@@ -157,6 +164,16 @@ if (app && controls) {
     isHidden: () => document.hidden,
   });
   scheduleAutoRefresh();
+  // Activity on the page is "looking": the daemon flags what changed since
+  // the previous sitting, so read the snapshot again after reporting it.
+  startActivity(
+    async () => {
+      if ((await sendLook()).ok) {
+        poller.pollNow();
+      }
+    },
+    { target: window, now: () => Date.now() },
+  );
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       poller.pollNow();

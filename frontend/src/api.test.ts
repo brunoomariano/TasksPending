@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { loadSnapshot, requestRefresh, setMark, setSnooze } from "./api";
+import {
+  loadSnapshot,
+  requestRefresh,
+  sendLook,
+  setMark,
+  setSnooze,
+} from "./api";
 
 describe("loadSnapshot", () => {
   /**
@@ -22,6 +28,7 @@ describe("loadSnapshot", () => {
       marked: [],
       version: "0.0.0",
       snoozed: [],
+      changed: [],
       boards: [],
       sources: [],
     };
@@ -178,5 +185,23 @@ describe("setSnooze", () => {
       ok: false,
       error: "HTTP 404",
     });
+  });
+});
+
+describe("sendLook", () => {
+  /** Activity is reported with the header the API requires. */
+  test("posts with the dashboard header", async () => {
+    let sent: { path: string; init?: RequestInit } | undefined;
+    const done = async (path: string, init?: RequestInit) => {
+      sent = { path, init };
+      return new Response(null, { status: 204 });
+    };
+
+    expect(await sendLook(done)).toEqual({ ok: true });
+    expect(sent?.path).toBe("/api/v1/look");
+    expect(sent?.init?.method).toBe("POST");
+    expect(new Headers(sent?.init?.headers).get("x-requested-with")).toBe(
+      "tasks-pending",
+    );
   });
 });

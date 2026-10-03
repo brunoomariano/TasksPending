@@ -22,6 +22,7 @@ pub mod cache;
 pub mod config;
 pub mod exclude;
 pub mod live;
+pub mod looks;
 pub mod marks;
 pub mod snoozes;
 mod store;
@@ -48,6 +49,8 @@ pub trait Dashboard: Send + Sync {
     fn wake(&self, _id: &str) -> Result<(), snoozes::SnoozeError> {
         Err(snoozes::SnoozeError::Unsupported)
     }
+    /// Records that the user is looking at the dashboard now.
+    fn look(&self) {}
 }
 
 impl Dashboard for Aggregator {
@@ -83,6 +86,10 @@ impl Dashboard for live::Live {
 
     fn wake(&self, id: &str) -> Result<(), snoozes::SnoozeError> {
         live::Live::wake(self, id)
+    }
+
+    fn look(&self) {
+        live::Live::look(self);
     }
 }
 

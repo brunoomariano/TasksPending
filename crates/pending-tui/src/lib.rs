@@ -1,5 +1,6 @@
 mod app;
 mod clock;
+mod snooze;
 mod ui;
 
 use std::io;
@@ -7,6 +8,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use chrono::{DateTime, Local, Utc};
 use crossterm::ExecutableCommand;
 use crossterm::cursor::Show;
 use crossterm::event::{
@@ -22,6 +24,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::app::{Action, App, Viewport};
+use crate::snooze::Choice;
 
 #[derive(Debug)]
 pub struct TuiOptions {
@@ -171,6 +174,10 @@ fn run_dashboard(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> 
                 }
             }
             Action::SetMark { id, marked } => set_mark(dashboard, &mut app, &id, marked),
+            Action::Snooze { id, choice } => {
+                snooze_card(dashboard, &mut app, &id, choice, &chrono::Local::now());
+            }
+            Action::Wake { id } => wake_card(dashboard, &mut app, &id),
             Action::None => {}
         }
     }
@@ -184,6 +191,31 @@ fn run_dashboard(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> 
 fn set_mark(dashboard: &dyn Dashboard, app: &mut App, id: &str, marked: bool) {
     if let Err(error) = dashboard.set_mark(id, marked) {
         app.set_notice(format!("could not mark card: {error}"));
+    }
+}
+
+/// Snoozes a card on the running dashboard for as long as `choice` says,
+/// counted from `now`; the next frame reads the result from its snapshot.
+/// The footer says until when, or why it failed.
+fn snooze_card(
+    dashboard: &dyn Dashboard,
+    app: &mut App,
+    id: &str,
+    choice: Choice,
+    now: &DateTime<Local>,
+) {
+    let until = snooze::until(choice, now).map(|at| at.with_timezone(&Utc));
+    match dashboard.snooze(id, until) {
+        Ok(()) => app.set_info(format!("snoozed {}", snooze::until_text(until))),
+        Err(error) => app.set_notice(format!("could not snooze card: {error}")),
+    }
+}
+
+/// Brings a snoozed card back on the running dashboard; a failure shows in
+/// the footer.
+fn wake_card(dashboard: &dyn Dashboard, app: &mut App, id: &str) {
+    if let Err(error) = dashboard.wake(id) {
+        app.set_notice(format!("could not wake card: {error}"));
     }
 }
 
@@ -209,9 +241,117 @@ fn open_url(url: &str) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone;
     use pending_runtime::marks::MarkError;
+    use pending_runtime::snoozes::SnoozeError;
 
     use super::*;
+
+    /// What a [`Snoozing`] dashboard was asked: to snooze a card until a
+    /// time (or until it changes), or to wake it.
+    #[derive(Debug, PartialEq)]
+    enum Asked {
+        Snooze(String, Option<DateTime<Utc>>),
+        Wake(String),
+    }
+
+    /// A dashboard whose snoozes always fail, and one that records them.
+    struct Snoozing {
+        fails: bool,
+        calls: std::sync::Mutex<Vec<Asked>>,
+    }
+
+    impl Snoozing {
+        fn new(fails: bool) -> Self {
+            Self {
+                fails,
+                calls: Default::default(),
+            }
+        }
+    }
+
+    impl Dashboard for Snoozing {
+        fn snapshot(&self) -> pending_core::DashboardSnapshot {
+            pending_core::sample_snapshot()
+        }
+
+        fn refresh_now(&self) {}
+
+        fn snooze(&self, id: &str, until: Option<DateTime<Utc>>) -> Result<(), SnoozeError> {
+            if self.fails {
+                return Err(SnoozeError::UnknownCard);
+            }
+            let mut calls = self.calls.lock().unwrap();
+            calls.push(Asked::Snooze(id.to_owned(), until));
+            Ok(())
+        }
+
+        fn wake(&self, id: &str) -> Result<(), SnoozeError> {
+            if self.fails {
+                return Err(SnoozeError::Unsupported);
+            }
+            self.calls.lock().unwrap().push(Asked::Wake(id.to_owned()));
+            Ok(())
+        }
+    }
+
+    /// Snoozing goes to the running dashboard with the time the choice ends
+    /// (counted in local time from now), or with none to wait for a change;
+    /// the footer then says until when. A failure shows there as an error.
+    #[test]
+    fn snoozes_go_to_the_dashboard_with_the_time_of_the_choice() {
+        let mut app = App::new(pending_core::sample_snapshot());
+        let working = Snoozing::new(false);
+        // A Wednesday afternoon.
+        let now = Local.with_ymd_and_hms(2026, 10, 7, 15, 30, 0).unwrap();
+        let at = |day, hour, minute| {
+            let local = Local.with_ymd_and_hms(2026, 10, day, hour, minute, 0);
+            Some(local.unwrap().with_timezone(&Utc))
+        };
+
+        snooze_card(&working, &mut app, "card-1", Choice::Hour, &now);
+        snooze_card(&working, &mut app, "card-1", Choice::Tomorrow, &now);
+        assert_eq!(app.notice(), Some("snoozed until Thu 8 Oct 08:00"));
+        assert!(!app.notice_is_error());
+        snooze_card(&working, &mut app, "card-2", Choice::NextWeek, &now);
+        snooze_card(&working, &mut app, "card-2", Choice::UntilChange, &now);
+        assert_eq!(app.notice(), Some("snoozed until it changes"));
+
+        assert_eq!(
+            *working.calls.lock().unwrap(),
+            [
+                Asked::Snooze("card-1".to_owned(), at(7, 16, 30)),
+                Asked::Snooze("card-1".to_owned(), at(8, 8, 0)),
+                Asked::Snooze("card-2".to_owned(), at(12, 8, 0)),
+                Asked::Snooze("card-2".to_owned(), None),
+            ]
+        );
+
+        snooze_card(&Snoozing::new(true), &mut app, "card-1", Choice::Hour, &now);
+        let notice = app.notice().unwrap_or_default();
+        assert!(notice.contains("could not snooze card"), "{notice}");
+        assert!(app.notice_is_error());
+    }
+
+    /// Waking goes to the running dashboard and leaves the footer alone; a
+    /// failure shows in the footer as an error.
+    #[test]
+    fn wakes_go_to_the_dashboard_and_failures_show_in_the_footer() {
+        let mut app = App::new(pending_core::sample_snapshot());
+        let working = Snoozing::new(false);
+
+        wake_card(&working, &mut app, "card-1");
+        assert_eq!(
+            *working.calls.lock().unwrap(),
+            [Asked::Wake("card-1".to_owned())]
+        );
+        assert_eq!(app.notice(), None);
+
+        wake_card(&Snoozing::new(true), &mut app, "card-1");
+        let notice = app.notice().unwrap_or_default();
+        assert!(notice.contains("could not wake card"), "{notice}");
+        assert!(app.notice_is_error());
+    }
 
     /// A dashboard whose marks always fail, and one that records them.
     struct Marking {

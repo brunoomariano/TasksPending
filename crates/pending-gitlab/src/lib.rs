@@ -24,6 +24,11 @@ pub const BASE_URL_ENV: &str = "GITLAB_BASE_URL";
 /// Per-request limit, below the aggregator's default refresh timeout (60s)
 /// so a hanging request becomes a warning instead of failing the refresh.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// What one stack may take for all its pages together. The default stacks
+/// run in at most two rounds of [`MAX_CONCURRENT_STACKS`], so two rounds fit
+/// the aggregator's default source timeout (60s) and a slow stack becomes a
+/// warning instead of failing the whole source.
+const DEFAULT_STACK_BUDGET: Duration = Duration::from_secs(25);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Maximum page size of the GitLab API.
 const PAGE_SIZE: usize = 100;
@@ -258,6 +263,7 @@ pub struct GitlabSource {
     api_url: String,
     token: Result<String, String>,
     request_timeout: Duration,
+    stack_budget: Duration,
     columns: Vec<GitlabColumn>,
     today: fn() -> NaiveDate,
 }
@@ -285,6 +291,7 @@ impl GitlabSource {
             api_url: format!("{base_url}/api/v4"),
             token,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            stack_budget: DEFAULT_STACK_BUDGET,
             columns: default_columns(),
             today: local_today,
         }
@@ -327,6 +334,13 @@ impl GitlabSource {
         self
     }
 
+    /// Replaces [`DEFAULT_STACK_BUDGET`], the time one stack has for all its
+    /// pages together.
+    pub fn with_stack_budget(mut self, budget: Duration) -> Self {
+        self.stack_budget = budget;
+        self
+    }
+
     /// The date "overdue" is measured against (the local date by default).
     pub fn with_today(mut self, today: fn() -> NaiveDate) -> Self {
         self.today = today;
@@ -347,7 +361,12 @@ impl GitlabSource {
         let mut results = Vec::with_capacity(self.columns.len());
         for chunk in self.columns.chunks(MAX_CONCURRENT_STACKS) {
             results.extend(
-                join_all(chunk.iter().map(|column| self.column_cards(&auth, column))).await,
+                join_all(
+                    chunk
+                        .iter()
+                        .map(|column| self.within_budget(self.column_cards(&auth, column))),
+                )
+                .await,
             );
         }
 
@@ -387,6 +406,19 @@ impl GitlabSource {
         }
         batch.warnings.extend(failures);
         Ok(batch)
+    }
+
+    /// Runs one stack within the stack budget. A stack that runs out of time
+    /// fails like any other failing stack; the pages it had already read are
+    /// dropped, because the stack would be incomplete.
+    async fn within_budget<T>(
+        &self,
+        stack: impl Future<Output = Result<T, Failure>>,
+    ) -> Result<T, Failure> {
+        match tokio::time::timeout(self.stack_budget, stack).await {
+            Ok(result) => result,
+            Err(_) => Err(format!("timed out after {:?}", self.stack_budget).into()),
+        }
     }
 
     /// The cards of one stack; `true` when pages were left unread.

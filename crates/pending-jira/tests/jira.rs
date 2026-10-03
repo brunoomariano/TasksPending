@@ -35,6 +35,8 @@ struct Stub {
     pages: Arc<Mutex<HashMap<String, Vec<Reply>>>>,
     /// JQL queries whose requests hang.
     slow: Arc<Mutex<Vec<String>>>,
+    /// How long each reply to a JQL query takes.
+    delays: Arc<Mutex<HashMap<String, Duration>>>,
     seen: Arc<Mutex<Vec<Seen>>>,
     /// Requests that reached the redirect target.
     elsewhere: Arc<Mutex<Vec<String>>>,
@@ -135,6 +137,10 @@ async fn search(
     };
     if stub.slow.lock().unwrap().contains(&jql) {
         tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+    let delay = stub.delays.lock().unwrap().get(&jql).copied();
+    if let Some(delay) = delay {
+        tokio::time::sleep(delay).await;
     }
 
     let reply = stub
@@ -759,6 +765,45 @@ async fn a_slow_query_becomes_a_warning_after_its_timeout() {
 
     assert_eq!(batch.items.len(), 1);
     assert_eq!(batch.warnings, ["Slow: timed out after 300ms"]);
+}
+
+/// Each stack also has a time budget for all its pages together: a query
+/// whose pages each answer within the request limit, but add up to more than
+/// the budget, becomes a warning naming its stack and shows no cards, while
+/// the other stacks still show theirs.
+#[tokio::test]
+async fn a_stack_over_its_time_budget_is_a_warning_naming_it() {
+    let stub = Stub::default();
+    stub.issues("project = OPS", vec![issue("OPS-1", "One")]);
+    let pages = (1..=5)
+        .map(|n| {
+            let mut page = json!({ "issues": [issue(&format!("SLOW-{n}"), "x")] });
+            if n < 5 {
+                page["nextPageToken"] = json!(format!("tok-{n}"));
+            }
+            ok(page)
+        })
+        .collect();
+    stub.reply("project = SLOW", pages);
+    // Five pages of 150 ms each: 750 ms in all.
+    stub.delays
+        .lock()
+        .unwrap()
+        .insert("project = SLOW".to_owned(), Duration::from_millis(150));
+    let source = cloud_source(serve(stub).await)
+        .with_stack_budget(Duration::from_millis(400))
+        .with_columns(vec![
+            column("Ops", "project = OPS"),
+            column("Slow", "project = SLOW"),
+        ]);
+
+    let batch = source.refresh().await.expect("partial refresh");
+
+    assert_eq!(
+        ids(&batch),
+        vec![("Ops".to_owned(), "jira:OPS-1".to_owned())]
+    );
+    assert_eq!(batch.warnings, ["Slow: timed out after 400ms"]);
 }
 
 /// The stacks of one refresh run at most three at a time, and the cards

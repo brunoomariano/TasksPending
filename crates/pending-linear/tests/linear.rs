@@ -666,6 +666,54 @@ async fn a_hanging_stack_times_out_as_a_warning() {
     );
 }
 
+/// Each stack also has a time budget for all its pages together: a stack
+/// whose pages each answer within the request limit, but add up to more than
+/// the budget, becomes a warning naming it and shows no cards, while the
+/// other stacks still show theirs.
+#[tokio::test]
+async fn a_stack_over_its_time_budget_is_a_warning_naming_it() {
+    let stub = Stub::new(|body| match state_types(body).join(",").as_str() {
+        // Five pages of 150 ms each: 750 ms in all.
+        "backlog" => {
+            let n = match body["variables"]["after"].as_str() {
+                None => 1,
+                Some(cursor) => cursor.trim_start_matches("cursor-").parse::<u32>().unwrap() + 1,
+            };
+            let next = format!("cursor-{n}");
+            let mut reply = page(
+                vec![issue(&format!("SLOW-{n}"), "Slow")],
+                (n < 5).then_some(next.as_str()),
+            );
+            reply.delay = Some(Duration::from_millis(150));
+            reply
+        }
+        _ => page(vec![issue("ENG-1", "Works")], None),
+    });
+    let base = serve(stub.clone()).await;
+
+    let batch = source(&base)
+        .with_stack_budget(Duration::from_millis(400))
+        .with_columns(vec![
+            LinearColumn {
+                state_type: vec![StateType::Backlog],
+                ..column("Backlog")
+            },
+            LinearColumn {
+                state_type: vec![StateType::Started],
+                ..column("In progress")
+            },
+        ])
+        .refresh()
+        .await
+        .expect("refresh succeeds");
+
+    assert_eq!(
+        ids(&batch),
+        vec![("In progress".to_owned(), "linear:ENG-1".to_owned())]
+    );
+    assert_eq!(batch.warnings, ["Backlog: timed out after 400ms"]);
+}
+
 /// Stacks are queried a few at a time, never all at once, and keep their
 /// configured order in the result.
 #[tokio::test]

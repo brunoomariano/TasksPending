@@ -12,6 +12,11 @@ pub struct DashboardSnapshot {
     /// running meanwhile.
     #[serde(default)]
     pub config_error: Option<String>,
+    /// Ids of the cards marked as in progress, in the order they were
+    /// marked. A marked card may be absent from the boards while its source
+    /// is failing.
+    #[serde(default)]
+    pub marked: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

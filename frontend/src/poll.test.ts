@@ -7,6 +7,7 @@ import type { ViewState } from "./state";
 const snapshot = (generatedAt: string, title = "a"): DashboardSnapshot => ({
   generated_at: generatedAt,
   config_error: null,
+  marked: [],
   sources: [],
   boards: [
     {

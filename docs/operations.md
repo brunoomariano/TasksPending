@@ -87,6 +87,8 @@ The page shows the groups side by side in config order, each labelled with its b
 
 Source health is behind the **Sources** button, which opens a dialog with each source's board, status, last fetch and failure reason, plus a config error when the saved config was not reloaded. The button shows a warning icon when any source is degraded or failed, or the config has an error.
 
+Every card has a pin button (shown on hover) that marks it as in progress; click it again to unmark. Marked cards stay in their stacks, highlighted, and are repeated in a **Now** row above the stacks, in the order they were marked, with no limit; the row is absent when nothing is marked, and it ignores the board filter and hidden items. Marks are kept by the daemon in `$XDG_STATE_HOME/tasks-pending/marks.json` (next to the cache), so every browser shows the same ones and they survive restarts. A mark is dropped on its own when its card is gone after a clean refresh of its source (the item was finished elsewhere) or when its source is removed from the config; while the source is failing or refreshing, the mark is kept.
+
 The page polls `/api/v1/snapshot` every 15 seconds while the tab is visible and redraws only when something changed. If the API stops answering after a successful load, the last cards stay on screen under a warning. The Refresh button calls `POST /api/v1/refresh`.
 
 `tasks-pending serve` serves the release build's embedded frontend at `/`. `--static-dir <dir>` overrides it for local frontend development; that directory must have an `index.html`. A binary built without frontend assets and run without the override serves only the API.
@@ -96,6 +98,7 @@ The page polls `/api/v1/snapshot` every 15 seconds while the tab is visible and 
 - `GET /healthz`: process health and version.
 - `GET /api/v1/snapshot`: dashboard snapshot.
 - `POST /api/v1/refresh`: refresh every source now. Requires the header `x-requested-with: tasks-pending` (403 without it, so other sites open in the browser cannot trigger it) and answers 429 with `retry_after_secs` when called again within 10 s.
+- `POST /api/v1/marks`: mark or unmark a card as in progress, with a JSON body `{"id": "<card id>", "marked": true}`. Requires the same header (403 without it); 204 on success, 404 when no card with that id is on the dashboard. The snapshot lists the marked ids in `marked`.
 - `GET /*`: embedded frontend, or the explicit static directory used for development.
 
 Every request must be addressed to `localhost`, `127.0.0.1` or `[::1]` (any port); other `Host` values get 421, so a page that points its own domain at 127.0.0.1 (DNS rebinding) cannot read the dashboard. Requests without a `Host` header (non-browser clients) are served.

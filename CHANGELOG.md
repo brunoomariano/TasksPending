@@ -9,6 +9,7 @@
 ### Features
 
 - `tasks-pending sandbox` (and `make sandbox`) runs the dashboard with simulated cards at <http://127.0.0.1:61001>, without configuration, credentials or network access.
+- Mark any card as in progress with its pin button on the web page. Marked cards are highlighted and repeated in a "Now" row above the stacks, which disappears when nothing is marked. Marks are kept by the daemon, shared by every browser, and dropped when the item is finished.
 - Any stack can be switched off in the config with `enabled = false`: it is not queried and not shown, in the web page or the TUI.
 
 ## 0.3.1

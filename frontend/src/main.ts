@@ -1,5 +1,5 @@
 import "./styles.css";
-import { loadSnapshot, requestRefresh } from "./api";
+import { loadSnapshot, requestRefresh, setMark } from "./api";
 import { AUTO_REFRESH_CHOICES, startAutoRefresh } from "./autoRefresh";
 import { startClock } from "./clock";
 import { startPolling } from "./poll";
@@ -170,6 +170,20 @@ if (app && controls) {
     const hide = target.closest<HTMLElement>("[data-hide]");
     if (hide) {
       change({ hidden: flip(view.hidden, hide.dataset.hide ?? "") });
+      return;
+    }
+    const mark = target.closest<HTMLElement>("[data-mark]");
+    if (mark) {
+      // The snapshot holds the marks: ask the API, then read it again.
+      const result = await setMark(
+        mark.dataset.mark ?? "",
+        mark.getAttribute("aria-pressed") !== "true",
+      );
+      if (result.ok) {
+        poller.pollNow();
+      } else {
+        mark.title = `Could not change the mark (${result.error})`;
+      }
       return;
     }
     const interval = target.closest<HTMLElement>("[data-auto-refresh]");

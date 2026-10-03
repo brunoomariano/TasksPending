@@ -213,6 +213,7 @@ pub fn build_snapshot(
         boards,
         sources,
         config_error: None,
+        marked: Vec::new(),
     }
 }
 

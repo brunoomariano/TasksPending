@@ -14,6 +14,7 @@ use tracing::{info, warn};
 use crate::Aggregator;
 use crate::cache::Cache;
 use crate::config::{LoadError, Origin, load_plan, locate};
+use crate::marks::{MarkError, Marks};
 
 /// Reads an environment variable; injectable for tests.
 pub type Env = Arc<dyn Fn(&str) -> Option<OsString> + Send + Sync>;
@@ -33,6 +34,7 @@ struct Inner {
     cli: Option<PathBuf>,
     env: Env,
     cache: Option<PathBuf>,
+    marks: Marks,
     state: Mutex<State>,
     generation: AtomicU64,
 }
@@ -58,11 +60,19 @@ impl Live {
         let (plan, origin) = load_plan(cli.clone(), &*env)?;
         let aggregator =
             Aggregator::start_with_cache(plan.specs, plan.timeout, cache.clone().map(Cache::new));
+        // Marks live next to the cache; without a cache they stay in memory.
+        let marks = Marks::load(
+            cache
+                .as_ref()
+                .and_then(|cache| cache.parent())
+                .map(|dir| dir.join("marks.json")),
+        );
         let live = Self {
             inner: Arc::new(Inner {
                 cli,
                 env,
                 cache,
+                marks,
                 state: Mutex::new(State {
                     aggregator,
                     text,
@@ -81,7 +91,14 @@ impl Live {
         };
         let mut snapshot = aggregator.snapshot();
         snapshot.config_error = error;
+        self.inner.marks.apply(&mut snapshot);
         snapshot
+    }
+
+    /// Marks or unmarks a card as in progress; only a card on the dashboard
+    /// can be marked.
+    pub fn set_mark(&self, id: &str, marked: bool) -> Result<(), MarkError> {
+        self.inner.marks.set(&self.snapshot(), id, marked)
     }
 
     /// Reloads the config if the file changed (which refreshes every source),

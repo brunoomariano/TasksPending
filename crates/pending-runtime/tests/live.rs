@@ -108,3 +108,48 @@ async fn saving_the_file_reloads_it_automatically() {
 
     assert_eq!(source_names(&live), vec!["watched"]);
 }
+
+/// A card on the running dashboard can be marked as in progress: the mark
+/// shows in the snapshot, survives a config reload, and is stored next to
+/// the cache. A card that is not on the dashboard cannot be marked.
+#[tokio::test]
+async fn cards_are_marked_through_the_running_dashboard() {
+    let dir = scratch("marks");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, config("first", "Work")).unwrap();
+    let env: Env = Arc::new(|_| None);
+    let (live, _) = Live::start(
+        Some(path.clone()),
+        env,
+        Some(dir.join("state").join("cache.json")),
+    )
+    .expect("valid config");
+    settle().await;
+    let id = live
+        .snapshot()
+        .boards
+        .iter()
+        .flat_map(|board| &board.groups)
+        .flat_map(|group| &group.columns)
+        .flat_map(|column| &column.cards)
+        .map(|card| card.id.clone())
+        .next()
+        .expect("the sample source has cards");
+
+    live.set_mark(&id, true).expect("card is on the dashboard");
+    assert_eq!(live.snapshot().marked, std::slice::from_ref(&id));
+    assert!(dir.join("state").join("marks.json").is_file());
+    assert_eq!(
+        live.set_mark("ghost", true),
+        Err(pending_runtime::marks::MarkError::UnknownCard)
+    );
+
+    // Same source name after a reload: the mark is still there.
+    std::fs::write(&path, config("first", "Home")).unwrap();
+    live.refresh_now();
+    settle().await;
+    assert_eq!(live.snapshot().marked, std::slice::from_ref(&id));
+
+    live.set_mark(&id, false).expect("unmark");
+    assert!(live.snapshot().marked.is_empty());
+}

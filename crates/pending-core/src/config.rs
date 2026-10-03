@@ -89,6 +89,7 @@ pub enum SourceKind {
     Google,
     Ical,
     Jira,
+    Linear,
     Plane,
     Sample,
     Todoist,
@@ -102,6 +103,7 @@ const GOOGLE_CALENDAR_ICON: &str =
     "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/google-calendar.svg";
 const ICAL_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ical.svg";
 const JIRA_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/jira.svg";
+const LINEAR_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/linear.svg";
 const PLANE_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/plane.svg";
 const TODOIST_ICON: &str =
     "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/todoist.svg";
@@ -116,6 +118,7 @@ impl SourceKind {
             Self::Google => (GOOGLE_CALENDAR_ICON, None),
             Self::Ical => (ICAL_ICON, None),
             Self::Jira => (JIRA_ICON, None),
+            Self::Linear => (LINEAR_ICON, None),
             Self::Plane => (PLANE_ICON, None),
             Self::Todoist => (TODOIST_ICON, None),
             // Not a provider: the page falls back to its generic icon.
@@ -448,7 +451,9 @@ mod tests {
             SourceKind::Github => Some(SourceKind::Gitlab),
             SourceKind::Gitlab => Some(SourceKind::Google),
             SourceKind::Google => Some(SourceKind::Ical),
-            SourceKind::Ical => Some(SourceKind::Plane),
+            SourceKind::Ical => Some(SourceKind::Jira),
+            SourceKind::Jira => Some(SourceKind::Linear),
+            SourceKind::Linear => Some(SourceKind::Plane),
             SourceKind::Plane => Some(SourceKind::Sample),
             SourceKind::Sample => Some(SourceKind::Todoist),
             SourceKind::Todoist => None,
@@ -478,7 +483,7 @@ mod tests {
                 icon.url
             );
         }
-        assert_eq!(seen, 7, "the walk visits every kind");
+        assert_eq!(seen, 9, "the walk visits every kind");
         assert_eq!(
             SourceKind::Ical.default_icon().map(|icon| icon.url),
             Some(ICAL_ICON.to_owned())
@@ -534,6 +539,22 @@ mod tests {
                 .as_ref()
                 .map(|icon| icon.url.as_str()),
             Some(TODOIST_ICON)
+        );
+    }
+
+    /// `kind = "linear"` is a known kind and shows Linear's logo unless the
+    /// config names another icon.
+    #[test]
+    fn linear_sources_use_the_linear_logo() {
+        let config = parse("[[sources]]\nname = \"linear\"\nkind = \"linear\"");
+
+        assert_eq!(config.sources[0].kind, SourceKind::Linear);
+        assert_eq!(
+            config.sources[0].icon(),
+            Some(Icon {
+                url: LINEAR_ICON.to_owned(),
+                dark_url: None,
+            })
         );
     }
 

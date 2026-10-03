@@ -824,3 +824,80 @@ fn invalid_exclude_patterns_name_the_file_the_source_and_the_stack() {
     );
     assert!(message.contains("`(unclosed`"), "{message}");
 }
+
+/// A `linear` source in the config becomes a scheduled source with its
+/// declared stacks, or the default ones; the API key comes from the
+/// environment, never the file.
+#[test]
+fn linear_sources_are_scheduled_with_stacks() {
+    let path = scratch("linear").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "linear"
+        kind = "linear"
+        board = "Work"
+
+        [[sources]]
+        name = "linear-team"
+        kind = "linear"
+
+          [[sources.stacks]]
+          name = "Triage"
+          assignee = "none"
+          state_type = ["triage"]
+          team = ["ENG"]
+
+          [[sources.stacks]]
+          name = "In review (others)"
+          assignee = "others"
+          state = ["In Review"]
+          priority = ["urgent", "high"]
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) = load_plan_with(Some(path), &env(&[]), &|| None).expect("linear is supported");
+
+    assert_eq!(plan.specs.len(), 2);
+    assert_eq!(
+        plan.specs[0].source.columns(),
+        vec!["In progress", "To do", "Backlog"]
+    );
+    assert!(plan.specs[0].icon.is_some());
+    assert_eq!(
+        plan.specs[1].source.columns(),
+        vec!["Triage", "In review (others)"]
+    );
+}
+
+/// A Linear stack with a wrong key or an invalid value is rejected naming
+/// the source and the stack, instead of becoming a stack that stays empty.
+#[test]
+fn invalid_linear_stack_filters_name_the_source_and_stack() {
+    let dir = scratch("bad-linear-stacks");
+    for (name, body) in [
+        ("typo.toml", "assigne = \"me\""),
+        ("value.toml", "assignee = \"somebody\""),
+        ("type.toml", "state_type = [\"in_progress\"]"),
+        ("priority.toml", "priority = [\"p1\"]"),
+        ("blank.toml", "team = [\"\"]"),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "[[sources]]\nname = \"tracker\"\nkind = \"linear\"\n[[sources.stacks]]\nname = \"Mine\"\n{body}\n"
+            ),
+        )
+        .unwrap();
+
+        let error = load_plan_with(Some(path), &env(&[]), &|| None).expect_err(name);
+        let message = error.to_string();
+        assert!(
+            message.contains("tracker") && message.contains("Mine"),
+            "{message}"
+        );
+    }
+}

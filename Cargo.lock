@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "pending-api"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1721,7 +1721,7 @@ dependencies = [
 
 [[package]]
 name = "pending-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1734,7 +1734,7 @@ dependencies = [
 
 [[package]]
 name = "pending-github"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1749,7 +1749,7 @@ dependencies = [
 
 [[package]]
 name = "pending-gitlab"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1765,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "pending-google"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1783,7 +1783,7 @@ dependencies = [
 
 [[package]]
 name = "pending-http"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "reqwest",
  "tokio",
@@ -1791,7 +1791,7 @@ dependencies = [
 
 [[package]]
 name = "pending-ical"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1807,7 +1807,7 @@ dependencies = [
 
 [[package]]
 name = "pending-jira"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1822,7 +1822,7 @@ dependencies = [
 
 [[package]]
 name = "pending-linear"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1837,7 +1837,7 @@ dependencies = [
 
 [[package]]
 name = "pending-plane"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1851,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "pending-runtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "pending-core",
@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "pending-todoist"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1889,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "pending-tui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2871,7 +2871,7 @@ dependencies = [
 
 [[package]]
 name = "tasks-pending"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",

@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 ARTIFACTS="$WORK/artifacts"
-VERSION=0.4.0
+VERSION=0.5.0
 trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$ARTIFACTS"

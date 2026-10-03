@@ -182,8 +182,7 @@ jobs:
           tasks-pending --help >/dev/null
           tasks-pending serve --help >/dev/null
           tasks-pending tui --help >/dev/null
-          pending-api --help >/dev/null
-          pending-tui --help >/dev/null
+          test "$(pacman -Qlq tasks-pending-bin | grep -c '^/usr/bin/.')" -eq 1
           test ! -e /usr/share/tasks-pending/frontend
           test -f /usr/lib/systemd/user/tasks-pending.service
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5

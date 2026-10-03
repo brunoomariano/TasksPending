@@ -28,8 +28,6 @@ package() {
   local bundle="tasks-pending-$pkgver-$CARCH-unknown-linux-gnu"
   cd "$srcdir/$bundle"
   PREFIX=/usr DESTDIR="$pkgdir" ./scripts/install.sh
-  ln -s tasks-pending "$pkgdir/usr/bin/pending-api"
-  ln -s tasks-pending "$pkgdir/usr/bin/pending-tui"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 packaging/icons/tasks-pending.svg \
     "$pkgdir/usr/share/icons/hicolor/scalable/apps/tasks-pending.svg"

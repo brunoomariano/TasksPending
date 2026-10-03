@@ -146,9 +146,11 @@ systemctl --user edit tasks-pending
 # ExecStart=/usr/bin/tasks-pending serve --listen 127.0.0.1:8090
 ```
 
-For a local install, replace `/usr/bin` with the absolute path to your own `tasks-pending` executable. Reinstalling migrates the documented 0.1 drop-in to `tasks-pending serve` and keeps its listen address. Custom commands that still name `pending-api` need the same change before restarting the service; the installer keeps the legacy binary and frontend in place until then. Arch package upgrades retain `pending-api` and `pending-tui` aliases for existing service overrides.
+For a local install, replace `/usr/bin` with the absolute path to your own `tasks-pending` executable.
 
-On macOS, edit `--listen` in the plist. Reinstalling migrates the standard 0.1 plist to `tasks-pending serve` while keeping its tokens and listen address. A customized plist stays untouched and the installer writes `.plist.new`; copy its `ProgramArguments` change into your version before restarting it. Use the new port in the web app URL too.
+On macOS, edit `--listen` in the plist. Reinstalling leaves your plist untouched (it holds your tokens) and writes the current template next to it as `.plist.new`, for you to compare. Use the new port in the web app URL too.
+
+Upgrading from 0.1: the `pending-api` and `pending-tui` commands no longer exist, and the installer no longer rewrites services that call them. Change such a service or drop-in to `tasks-pending serve --listen <address>`, and delete the old `pending-api`, `pending-tui` and `share/tasks-pending/frontend` by hand.
 
 ## 5. Omarchy web app
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Breaking change
+
+- The old command names `pending-api` and `pending-tui` are gone: the Arch package no longer installs them as aliases, the executable no longer answers to them, and the installer no longer migrates 0.1 services that call them. Use `tasks-pending serve` and `tasks-pending tui`. See "Upgrading from 0.1" in [docs/install.md](docs/install.md).
+
+### Features
+
+- `tasks-pending sandbox` (and `make sandbox`) runs the dashboard with simulated cards at <http://127.0.0.1:61001>, without configuration, credentials or network access.
+
 ## 0.3.1
 
 ### Fixed

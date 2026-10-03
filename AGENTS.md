@@ -79,7 +79,7 @@ Visual style: simple and quiet. Colours come from the design tokens at the top o
 
 ## Release
 
-- **Release notes:** `CHANGELOG.md` has one `## <version>` section per release, and the release workflow publishes that section as the notes.
+- **Release notes:** `CHANGELOG.md` has one `## <version>` section per release, and the release workflow publishes that section as the notes. Changes not yet released go under `## Unreleased` at the top, renamed to the version when cutting the release.
 - **Cutting a release:**
   1. Bump `version` in `Cargo.toml` (workspace) and `frontend/package.json`.
   2. Add the changelog section.

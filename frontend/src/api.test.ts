@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { loadSnapshot, requestRefresh, setMark } from "./api";
+import { loadSnapshot, requestRefresh, setMark, setSnooze } from "./api";
 
 describe("loadSnapshot", () => {
   /**
@@ -21,6 +21,7 @@ describe("loadSnapshot", () => {
       config_error: null,
       marked: [],
       version: "0.0.0",
+      snoozed: [],
       boards: [],
       sources: [],
     };
@@ -137,6 +138,45 @@ describe("setMark", () => {
     expect(await setMark("x", false, offline)).toEqual({
       ok: false,
       error: "offline",
+    });
+  });
+});
+
+describe("setSnooze", () => {
+  /**
+   * Snoozing posts the card id and until when (or no time, to wait for a
+   * change); waking posts `snoozed: false`. Both carry the dashboard header.
+   */
+  test("posts the card id, the state and the time", async () => {
+    const sent: { path: string; init?: RequestInit }[] = [];
+    const done = async (path: string, init?: RequestInit) => {
+      sent.push({ path, init });
+      return new Response(null, { status: 204 });
+    };
+    const until = new Date("2026-10-08T11:00:00Z");
+
+    expect(await setSnooze("a", until, done)).toEqual({ ok: true });
+    expect(await setSnooze("a", null, done)).toEqual({ ok: true });
+    expect(await setSnooze("a", "wake", done)).toEqual({ ok: true });
+
+    expect(sent.map((s) => s.path)).toEqual(Array(3).fill("/api/v1/snooze"));
+    expect(new Headers(sent[0].init?.headers).get("x-requested-with")).toBe(
+      "tasks-pending",
+    );
+    expect(sent.map((s) => JSON.parse(String(s.init?.body)))).toEqual([
+      { id: "a", snoozed: true, until: "2026-10-08T11:00:00.000Z" },
+      { id: "a", snoozed: true, until: null },
+      { id: "a", snoozed: false },
+    ]);
+  });
+
+  /** A refused request is reported, not thrown. */
+  test("reports failures", async () => {
+    const gone = async () => new Response(null, { status: 404 });
+
+    expect(await setSnooze("x", null, gone)).toEqual({
+      ok: false,
+      error: "HTTP 404",
     });
   });
 });

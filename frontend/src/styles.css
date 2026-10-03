@@ -836,3 +836,99 @@ button {
   margin-right: 6px;
   content: "·";
 }
+
+/* Snoozing a card: the button sits before the pin; its menu opens inside
+   the card. */
+.card-actions {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+}
+
+.card-actions .mark {
+  margin: -2px 0 0;
+}
+
+.card-actions .mark:last-child {
+  margin-right: -4px;
+}
+
+.snooze[aria-expanded="true"] {
+  color: var(--text);
+  opacity: 1;
+}
+
+.snooze-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.snooze-menu button {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.snooze-menu button:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+/* A quiet link to the snoozed cards, after the version. */
+.snoozed-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.snoozed-link::before {
+  margin-right: 6px;
+  content: "·";
+}
+
+.snoozed-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.snoozed-modal ul {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.snoozed-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.snoozed-row > div {
+  min-width: 0;
+}
+
+.snoozed-row p {
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

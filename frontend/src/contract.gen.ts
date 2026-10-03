@@ -19,7 +19,12 @@ marked: Array<string>,
 /**
  * Version of the program that produced the snapshot, e.g. `0.4.0`.
  */
-version: string, };
+version: string, 
+/**
+ * Cards the user snoozed: left out of the boards until their time
+ * passes or the item changes.
+ */
+snoozed: Array<SnoozedCard>, };
 
 export type Board = { name: string, 
 /**
@@ -57,3 +62,14 @@ export type Icon = { url: string,
 dark_url: string | null, };
 
 export type SourceStatus = "ready" | "refreshing" | "degraded" | "failed";
+
+export type SnoozedCard = { card: PendingCard, 
+/**
+ * Configured name of the source the card comes from.
+ */
+source: string, 
+/**
+ * When the card comes back by itself; `None` waits for the item to
+ * change.
+ */
+until: string | null, };

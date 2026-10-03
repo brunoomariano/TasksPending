@@ -1,7 +1,8 @@
 import "./styles.css";
-import { loadSnapshot, requestRefresh, setMark } from "./api";
+import { loadSnapshot, requestRefresh, setMark, setSnooze } from "./api";
 import { AUTO_REFRESH_CHOICES, startAutoRefresh } from "./autoRefresh";
 import { startClock } from "./clock";
+import { type SnoozeChoice, snoozeUntil } from "./snooze";
 import { startPolling } from "./poll";
 import { DEFAULT_VIEW, renderApp, renderControls, type View } from "./render";
 import type { ViewState } from "./state";
@@ -73,6 +74,14 @@ function setLabel(button: HTMLElement, text: string): void {
     button.textContent = text;
   }
 }
+
+/** Every dialog and menu closed. */
+const CLOSED = {
+  sourcesOpen: false,
+  settingsOpen: false,
+  snoozedOpen: false,
+  snoozeMenu: null,
+} as const;
 
 /** A copy of `set` with `key` added, or removed if it was there. */
 function flip(set: ReadonlySet<string>, key: string): Set<string> {
@@ -154,13 +163,65 @@ if (app && controls) {
     }
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && (view.sourcesOpen || view.settingsOpen)) {
-      change({ sourcesOpen: false, settingsOpen: false });
+    if (
+      event.key === "Escape" &&
+      (view.sourcesOpen ||
+        view.settingsOpen ||
+        view.snoozedOpen ||
+        view.snoozeMenu !== null)
+    ) {
+      change(CLOSED);
     }
   });
   // The buttons live next to the clock, outside `app`.
   document.body.addEventListener("click", async (event) => {
     const target = event.target as HTMLElement;
+
+    // A click anywhere else closes an open snooze menu.
+    if (
+      view.snoozeMenu !== null &&
+      !target.closest("[data-snooze-menu], [data-snooze]")
+    ) {
+      change({ snoozeMenu: null });
+    }
+    const menu = target.closest<HTMLElement>("[data-snooze-menu]");
+    if (menu) {
+      const id = menu.dataset.snoozeMenu ?? "";
+      change({ snoozeMenu: view.snoozeMenu === id ? null : id });
+      return;
+    }
+    const snooze = target.closest<HTMLButtonElement>("[data-snooze]");
+    if (snooze) {
+      snooze.disabled = true;
+      const result = await setSnooze(
+        snooze.dataset.snooze ?? "",
+        snoozeUntil(snooze.dataset.snoozeFor as SnoozeChoice, new Date()),
+      );
+      if (result.ok) {
+        change({ snoozeMenu: null });
+        poller.pollNow();
+      } else {
+        snooze.disabled = false;
+        snooze.title = `Could not snooze (${result.error})`;
+      }
+      return;
+    }
+    const wake = target.closest<HTMLButtonElement>("[data-wake]");
+    if (wake) {
+      wake.disabled = true;
+      const result = await setSnooze(wake.dataset.wake ?? "", "wake");
+      if (result.ok) {
+        poller.pollNow();
+      } else {
+        wake.disabled = false;
+        wake.title = `Could not wake (${result.error})`;
+      }
+      return;
+    }
+    if (target.closest('[data-action="snoozed"]')) {
+      change({ snoozedOpen: true });
+      return;
+    }
 
     const filter = target.closest<HTMLElement>("[data-board]");
     if (filter) {
@@ -227,7 +288,7 @@ if (app && controls) {
     // Close on the × button or a click on the backdrop itself.
     const close = target.closest<HTMLElement>('[data-action="close-modal"]');
     if (close && (close === target || close.classList.contains("close"))) {
-      change({ sourcesOpen: false, settingsOpen: false });
+      change(CLOSED);
       return;
     }
 

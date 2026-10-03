@@ -61,7 +61,7 @@ Visual style: simple and quiet. Colours come from the design tokens at the top o
   - `docs/install.md` (tokens table).
 - **Model change (`pending-core` types with `TS`):** run `make contract` and commit `frontend/src/contract.gen.ts`, because a core test fails when it is stale. Struct literals in `pending-tui` and `pending-api` tests usually need the new field.
 - **Per-stack option for every kind:** `StackConfig` (pending-core), then `SourceSpec` / `SourceReport` if the snapshot needs it.
-- **State the user changes from the page (marks):** the store in `pending-runtime` (`marks.rs`), the `Dashboard` trait, a route in `pending-api` guarded by the dashboard header, `api.ts`, and the snapshot field the page reads. Browser-only choices go in `View` instead.
+- **State the user changes from the page (marks, snoozes):** the store in `pending-runtime` (`marks.rs`, `snoozes.rs`, both on `store.rs`), the `Dashboard` trait, a route in `pending-api` guarded by the dashboard header, `api.ts`, and the snapshot field the page reads. Browser-only choices go in `View` instead.
 - **New web setting:**
   - `View` and `DEFAULT_VIEW` (render.ts);
   - the settings dialog;

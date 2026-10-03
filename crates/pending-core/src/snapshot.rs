@@ -215,6 +215,7 @@ pub fn build_snapshot(
         config_error: None,
         marked: Vec::new(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
+        snoozed: Vec::new(),
     }
 }
 

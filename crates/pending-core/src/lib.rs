@@ -12,8 +12,8 @@ pub use config::{
 };
 pub use due::DueDay;
 pub use model::{
-    Board, CardSeverity, Column, DashboardSnapshot, Group, Icon, PendingCard, SourceHealth,
-    SourceStatus,
+    Board, CardSeverity, Column, DashboardSnapshot, Group, Icon, PendingCard, SnoozedCard,
+    SourceHealth, SourceStatus,
 };
 pub use sample::{SampleSource, sample_snapshot};
 pub use sandbox::sandbox_snapshot;

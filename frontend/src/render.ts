@@ -10,11 +10,13 @@ import {
   AUTO_REFRESH_CHOICES,
   DEFAULT_AUTO_REFRESH_MINUTES,
 } from "./autoRefresh";
+import { SNOOZE_CHOICES, untilText } from "./snooze";
 import type { ViewState } from "./state";
 
 /** Stroke icons (Lucide shapes), inline so the page needs no icon font. */
 const ICON_PATHS = {
   refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
   pin: '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
   sources: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
   warning:
@@ -65,6 +67,10 @@ export interface View {
   hidden: ReadonlySet<string>;
   sourcesOpen: boolean;
   settingsOpen: boolean;
+  /** The snoozed cards dialog is open. */
+  snoozedOpen: boolean;
+  /** Id of the card whose snooze menu is open. */
+  snoozeMenu: string | null;
 }
 
 export const DEFAULT_VIEW: View = {
@@ -76,6 +82,8 @@ export const DEFAULT_VIEW: View = {
   hidden: new Set(),
   sourcesOpen: false,
   settingsOpen: false,
+  snoozedOpen: false,
+  snoozeMenu: null,
 };
 
 /** Keys of the things settings can hide. */
@@ -155,6 +163,11 @@ export function renderControls(
           ? `<span class="version" title="TasksPending version">v${escapeHtml(snapshot.version)}</span>`
           : ""
       }
+      ${
+        snapshot.snoozed.length
+          ? `<button type="button" class="snoozed-link" data-action="snoozed">${snapshot.snoozed.length} snoozed</button>`
+          : ""
+      }
     </p>
   `;
 }
@@ -227,6 +240,7 @@ function renderSnapshot(
     </section>
     ${view.sourcesOpen ? renderSourcesModal(snapshot, icons) : ""}
     ${view.settingsOpen ? renderSettingsModal(snapshot, view) : ""}
+    ${view.snoozedOpen ? renderSnoozedModal(snapshot, icons) : ""}
   `;
 }
 
@@ -285,6 +299,7 @@ function renderGroup(
             view.collapsed.has(key),
             health,
             marked,
+            view.snoozeMenu,
           );
         })
         .join("")
@@ -310,6 +325,7 @@ function renderStack(
   collapsed: boolean,
   health: SourceHealth | undefined,
   marked: ReadonlySet<string>,
+  snoozeMenu: string | null,
 ): string {
   const header = `
     <button type="button" class="stack-header" data-collapse="${escapeHtml(key)}" aria-expanded="${!collapsed}">
@@ -330,7 +346,9 @@ function renderStack(
   const cards = column.cards.length
     ? column.cards
         .slice(0, open ? undefined : COLUMN_LIMIT)
-        .map((card) => renderCard(card, marked.has(card.id)))
+        .map((card) =>
+          renderCard(card, marked.has(card.id), snoozeMenu === card.id),
+        )
         .join("") + more
     : `<p class="empty">${icon("inbox")} ${
         health?.last_refresh_at
@@ -357,7 +375,26 @@ function markButton(card: PendingCard, marked: boolean): string {
   return `<button type="button" class="mark" data-mark="${escapeHtml(card.id)}" aria-pressed="${marked}" aria-label="${label}" title="${label}">${icon("pin")}</button>`;
 }
 
-function renderCard(card: PendingCard, marked: boolean): string {
+/** The button that opens a card's snooze menu, and the menu when open. */
+function snoozeButton(card: PendingCard, open: boolean): string {
+  return `<button type="button" class="mark snooze" data-snooze-menu="${escapeHtml(card.id)}" aria-expanded="${open}" aria-label="Snooze" title="Snooze">${icon("moon")}</button>`;
+}
+
+function snoozeMenu(card: PendingCard): string {
+  return `
+    <div class="snooze-menu" role="menu" aria-label="Snooze">
+      ${SNOOZE_CHOICES.map(
+        (choice) =>
+          `<button type="button" role="menuitem" data-snooze="${escapeHtml(card.id)}" data-snooze-for="${choice.key}">${choice.label}</button>`,
+      ).join("")}
+    </div>`;
+}
+
+function renderCard(
+  card: PendingCard,
+  marked: boolean,
+  snoozing: boolean,
+): string {
   const title = cardTitle(card);
   // No date line: sources write the due time or event time into the body,
   // and the last fetch time is at the top. No severity marker either.
@@ -366,9 +403,10 @@ function renderCard(card: PendingCard, marked: boolean): string {
     <article class="card${marked ? " marked" : ""}">
       <header class="card-header">
         <strong class="card-title">${title}</strong>
-        ${markButton(card, marked)}
+        <span class="card-actions">${snoozeButton(card, snoozing)}${markButton(card, marked)}</span>
       </header>
       <p title="${escapeHtml(card.body)}">${escapeHtml(card.body)}</p>
+      ${snoozing ? snoozeMenu(card) : ""}
     </article>
   `;
 }
@@ -454,6 +492,33 @@ function renderSourcesModal(
     "Sources",
     "sources-modal",
     `${configError}<ul>${rows}</ul>`,
+  );
+}
+
+/** The snoozed cards, each with when it comes back and a button to wake it. */
+function renderSnoozedModal(
+  snapshot: DashboardSnapshot,
+  icons: Map<string, Icon | null>,
+): string {
+  const rows = snapshot.snoozed
+    .map(
+      ({ card, source, until }) => `
+        <li class="snoozed-row">
+          <div>
+            <strong class="card-title">${cardTitle(card)}</strong>
+            <p>${escapeHtml(card.body)}</p>
+            <span class="card-source">${sourceIcon(icons.get(source))}${escapeHtml(source)} · ${escapeHtml(untilText(until))}</span>
+          </div>
+          <button type="button" class="button" data-wake="${escapeHtml(card.id)}">Wake</button>
+        </li>`,
+    )
+    .join("");
+  return renderModal(
+    "Snoozed",
+    "snoozed-modal",
+    rows
+      ? `<ul>${rows}</ul>`
+      : `<p class="empty">${icon("inbox")} Nothing snoozed.</p>`,
   );
 }
 

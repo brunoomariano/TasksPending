@@ -20,6 +20,21 @@ pub struct DashboardSnapshot {
     /// Version of the program that produced the snapshot, e.g. `0.4.0`.
     #[serde(default)]
     pub version: String,
+    /// Cards the user snoozed: left out of the boards until their time
+    /// passes or the item changes.
+    #[serde(default)]
+    pub snoozed: Vec<SnoozedCard>,
+}
+
+/// A card hidden by the user for a while.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SnoozedCard {
+    pub card: PendingCard,
+    /// Configured name of the source the card comes from.
+    pub source: String,
+    /// When the card comes back by itself; `None` waits for the item to
+    /// change.
+    pub until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

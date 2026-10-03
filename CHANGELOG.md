@@ -12,6 +12,7 @@
 - New `jira` source: one JQL query per stack, for Jira Cloud (`JIRA_EMAIL` and `JIRA_API_TOKEN`) and Jira Data Center (`JIRA_TOKEN`), both with `JIRA_BASE_URL`. By default it shows your issues in progress and to do. Cards show the issue key, summary, project, status, assignee and due date; overdue and top-priority issues are critical. See "Jira Source" in [docs/operations.md](docs/operations.md).
 - New source `kind = "linear"`: Linear issues, by default the ones assigned to you, in the In progress, To do and Backlog stacks. Stacks filter by `assignee`, `state_type`, `state`, `team` and `priority`. Cards show the issue reference as the title and mark overdue and urgent issues as critical. Set `LINEAR_API_KEY` (a personal API key) in the environment. See "Linear Source" in [docs/operations.md](docs/operations.md).
 - The GitLab, Jira and Linear sources were built from each provider's API documentation and are covered by tests against stand-in servers; they have not yet been run against live accounts. Please report anything that behaves differently.
+- Snooze a card from the web page: it leaves its stacks for an hour, until tomorrow, until next week or until it changes, and always comes back early when its item changes. A quiet "N snoozed" link opens the list to wake a card. Snoozes are kept by the daemon and nothing is written to the provider.
 
 ## 0.4.0
 

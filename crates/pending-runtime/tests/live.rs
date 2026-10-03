@@ -153,3 +153,46 @@ async fn cards_are_marked_through_the_running_dashboard() {
     live.set_mark(&id, false).expect("unmark");
     assert!(live.snapshot().marked.is_empty());
 }
+
+/// A card on the running dashboard can be snoozed: it leaves the boards, is
+/// listed as snoozed, is stored next to the cache, and waking brings it
+/// back. Marking it first does not lose the mark while it sleeps.
+#[tokio::test]
+async fn cards_are_snoozed_through_the_running_dashboard() {
+    let dir = scratch("snoozes");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, config("first", "Work")).unwrap();
+    let env: Env = Arc::new(|_| None);
+    let (live, _) = Live::start(Some(path), env, Some(dir.join("state").join("cache.json")))
+        .expect("valid config");
+    settle().await;
+    let ids = |live: &Live| -> Vec<String> {
+        live.snapshot()
+            .boards
+            .iter()
+            .flat_map(|board| &board.groups)
+            .flat_map(|group| &group.columns)
+            .flat_map(|column| &column.cards)
+            .map(|card| card.id.clone())
+            .collect()
+    };
+    let id = ids(&live).first().cloned().expect("the sample has cards");
+    live.set_mark(&id, true).expect("mark");
+
+    live.snooze(&id, None).expect("card is on the dashboard");
+
+    let snapshot = live.snapshot();
+    assert!(!ids(&live).contains(&id));
+    assert_eq!(snapshot.snoozed.len(), 1);
+    assert_eq!(snapshot.snoozed[0].card.id, id);
+    assert!(dir.join("state").join("snoozes.json").is_file());
+    assert_eq!(
+        live.snooze("ghost", None),
+        Err(pending_runtime::snoozes::SnoozeError::UnknownCard)
+    );
+
+    live.wake(&id);
+    assert!(ids(&live).contains(&id));
+    assert!(live.snapshot().snoozed.is_empty());
+    assert_eq!(live.snapshot().marked, std::slice::from_ref(&id));
+}

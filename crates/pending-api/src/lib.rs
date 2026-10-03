@@ -14,6 +14,7 @@ use pending_runtime::Dashboard;
 use pending_runtime::config::{Origin, cache_path};
 use pending_runtime::live::{Live, process_env};
 use pending_runtime::marks::{MarkError, Marks};
+use pending_runtime::snoozes::{SnoozeError, Snoozes};
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 use tower_http::services::ServeDir;
@@ -166,12 +167,14 @@ struct AppState {
 #[derive(Clone)]
 struct SandboxDashboard {
     marks: Arc<Marks>,
+    snoozes: Arc<Snoozes>,
 }
 
 impl Default for SandboxDashboard {
     fn default() -> Self {
         Self {
             marks: Arc::new(Marks::load(None)),
+            snoozes: Arc::new(Snoozes::load(None)),
         }
     }
 }
@@ -180,6 +183,7 @@ impl Dashboard for SandboxDashboard {
     fn snapshot(&self) -> DashboardSnapshot {
         let mut snapshot = sandbox_snapshot();
         self.marks.apply(&mut snapshot);
+        self.snoozes.apply(&mut snapshot);
         snapshot
     }
 
@@ -187,6 +191,19 @@ impl Dashboard for SandboxDashboard {
 
     fn set_mark(&self, id: &str, marked: bool) -> Result<(), MarkError> {
         self.marks.set(&sandbox_snapshot(), id, marked)
+    }
+
+    fn snooze(
+        &self,
+        id: &str,
+        until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), SnoozeError> {
+        self.snoozes.snooze(&self.snapshot(), id, until)
+    }
+
+    fn wake(&self, id: &str) -> Result<(), SnoozeError> {
+        self.snoozes.wake(id);
+        Ok(())
     }
 }
 
@@ -210,6 +227,7 @@ pub fn app_with_weather(
         .route("/api/v1/snapshot", get(snapshot))
         .route("/api/v1/refresh", post(refresh))
         .route("/api/v1/marks", post(set_mark))
+        .route("/api/v1/snooze", post(set_snooze))
         .merge(weather::routes(weather));
     let router = match frontend {
         Some(Frontend::Directory(dir)) => router.fallback_service(ServeDir::new(dir)),
@@ -339,6 +357,40 @@ async fn set_mark(
         Ok(()) => StatusCode::NO_CONTENT,
         Err(MarkError::UnknownCard) => StatusCode::NOT_FOUND,
         Err(MarkError::Unsupported) => StatusCode::NOT_IMPLEMENTED,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SnoozeRequest {
+    id: String,
+    /// `false` wakes the card.
+    snoozed: bool,
+    /// When the card comes back by itself; absent or `null` waits for the
+    /// item to change.
+    #[serde(default)]
+    until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Snoozes a card (hiding it until a time or until the item changes) or
+/// wakes it.
+async fn set_snooze(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SnoozeRequest>,
+) -> StatusCode {
+    let (name, value) = DASHBOARD_HEADER;
+    if headers.get(name).and_then(|v| v.to_str().ok()) != Some(value) {
+        return StatusCode::FORBIDDEN;
+    }
+    let result = match request.snoozed {
+        true => state.dashboard.snooze(&request.id, request.until),
+        false => state.dashboard.wake(&request.id),
+    };
+    match result {
+        Ok(()) => StatusCode::NO_CONTENT,
+        Err(SnoozeError::UnknownCard) => StatusCode::NOT_FOUND,
+        Err(SnoozeError::PastTime) => StatusCode::BAD_REQUEST,
+        Err(SnoozeError::Unsupported) => StatusCode::NOT_IMPLEMENTED,
     }
 }
 
@@ -633,6 +685,54 @@ mod tests {
         let ghost = r#"{"id":"ghost","marked":true}"#;
         let status = post_json(app.clone(), "/api/v1/marks", ghost, true).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// Whether the card is on the boards, and how many cards are snoozed.
+    async fn board_state(app: Router, id: &str) -> (bool, usize) {
+        let (_, body) = get(app, "/api/v1/snapshot").await;
+        let snapshot: DashboardSnapshot = serde_json::from_str(&body).unwrap();
+        let on_board = snapshot
+            .boards
+            .iter()
+            .flat_map(|board| &board.groups)
+            .flat_map(|group| &group.columns)
+            .flat_map(|column| &column.cards)
+            .any(|card| card.id == id);
+        (on_board, snapshot.snoozed.len())
+    }
+
+    /// The page snoozes a card until a time or until it changes, and wakes
+    /// it again; the snapshot leaves snoozed cards out of the boards and
+    /// lists them. Unknown cards and past times are refused, and so is a
+    /// request without the dashboard header.
+    #[tokio::test]
+    async fn snooze_endpoint_hides_and_wakes_cards() {
+        let app = app(SandboxDashboard::default(), None);
+        let id = sandbox_snapshot().boards[0].groups[0].columns[0].cards[0]
+            .id
+            .clone();
+        let until = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
+        let snooze = format!(r#"{{"id":{id:?},"snoozed":true,"until":{until:?}}}"#);
+
+        let status = post_json(app.clone(), "/api/v1/snooze", &snooze, false).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(board_state(app.clone(), &id).await, (true, 0));
+
+        let status = post_json(app.clone(), "/api/v1/snooze", &snooze, true).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(board_state(app.clone(), &id).await, (false, 1));
+
+        let wake = format!(r#"{{"id":{id:?},"snoozed":false}}"#);
+        let status = post_json(app.clone(), "/api/v1/snooze", &wake, true).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(board_state(app.clone(), &id).await, (true, 0));
+
+        let ghost = r#"{"id":"ghost","snoozed":true}"#;
+        let status = post_json(app.clone(), "/api/v1/snooze", ghost, true).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let past = format!(r#"{{"id":{id:?},"snoozed":true,"until":"2020-01-01T00:00:00Z"}}"#);
+        let status = post_json(app, "/api/v1/snooze", &past, true).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     /// Another site open in the browser can't mark cards: without the header

@@ -9,6 +9,7 @@ const snapshot = (generatedAt: string, title = "a"): DashboardSnapshot => ({
   config_error: null,
   marked: [],
   version: "0.0.0",
+  snoozed: [],
   sources: [],
   boards: [
     {

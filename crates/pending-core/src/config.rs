@@ -104,6 +104,8 @@ const GOOGLE_CALENDAR_ICON: &str =
 const ICAL_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ical.svg";
 const JIRA_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/jira.svg";
 const LINEAR_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/linear.svg";
+const LINEAR_DARK_ICON: &str =
+    "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/linear-dark.svg";
 const PLANE_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/plane.svg";
 const TODOIST_ICON: &str =
     "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/todoist.svg";
@@ -118,7 +120,7 @@ impl SourceKind {
             Self::Google => (GOOGLE_CALENDAR_ICON, None),
             Self::Ical => (ICAL_ICON, None),
             Self::Jira => (JIRA_ICON, None),
-            Self::Linear => (LINEAR_ICON, None),
+            Self::Linear => (LINEAR_ICON, Some(LINEAR_DARK_ICON)),
             Self::Plane => (PLANE_ICON, None),
             Self::Todoist => (TODOIST_ICON, None),
             // Not a provider: the page falls back to its generic icon.
@@ -553,7 +555,8 @@ mod tests {
             config.sources[0].icon(),
             Some(Icon {
                 url: LINEAR_ICON.to_owned(),
-                dark_url: None,
+                // The logo is near black: dark themes need the white one.
+                dark_url: Some(LINEAR_DARK_ICON.to_owned()),
             })
         );
     }

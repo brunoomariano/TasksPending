@@ -554,6 +554,100 @@ fn github_columns_need_a_query_or_notifications() {
     }
 }
 
+/// A `gitlab` source in the config becomes a scheduled source with its
+/// default stacks, or the declared ones; the token comes from the
+/// environment, never the file.
+#[test]
+fn gitlab_sources_are_scheduled_with_stacks() {
+    let path = scratch("gitlab").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "gitlab"
+        kind = "gitlab"
+
+        [[sources]]
+        name = "work"
+        kind = "gitlab"
+
+          [[sources.stacks]]
+          name = "Platform reviews"
+          merge_requests = "review_requested"
+          group = "acme/platform"
+          draft = false
+          severity = "critical"
+
+          [[sources.stacks]]
+          name = "Bugs"
+          issues = "assigned"
+          project = "acme/api"
+          labels = ["bug"]
+
+          [[sources.stacks]]
+          name = "Inbox"
+          todos = true
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) = load_plan_with(Some(path), &env(&[("GITLAB_TOKEN", "t")]), &|| None)
+        .expect("gitlab is supported");
+
+    assert_eq!(
+        plan.specs[0].source.columns(),
+        [
+            "Review requested",
+            "Assigned merge requests",
+            "Assigned issues",
+            "To-dos"
+        ]
+    );
+    assert_eq!(
+        plan.specs[1].source.columns(),
+        ["Platform reviews", "Bugs", "Inbox"]
+    );
+    assert!(plan.specs[0].icon.is_some());
+}
+
+/// A GitLab stack needs exactly one of `merge_requests`, `issues` and
+/// `todos`, with narrowing keys that fit it; mistakes name the source and
+/// the stack.
+#[test]
+fn gitlab_stacks_need_exactly_one_kind() {
+    let dir = scratch("gitlab-stacks");
+    for (name, body) in [
+        ("neither.toml", ""),
+        (
+            "both.toml",
+            "merge_requests = \"assigned\"\nissues = \"assigned\"",
+        ),
+        ("bad-value.toml", "merge_requests = \"mine\""),
+        ("typo.toml", "issue = \"assigned\""),
+        (
+            "group-and-project.toml",
+            "issues = \"assigned\"\ngroup = \"a\"\nproject = \"a/b\"",
+        ),
+        ("draft-issue.toml", "issues = \"assigned\"\ndraft = true"),
+        ("todos-off.toml", "todos = false"),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(
+            &path,
+            format!("[[sources]]\nname = \"gl\"\nkind = \"gitlab\"\n[[sources.stacks]]\nname = \"N\"\n{body}\n"),
+        )
+        .unwrap();
+
+        let error =
+            load_plan_with(Some(path), &env(&[("GITLAB_TOKEN", "t")]), &|| None).expect_err(name);
+        let message = error.to_string();
+        assert!(
+            message.contains("source `gl`") && message.contains("stack `N`"),
+            "{name}: {message}"
+        );
+    }
+}
+
 /// A `google` source uses the GNOME Online Accounts account; columns filter
 /// time ranges and calendars.
 #[test]

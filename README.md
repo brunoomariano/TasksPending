@@ -68,6 +68,7 @@ make frontend-dev
 - `crates/pending-core`: shared domain model, config types, and source contracts.
 - `crates/pending-runtime`: refresh scheduling and in-memory source state.
 - `crates/pending-github`: GitHub source adapter.
+- `crates/pending-gitlab`: GitLab source adapter.
 - `crates/pending-plane`: Plane source adapter.
 - `crates/pending-google`: Google Calendar source adapter (GNOME Online Accounts).
 - `crates/pending-ical`: calendar (iCal) source adapter.
@@ -80,7 +81,7 @@ make frontend-dev
 
 ## Current State
 
-The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Each source is a group of stacks, and each stack is a filter declared in the config; groups and stacks follow the file order, and boards (Work, Personal, …) filter the page and are the TUI's tabs. Sources available: `github` (search queries), `plane` (work item filters), `google` (Google Calendar via GNOME Online Accounts), `ical` (any iCal feed), `todoist` (Todoist filters) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). Release builds embed the web dashboard in `tasks-pending`; `--static-dir` remains a development override.
+The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Each source is a group of stacks, and each stack is a filter declared in the config; groups and stacks follow the file order, and boards (Work, Personal, …) filter the page and are the TUI's tabs. Sources available: `github` (search queries), `gitlab` (merge requests, issues and to-dos), `plane` (work item filters), `google` (Google Calendar via GNOME Online Accounts), `ical` (any iCal feed), `todoist` (Todoist filters) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). Release builds embed the web dashboard in `tasks-pending`; `--static-dir` remains a development override.
 
 ## Inspiration
 

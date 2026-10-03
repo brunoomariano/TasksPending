@@ -9,6 +9,7 @@ use pending_core::{
     AppConfig, ConfigError, DEFAULT_BOARD, PendingSource, SampleSource, SourceConfig, SourceKind,
 };
 use pending_github::{DEFAULT_API_URL, GithubColumn, GithubSource, gh_cli_token, resolve_token};
+use pending_gitlab::{GitlabColumn, GitlabSource};
 use pending_google::{GoaTokens, GoogleColumn, GoogleSource};
 use pending_ical::{IcalColumn, IcalSource};
 use pending_plane::{PlaneColumn, PlaneSettings, PlaneSource};
@@ -223,6 +224,12 @@ fn plan(
                     parse_columns(path, source, |c: &mut TodoistColumn, name| {
                         c.name = name;
                         Ok(())
+                    })?,
+                )),
+                SourceKind::Gitlab => Arc::new(GitlabSource::from_env(&env_string).with_columns(
+                    parse_columns(path, source, |c: &mut GitlabColumn, name| {
+                        c.name = name;
+                        c.validate()
                     })?,
                 )),
                 SourceKind::Github => {

@@ -53,6 +53,9 @@ pub struct SourceConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StackConfig {
     pub name: String,
+    /// `false` switches the stack off: not queried, not shown.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
     /// Card order, for any source kind; not part of `filter`.
     #[serde(default)]
     pub sort: StackSort,
@@ -201,8 +204,14 @@ impl SourceConfig {
     pub fn stack_sorts(&self) -> BTreeMap<String, StackSort> {
         self.stacks
             .iter()
+            .filter(|stack| stack.enabled)
             .map(|stack| (stack.name.clone(), stack.sort))
             .collect()
+    }
+
+    /// Whether the source declares stacks and every one is switched off.
+    pub fn all_stacks_disabled(&self) -> bool {
+        !self.stacks.is_empty() && self.stacks.iter().all(|stack| !stack.enabled)
     }
 
     /// A configured icon, or the built-in provider logo when available.

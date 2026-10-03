@@ -26,7 +26,7 @@ Each source is a group of stacks, one per `[[sources.stacks]]` entry (or the sou
 | `todoist` | `filter` (Todoist filter query) | Today (today \| overdue), Next 7 days |
 | `sample` | none | Review, Next |
 
-Every stack, whatever the kind, also takes `sort`. Cards in a stack are ordered by severity (critical first), then due time (soonest first), then most recent update (`sort = "newest"`, the default). `sort = "oldest"` puts the least recently updated first instead, to surface stale work such as pull requests nobody touched in weeks. Severity and due time still come first, so critical and overdue cards stay on top; within a query stack the severity is usually the same for every card, so staleness decides the order.
+Every stack, whatever the kind, also takes `enabled` and `sort`. `enabled = false` switches a stack off without deleting it: it is not queried and not shown in the web page or the TUI (its filter is still checked for typos), and a source whose stacks are all off is not scheduled. This is the durable way to hide a stack everywhere; the switches in the web page's Settings only affect that browser. Cards in a stack are ordered by severity (critical first), then due time (soonest first), then most recent update (`sort = "newest"`, the default). `sort = "oldest"` puts the least recently updated first instead, to surface stale work such as pull requests nobody touched in weeks. Severity and due time still come first, so critical and overdue cards stay on top; within a query stack the severity is usually the same for every card, so staleness decides the order.
 
 Unknown keys or invalid values fail at startup naming the source and the stack.
 

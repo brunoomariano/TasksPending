@@ -239,6 +239,56 @@ fn github_alert_stacks_are_accepted() {
     assert_eq!(plan.specs[0].source.columns(), ["Security"]);
 }
 
+/// A stack with `enabled = false` is switched off in the config: it is not
+/// queried and not shown, in the web page or the TUI, while its filter is
+/// still checked for typos. A source whose stacks are all off is not
+/// scheduled at all, instead of falling back to its default stacks.
+#[test]
+fn disabled_stacks_are_left_out() {
+    let path = scratch("stack-enabled").join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+        [[sources]]
+        name = "github"
+        kind = "github"
+
+          [[sources.stacks]]
+          name = "Review requested"
+          query = "is:open is:pr review-requested:@me"
+
+          [[sources.stacks]]
+          name = "My PRs"
+          query = "is:open is:pr author:@me"
+          enabled = false
+
+        [[sources]]
+        name = "all off"
+        kind = "github"
+
+          [[sources.stacks]]
+          name = "Issues"
+          query = "is:open is:issue assignee:@me"
+          enabled = false
+        "#,
+    )
+    .unwrap();
+
+    let (plan, _) = load_plan(Some(path.clone()), &env(&[("GITHUB_TOKEN", "t")])).expect("valid");
+
+    assert_eq!(plan.specs.len(), 1);
+    assert_eq!(plan.specs[0].source.columns(), vec!["Review requested"]);
+    assert_eq!(plan.specs[0].sorts.len(), 1);
+
+    std::fs::write(
+        &path,
+        "[[sources]]\nname = \"gh\"\nkind = \"github\"\n[[sources.stacks]]\nname = \"Off\"\nenabled = false\nbogus = 1\n",
+    )
+    .unwrap();
+    let error = load_plan(Some(path), &env(&[("GITHUB_TOKEN", "t")])).expect_err("typo");
+    assert!(error.to_string().contains("stack `Off`"), "{error}");
+}
+
 /// A stack's `sort` travels with the scheduled source, for any source kind,
 /// so the dashboard can order that stack oldest first.
 #[test]

@@ -12,6 +12,8 @@ timeout_seconds = 60
 #     below, whatever their board;
 #   - each [[sources.stacks]] is a stack of cards inside its group; stacks
 #     run top to bottom in the order they are listed.
+# Any stack may add `enabled = false` to switch it off without deleting it
+# (not queried, not shown anywhere).
 # Any stack may add `sort = "oldest"` to list the least recently updated
 # cards first (default "newest"); severity and due time still come first.
 # To reorder, move whole blocks up or down. Without [[sources.stacks]] a

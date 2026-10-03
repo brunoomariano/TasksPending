@@ -9,6 +9,7 @@
 ### Features
 
 - `tasks-pending sandbox` (and `make sandbox`) runs the dashboard with simulated cards at <http://127.0.0.1:61001>, without configuration, credentials or network access.
+- Any stack can be switched off in the config with `enabled = false`: it is not queried and not shown, in the web page or the TUI.
 
 ## 0.3.1
 

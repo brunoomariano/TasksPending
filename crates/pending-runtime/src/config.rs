@@ -245,6 +245,11 @@ fn plan(
                     )
                 }
             };
+        // Checked above; with every stack switched off there is nothing to
+        // show, and an empty list would mean the source's default stacks.
+        if source.all_stacks_disabled() {
+            continue;
+        }
         specs.push(SourceSpec {
             name: source.name.clone(),
             source: implementation,
@@ -262,7 +267,7 @@ fn plan(
     })
 }
 
-/// A source's `[[sources.stacks]]` read as that kind's column type; unknown
+/// A source's enabled `[[sources.stacks]]` read as that kind's column type; unknown
 /// or missing filter keys name the source and the column.
 fn parse_columns<T: DeserializeOwned>(
     path: &Path,
@@ -280,8 +285,10 @@ fn parse_columns<T: DeserializeOwned>(
                 })?;
             finish(&mut parsed, column.name.clone())
                 .map_err(|message| column_error(path, source, &column.name, &message))?;
-            Ok(parsed)
+            // Disabled stacks are still checked above, then left out.
+            Ok(column.enabled.then_some(parsed))
         })
+        .filter_map(Result::transpose)
         .collect()
 }
 

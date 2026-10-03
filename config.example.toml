@@ -38,6 +38,8 @@ enabled = true
 
 # GitHub: every stack is a search query (github.com search syntax).
 # Token from GITHUB_TOKEN, then GH_TOKEN, then `gh auth token`.
+# Without stacks, the source uses the first five below plus "Assigned issues":
+# your pull requests split by what to do next.
 # [[sources]]
 # name = "github"
 # kind = "github"
@@ -46,18 +48,33 @@ enabled = true
 #   [[sources.stacks]]
 #   name = "Review requested"
 #   query = "is:open is:pr archived:false review-requested:@me"
+#   # One organization only: add `org:` to any of these queries.
+#   # query = "is:open is:pr archived:false org:acme review-requested:@me"
 #   severity = "warning"          # optional: info (default), warning, critical
 #   # Hide bot noise, a repository, or a word in the title:
 #   exclude = ["dependabot\\[bot\\]", "^chore\\(deps\\)", "^acme/legacy#", "\\bwip\\b"]
 #
 #   [[sources.stacks]]
-#   name = "Notifications"
-#   notifications = "unread"      # "all" adds read ones (incl. marked done)
+#   name = "Returned to you"      # a reviewer asked for changes
+#   query = "is:open is:pr archived:false author:@me draft:false review:changes_requested"
+#   severity = "warning"
 #
 #   [[sources.stacks]]
-#   name = "My pull requests"
-#   query = "is:open is:pr archived:false author:@me"
+#   name = "Ready to merge"       # approved
+#   query = "is:open is:pr archived:false author:@me draft:false review:approved"
+#
+#   [[sources.stacks]]
+#   name = "Waiting on reviewers" # neither approved nor returned yet
+#   query = "is:open is:pr archived:false author:@me draft:false -review:approved -review:changes_requested"
 #   sort = "oldest"               # stale ones first (default "newest")
+#
+#   [[sources.stacks]]
+#   name = "Drafts"
+#   query = "is:open is:pr archived:false author:@me draft:true"
+#
+#   [[sources.stacks]]
+#   name = "Notifications"
+#   notifications = "unread"      # "all" adds read ones (incl. marked done)
 #
 #   [[sources.stacks]]
 #   name = "Security"

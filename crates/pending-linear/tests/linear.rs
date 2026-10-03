@@ -770,3 +770,24 @@ fn stack_filters_parse_and_validate() {
         assert!(column.validate().is_err(), "{blank}");
     }
 }
+
+/// A `LINEAR_API_URL` without encryption would send the API key in the
+/// clear: it is refused, naming the variable. A local address is fine.
+#[test]
+fn an_unencrypted_api_address_is_refused() {
+    let with_url = |url: &'static str| {
+        LinearSettings::from_env(&move |key| match key {
+            "LINEAR_API_KEY" => Some("secret-key".to_owned()),
+            "LINEAR_API_URL" => Some(url.to_owned()),
+            _ => None,
+        })
+    };
+
+    let error = with_url("http://linear.example.com/graphql").expect_err("refused");
+    assert!(
+        error.contains("LINEAR_API_URL") && error.contains("https://"),
+        "{error}"
+    );
+    assert!(!error.contains("secret-key"));
+    assert!(with_url("http://127.0.0.1:8080/graphql").is_ok());
+}

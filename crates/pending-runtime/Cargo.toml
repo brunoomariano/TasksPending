@@ -15,6 +15,7 @@ pending-gitlab = { path = "../pending-gitlab" }
 pending-google ={ path = "../pending-google" }
 pending-ical = { path = "../pending-ical" }
 pending-jira = { path = "../pending-jira" }
+pending-linear = { path = "../pending-linear" }
 pending-plane = { path = "../pending-plane" }
 pending-todoist = { path = "../pending-todoist" }
 regex.workspace = true

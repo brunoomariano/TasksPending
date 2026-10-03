@@ -1,0 +1,22 @@
+[package]
+name = "pending-linear"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+chrono.workspace = true
+futures-util.workspace = true
+pending-core = { path = "../pending-core" }
+pending-http = { path = "../pending-http" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+
+[dev-dependencies]
+axum.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }

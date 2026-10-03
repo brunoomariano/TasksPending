@@ -53,6 +53,7 @@ The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME
 - `ical` (`pending-ical`): upcoming events from an iCal feed (Google Calendar's secret address); recurrences expanded with `rrule`. Cards set `due_at` to the event start.
 - `plane` (`pending-plane`): the workspace's work items, read per project and filtered locally per column; request shapes follow PlaneCockpit.
 - `jira` (`pending-jira`): one JQL query per column, three at a time; Jira Cloud's enhanced search with e-mail and API token, or Data Center's v2 search with a personal access token. See `docs/operations.md`.
+- `linear` (`pending-linear`): one GraphQL `issues` query per column, filtered by Linear (assignee, state type, state name, team, priority), three at a time; the rate-limit reset becomes the source's `retry_at`.
 - `todoist` (`pending-todoist`): one Todoist filter query per column (API v1).
 - `gitlab` (`pending-gitlab`): one REST list request per column (merge requests or issues by role, or pending to-do items; defaults: review requests, assigned merge requests, assigned issues, to-dos), three at a time, paged. See `docs/operations.md`.
 - `github` (`pending-github`): one search API query per column (defaults: review requests, authored pull requests, assigned issues), three at a time; token precedence and error handling follow `ghpending`. See `docs/operations.md`.

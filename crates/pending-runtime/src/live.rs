@@ -89,12 +89,9 @@ impl Live {
             let state = self.state();
             (state.aggregator.clone(), state.error.clone())
         };
-        let mut snapshot = aggregator.snapshot();
+        let (mut snapshot, hidden) = aggregator.snapshot_with_hidden();
         snapshot.config_error = error;
-        // Read after the snapshot: see the refresh loop's write order.
-        self.inner
-            .marks
-            .apply_hiding(&mut snapshot, &aggregator.hidden_ids());
+        self.inner.marks.apply_hiding(&mut snapshot, &hidden);
         snapshot
     }
 

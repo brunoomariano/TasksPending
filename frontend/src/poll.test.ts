@@ -77,6 +77,38 @@ describe("startPolling", () => {
     expect(states.map((s) => s.kind)).toEqual(["ready", "ready"]);
   });
 
+  /**
+   * Marking a card or a config error changes what the page shows even when
+   * the cards are the same, so both redraw.
+   */
+  test("re-renders when only the marks or the config error change", async () => {
+    const marked = snapshot("10:01");
+    marked.marked = ["a"];
+    const broken = snapshot("10:02");
+    broken.marked = ["a"];
+    broken.config_error = "invalid config";
+    const results: SnapshotResult[] = [
+      { ok: true, snapshot: snapshot("10:00") },
+      { ok: true, snapshot: marked },
+      { ok: true, snapshot: broken },
+    ];
+    const states: ViewState[] = [];
+
+    const { stop } = startPolling({
+      load: async () => results.shift()!,
+      onState: (state) => states.push(state),
+      intervalMs: 1000,
+      isHidden: () => false,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    stop();
+
+    expect(states).toHaveLength(3);
+  });
+
   /** A failure after a success becomes the stale state, keeping the cards. */
   test("a failed poll after success renders the stale state", async () => {
     const results: SnapshotResult[] = [

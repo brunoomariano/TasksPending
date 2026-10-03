@@ -148,6 +148,27 @@ enabled = true
 #   name = "Watching"
 #   jql = "watcher = currentUser() AND statusCategory != Done"
 #   severity = "info"             # optional: info, warning, critical
+# Linear: every stack is a filter Linear applies to the workspace's issues.
+# Needs LINEAR_API_KEY (a personal API key) in the environment.
+# [[sources]]
+# name = "linear"
+# kind = "linear"
+# board = "Work"
+#
+#   [[sources.stacks]]
+#   name = "Assigned to me"       # assignee defaults to "me", open states
+#
+#   [[sources.stacks]]
+#   name = "Triage, unassigned"
+#   assignee = "none"             # me | none | others | any
+#   state_type = ["triage"]       # triage | backlog | unstarted | started | completed | canceled
+#   team = ["ENG"]                # team keys
+#
+#   [[sources.stacks]]
+#   name = "In review (others)"
+#   assignee = "others"
+#   state = ["In Review"]         # state names, case-insensitive
+#   # also: priority = ["urgent", "high"]   # urgent | high | medium | low | none
 
 # Google Calendar through GNOME Online Accounts: install gnome-online-accounts
 # and gnome-online-accounts-gtk, add the Google account with Calendar enabled.

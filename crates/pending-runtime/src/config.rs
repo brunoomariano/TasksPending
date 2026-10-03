@@ -13,6 +13,7 @@ use pending_gitlab::{GitlabColumn, GitlabSource};
 use pending_google::{GoaTokens, GoogleColumn, GoogleSource};
 use pending_ical::{IcalColumn, IcalSource};
 use pending_jira::{JiraColumn, JiraSettings, JiraSource};
+use pending_linear::{LinearColumn, LinearSettings, LinearSource};
 use pending_plane::{PlaneColumn, PlaneSettings, PlaneSource};
 use pending_todoist::{TodoistColumn, TodoistSource};
 use serde::de::DeserializeOwned;
@@ -216,6 +217,14 @@ fn plan(
                 SourceKind::Jira => Arc::new(
                     JiraSource::new(JiraSettings::from_env(&env_string)).with_columns(
                         parse_columns(path, source, |c: &mut JiraColumn, name| {
+                            c.name = name;
+                            c.validate()
+                        })?,
+                    ),
+                ),
+                SourceKind::Linear => Arc::new(
+                    LinearSource::new(LinearSettings::from_env(&env_string)).with_columns(
+                        parse_columns(path, source, |c: &mut LinearColumn, name| {
                             c.name = name;
                             c.validate()
                         })?,

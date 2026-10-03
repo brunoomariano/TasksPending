@@ -23,6 +23,7 @@ Each source is a group of stacks, one per `[[sources.stacks]]` entry (or the sou
 | `gitlab` | `merge_requests` (review_requested/assigned/authored), `issues` (assigned/authored) or `todos = true`; `group` or `project`, `labels`, `draft`, `severity` | Review requested, Assigned merge requests, Assigned issues, To-dos |
 | `plane` | `assignee` (me/none/others/any), `state_group`, `state`, `project`, `priority` | In progress, To do, Backlog (yours) |
 | `jira` | `jql` (JQL query), `severity` | In progress, To do (yours) |
+| `linear` | `assignee` (me/none/others/any), `state_type`, `state`, `team`, `priority` | In progress, To do, Backlog (yours) |
 | `google` | `when` (now/today/tomorrow/later), `calendar` (names) | Now, Today, Tomorrow, Next 30 days |
 | `ical` | `when` (now/today/tomorrow/later) | Now, Today, Tomorrow, Next 30 days |
 | `todoist` | `filter` (Todoist filter query) | Today (today \| overdue), Next 7 days |
@@ -93,6 +94,18 @@ Jira Cloud refuses a query without any restriction (only `ORDER BY ...`); filter
 - Cards show the issue key (e.g. `PROJ-123`) as the title, then the summary, project, status, assignee and due date, and link to `<JIRA_BASE_URL>/browse/<key>`. A due date in the past is critical; so are the priorities Highest, Blocker and Critical; High and Major are warnings; the rest is info. A stack `severity` replaces all of that.
 - Each query asks only for the fields the cards use, 100 issues per page, up to 5 pages; more than that shows as a warning naming the stack.
 - Queries run three at a time, each limited to 15 s. A failing query (invalid JQL shows Jira's own explanation) becomes a warning naming its stack while the others still show; all queries failing makes the source failed. A rejected login (401, or Data Center answering as an anonymous user) says which variables to check. On a rate limit (429) the source waits for the time Jira gives in `Retry-After` before asking again.
+## Linear Source
+
+`kind = "linear"` runs one GraphQL query per stack against Linear's API and fills the stack with the issues Linear returns for its filter (by default, yours). Settings come only from the environment:
+
+- `LINEAR_API_KEY`: a personal API key (Linear → Settings → Security & access → Personal API keys; read access is enough). It is sent as the `Authorization` header, never logged or shown; redirects are not followed, so the key never reaches another host;
+- `LINEAR_API_URL` (optional): the GraphQL endpoint, `https://api.linear.app/graphql` by default.
+
+Without the key the source fails naming the variable. Stack filters: `assignee` (`me` by default, `none`, `others`, `any`), `state_type` (`triage`, `backlog`, `unstarted`, `started`, `completed`, `canceled`), `state` (names such as `In Review`, compared without case), `team` (team keys such as `ENG`, the prefix of the team's issue references, written as Linear shows them) and `priority` (`urgent`, `high`, `medium`, `low`, `none`). Without `state_type` and `state`, only open types match (triage, backlog, unstarted, started); naming states selects them in any type (`state = ["Done"]` works), and giving both requires both. Invalid values fail at startup. Archived issues never show.
+
+Cards show the issue reference (e.g. `ENG-123`) as the title, then the issue title, team, state, the assignee's display name (in stacks that are not only yours) and the due date, and link to the issue. Urgent priority and a past due date make a card critical; high priority makes it a warning. "Overdue" uses the machine's local date. The source shows Linear's logo unless `icon` replaces it.
+
+The filters run on Linear's side, so each stack costs one request per 100 issues, most recently updated first. A stack reads at most 500 issues; beyond that it shows a warning. Stacks are queried three at a time, each request with 15 s. A failing or slow stack becomes a warning naming it and the other stacks still show; when every stack fails, the source fails. A rejected key says to check `LINEAR_API_KEY`. When Linear's rate limit is hit (an API key has 2,500 requests per hour), the source reports the reset time and both scheduled and manual refreshes wait for it (up to an hour). Error messages never include the key or the request URL.
 
 ## Google Calendar Source
 
@@ -172,7 +185,7 @@ An explicit path (1 or 2) that does not exist is an error. When no file exists a
 
 Tokens are read from the environment by each source, never from the config file.
 
-Every source also takes `refresh_seconds` and `timeout_seconds` (overriding the global ones). Every provider (GitHub, Google Calendar, iCal, Plane, Todoist) shows its logo from Dashboard Icons by default; GitHub also changes to its light mark in dark themes. Set `icon` / `icon_dark` to replace a logo with image URLs (http or https), with `icon_dark` used on dark themes. [Dashboard Icons](https://dashboardicons.com) has logos for most tools, served as `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/<name>.svg` (`github`, `github-light`, `plane`, `todoist`, `google-calendar`, `ical`). The browser loads them from that host, so it learns your IP address and which icons you use.
+Every source also takes `refresh_seconds` and `timeout_seconds` (overriding the global ones). Every provider (GitHub, GitLab, Jira, Linear, Plane, Google Calendar, iCal, Todoist) shows its logo from Dashboard Icons by default; GitHub also changes to its light mark in dark themes. Set `icon` / `icon_dark` to replace a logo with image URLs (http or https), with `icon_dark` used on dark themes. [Dashboard Icons](https://dashboardicons.com) has logos for most tools, served as `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/<name>.svg` (`github`, `github-light`, `plane`, `todoist`, `google-calendar`, `ical`). The browser loads them from that host, so it learns your IP address and which icons you use.
 
 Edits are picked up while running: the API and the TUI check the file every 2 seconds, and a manual refresh (`r`, the web Refresh button) also reloads it first. Sources are rebuilt only when the file's text changed, with the cache keeping their cards on screen meanwhile. A file that fails to load keeps the previous config running and shows the error in the TUI's Sources panel and as a banner on the web. Environment variables are read at startup; changing them still needs a restart.
 

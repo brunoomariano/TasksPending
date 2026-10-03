@@ -88,6 +88,7 @@ pub enum SourceKind {
     Gitlab,
     Google,
     Ical,
+    Jira,
     Plane,
     Sample,
     Todoist,
@@ -100,6 +101,7 @@ const GITLAB_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-ico
 const GOOGLE_CALENDAR_ICON: &str =
     "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/google-calendar.svg";
 const ICAL_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ical.svg";
+const JIRA_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/jira.svg";
 const PLANE_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/plane.svg";
 const TODOIST_ICON: &str =
     "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/todoist.svg";
@@ -113,6 +115,7 @@ impl SourceKind {
             Self::Gitlab => (GITLAB_ICON, None),
             Self::Google => (GOOGLE_CALENDAR_ICON, None),
             Self::Ical => (ICAL_ICON, None),
+            Self::Jira => (JIRA_ICON, None),
             Self::Plane => (PLANE_ICON, None),
             Self::Todoist => (TODOIST_ICON, None),
             // Not a provider: the page falls back to its generic icon.

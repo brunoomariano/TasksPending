@@ -1812,6 +1812,7 @@ dependencies = [
  "pending-ical",
  "pending-plane",
  "pending-todoist",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

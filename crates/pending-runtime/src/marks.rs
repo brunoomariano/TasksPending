@@ -6,6 +6,7 @@
 //! schedules, so the file is the single source of truth: it is read before
 //! every use, and changed only under a lock held across read-modify-write.
 
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -105,6 +106,15 @@ impl Marks {
     /// nothing. A source absent from the dashboard keeps its marks too,
     /// until they are a month old.
     pub fn apply(&self, snapshot: &mut DashboardSnapshot) {
+        self.apply_hiding(snapshot, &HashSet::new());
+    }
+
+    /// [`Marks::apply`] for a dashboard whose stacks leave cards out
+    /// (`exclude`). A card in `hidden` is absent from `snapshot` but its
+    /// source still lists it, so it is not finished: its mark is kept, and
+    /// stays in `snapshot.marked`, until the card is gone from the source
+    /// as well.
+    pub fn apply_hiding(&self, snapshot: &mut DashboardSnapshot, hidden: &HashSet<String>) {
         let now = Utc::now();
         let keep = |mark: &Mark| {
             let Some(health) = snapshot.sources.iter().find(|s| s.name == mark.source) else {
@@ -114,7 +124,9 @@ impl Marks {
                 && health
                     .last_refresh_at
                     .is_some_and(|refreshed| refreshed > mark.marked_at);
-            !seen_since_marked || source_of(snapshot, &mark.id).is_some()
+            !seen_since_marked
+                || source_of(snapshot, &mark.id).is_some()
+                || hidden.contains(&mark.id)
         };
 
         let mut marks = self.current();

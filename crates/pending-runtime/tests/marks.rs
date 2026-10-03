@@ -265,3 +265,33 @@ fn two_processes_share_the_marks_file() {
     daemon.set(&board(), "a", false).unwrap();
     assert_eq!(marked(&tui, board()), ["b"]);
 }
+
+/// A marked card that a stack's `exclude` pattern now hides is not
+/// finished: its source still lists it, so the mark is kept and works again
+/// when the pattern goes away. Once the source stops listing the card, the
+/// mark is dropped like any other.
+#[test]
+fn a_mark_on_a_card_hidden_by_exclude_is_kept_until_the_card_is_finished() {
+    use std::collections::HashSet;
+
+    let path = scratch("hidden");
+    let marks = Marks::load(Some(path));
+    marks
+        .set(&snapshot(vec![("github", fresh(&["a", "b"]))]), "a", true)
+        .unwrap();
+    let hidden: HashSet<String> = HashSet::from(["a".to_owned()]);
+
+    // Excluded from every stack: off the boards, still marked.
+    let mut excluded = snapshot(vec![("github", fresh(&["b"]))]);
+    marks.apply_hiding(&mut excluded, &hidden);
+    assert_eq!(excluded.marked, ["a"]);
+
+    // The pattern is removed: the card is back, with its mark.
+    assert_eq!(
+        marked(&marks, snapshot(vec![("github", fresh(&["a", "b"]))])),
+        ["a"]
+    );
+
+    // Finished at the source: neither listed nor hidden.
+    assert!(marked(&marks, snapshot(vec![("github", fresh(&["b"]))])).is_empty());
+}

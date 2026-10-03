@@ -30,6 +30,7 @@ clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.29"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 ratatui = "0.30"
+regex = "1"
 reqwest = { version = "0.13", features = ["json", "query"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

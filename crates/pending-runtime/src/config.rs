@@ -18,6 +18,7 @@ use thiserror::Error;
 use tracing::info;
 
 use crate::SourceSpec;
+use crate::exclude::Excludes;
 
 /// Environment variable that points at an explicit config file.
 pub const CONFIG_ENV: &str = "TASKS_PENDING_CONFIG";
@@ -245,6 +246,8 @@ fn plan(
                     )
                 }
             };
+        let excludes = Excludes::from_stacks(&source.stacks)
+            .map_err(|error| column_error(path, source, &error.stack, &error.message))?;
         // Checked above; with every stack switched off there is nothing to
         // show, and an empty list would mean the source's default stacks.
         if source.all_stacks_disabled() {
@@ -258,6 +261,7 @@ fn plan(
             timeout: source.timeout_seconds.map(Duration::from_secs),
             icon: source.icon(),
             sorts: source.stack_sorts(),
+            excludes,
         });
     }
 
@@ -312,6 +316,7 @@ fn sample_plan() -> Plan {
             timeout: None,
             icon: None,
             sorts: Default::default(),
+            excludes: Default::default(),
         }],
         timeout: Duration::from_secs(defaults.timeout_seconds),
     }

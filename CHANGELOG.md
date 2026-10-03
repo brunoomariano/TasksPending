@@ -5,6 +5,7 @@
 ### Features
 
 - Every provider shows its Dashboard Icons logo by default: iCal sources now have one too, like GitHub, Google Calendar, Plane and Todoist. `icon` still overrides it.
+- Any stack can leave cards out with `exclude = ["pattern", ...]` in the config: a card whose title or body matches one of the patterns (regular expressions, compared without case) is absent from that stack only, for example to hide bot pull requests with `"dependabot\\[bot\\]"`. An invalid pattern fails when the config loads, naming the source and the stack.
 
 ## 0.4.0
 

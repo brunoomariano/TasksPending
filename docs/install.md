@@ -176,5 +176,6 @@ The last successful data of each source is cached in `$XDG_STATE_HOME/tasks-pend
 - **The page says the API is unavailable**: `systemctl --user status tasks-pending`; if port 61000 is taken, use another port (see "Run the daemon").
 - **A source shows "not configured"**: its variables are missing from the env file; fix it and restart the service.
 - **GitHub works in the terminal but not in the daemon**: `gh` is not on the service's PATH; set `GITHUB_TOKEN` in the env file.
+- **No weather beside the clock on Omarchy**: the widget needs `omarchy-weather-status` to work for the daemon. Run it in a terminal first: it fails when offline or when the place is unknown (`omarchy-weather-location --set <name>`). The systemd service's PATH includes `/usr/share/omarchy/bin` and `~/.local/share/omarchy/bin`; a service file installed before that keeps the old PATH until you install again. A failure is retried after a minute, and the widget is hidden in windows narrower than 1440 px.
 - **Google Calendar fails in the daemon**: the service must run inside your desktop session (it does when started with `systemctl --user` after login).
 - **Config errors**: the **Sources** dialog shows the message, naming the file, source and stack.

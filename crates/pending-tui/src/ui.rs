@@ -1,27 +1,29 @@
-//! Rendering of the dashboard as a kanban: board tabs, then columns grouped
-//! by source.
+//! Rendering of the dashboard as on the web page: board tabs, then the
+//! board's groups (sources) side by side, each with its stacks one above
+//! another.
 
 use chrono::{DateTime, Local, Utc};
-use pending_core::{CardSeverity, PendingCard, SourceHealth, SourceStatus};
+use pending_core::{CardSeverity, Column, Group, PendingCard, SourceHealth, SourceStatus};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Scrollbar,
-    ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
+    Block, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    StatefulWidget, Widget, Wrap,
 };
 
-use crate::app::{App, CARD_ROWS, ColumnArea, ColumnRef, Popup, Viewport};
+use crate::app::{App, CARD_ROWS, GroupArea, Popup, Row, Viewport};
 use crate::clock;
 
-const HELP: &str = "1-9/tab boards · h/l columns · j/k/pgup/pgdn cards · enter open · space details · s sources · r refresh · q quit";
+const HELP: &str = "1-9/tab boards · h/l groups · j/k cards · c collapse · enter open · space details · s sources · r refresh · q quit";
 /// Largest details popup, so long lines stay readable on wide terminals.
 const POPUP_MAX_WIDTH: u16 = 110;
 const POPUP_MAX_HEIGHT: u16 = 30;
-/// Narrowest useful column; with less room the board scrolls sideways.
-const MIN_COLUMN_WIDTH: u16 = 26;
-/// Fewest rows the board keeps (about three cards per column); the clock
+/// Narrowest useful group, border included; with less room the board scrolls
+/// sideways.
+const MIN_GROUP_WIDTH: u16 = 30;
+/// Fewest rows the board keeps (about three cards per group); the clock
 /// hides rather than take them.
 const MIN_BOARD_ROWS: u16 = 10;
 /// Glyphs in `HH:MM:SS`.
@@ -210,12 +212,12 @@ fn card_details<'a>(app: &App, card: &'a PendingCard) -> Vec<Line<'a>> {
         )),
         Line::default(),
     ];
-    if let Some(column) = app.columns().get(app.selected_column()) {
-        lines.push(field("Source", column.source.to_owned()));
+    if let Some((group, stack)) = app.selected_stack() {
+        lines.push(field("Source", group.source.clone()));
         if let Some(board) = app.current_board() {
             lines.push(field("Board", board.name.clone()));
         }
-        lines.push(field("Column", column.column.name.clone()));
+        lines.push(field("Stack", stack.name.clone()));
     }
     if let Some(due) = card.due_at {
         lines.push(field("Due", local(due)));
@@ -347,75 +349,198 @@ fn source_line(source: &SourceHealth) -> Line<'_> {
     Line::from(spans)
 }
 
-/// The first visible column and how many fit, keeping `selected` in view.
+/// The first visible group and how many fit, keeping `selected` in view.
 fn visible_window(total: usize, selected: usize, width: u16) -> (usize, usize) {
-    let fit = usize::from((width / MIN_COLUMN_WIDTH).max(1)).min(total);
+    let fit = usize::from((width / MIN_GROUP_WIDTH).max(1)).min(total);
     let start = selected.saturating_sub(fit - 1).min(total - fit);
     (start, fit)
 }
 
-/// Draws the current board and records where its columns landed.
+/// Draws the current board, its groups side by side, and records where they
+/// landed.
 fn render_board(area: Rect, buf: &mut Buffer, app: &App, viewport: &mut Viewport) {
-    let columns = app.columns();
-    if columns.is_empty() {
-        Paragraph::new("No columns on this board.")
+    let groups = app.groups();
+    if groups.is_empty() {
+        Paragraph::new("No stacks on this board.")
             .block(Block::default().borders(Borders::ALL))
             .render(area, buf);
         return;
     }
 
-    let (start, fit) = visible_window(columns.len(), app.selected_column(), area.width);
-    let visible = &columns[start..start + fit];
-
-    // Consecutive columns of the same source share one titled group box.
-    let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
-    for (offset, column) in visible.iter().enumerate() {
-        match groups.last_mut() {
-            Some((source, indexes)) if *source == column.source => indexes.push(start + offset),
-            _ => groups.push((column.source, vec![start + offset])),
-        }
-    }
-
-    let group_areas = Layout::default()
+    let (start, fit) = visible_window(groups.len(), app.selected_group(), area.width);
+    let areas = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints(
-            groups
-                .iter()
-                .map(|(_, indexes)| Constraint::Ratio(indexes.len() as u32, fit as u32))
-                .collect::<Vec<_>>(),
-        )
+        .constraints(vec![Constraint::Ratio(1, fit as u32); fit])
         .split(area);
-
-    for ((source, indexes), group_area) in groups.iter().zip(group_areas.iter()) {
-        let block = Block::default()
-            .title(Span::styled(
-                format!(" {source} "),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ))
-            .borders(Borders::ALL);
-        let inner = block.inner(*group_area);
-        block.render(*group_area, buf);
-
-        let column_areas = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(vec![
-                Constraint::Ratio(1, indexes.len() as u32);
-                indexes.len()
-            ])
-            .split(inner);
-        for (&index, column_area) in indexes.iter().zip(column_areas.iter()) {
-            let offset = render_column(*column_area, buf, app, index, &columns[index]);
-            viewport.columns.push(ColumnArea {
-                index,
-                area: *column_area,
-                offset,
-            });
-            // Below the column's title row.
-            viewport.card_page = usize::from(column_area.height.saturating_sub(1) / CARD_ROWS);
-        }
+    for (offset, group_area) in areas.iter().enumerate() {
+        let index = start + offset;
+        let drawn = render_group(*group_area, buf, app, index, &groups[index]);
+        // Below a stack's header row.
+        viewport.card_page = usize::from(drawn.area.height.saturating_sub(1) / CARD_ROWS);
+        viewport.groups.push(drawn);
     }
+}
+
+/// How far group `index` scrolls, in rows, to show `height` of its `rows`.
+/// The focused group moves from where it was last drawn only as far as the
+/// selection needs to stay visible (the first card of a stack brings the
+/// stack's header along); the others rest at their top, where focusing them
+/// puts the selection.
+fn group_scroll(app: &App, index: usize, rows: &[Row], height: usize) -> usize {
+    if index != app.selected_group() || height == 0 {
+        return 0;
+    }
+    let Some(selected) = app.selected_row() else {
+        return 0;
+    };
+    let mut scroll = app
+        .group_scroll(index)
+        .min(rows.len().saturating_sub(height));
+    let Some(first) = rows.iter().position(|row| *row == selected) else {
+        return scroll;
+    };
+    let last = rows
+        .iter()
+        .rposition(|row| *row == selected)
+        .unwrap_or(first);
+    let top = match selected {
+        Row::Card { card: 0, .. } => first.saturating_sub(1),
+        _ => first,
+    };
+    if top < scroll {
+        scroll = top;
+    }
+    if last >= scroll + height {
+        scroll = last + 1 - height;
+    }
+    scroll
+}
+
+/// Draws a group: a titled box with its stacks one above another, scrolled
+/// to keep the selection visible. Returns where its rows landed.
+fn render_group(area: Rect, buf: &mut Buffer, app: &App, index: usize, group: &Group) -> GroupArea {
+    let focused = index == app.selected_group();
+    let block = Block::default()
+        .title(Span::styled(
+            format!(" {} ", group.source),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(if focused {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        }));
+    let inner = block.inner(area);
+    block.render(area, buf);
+
+    let rows = app.rows(index);
+    let height = usize::from(inner.height);
+    let scroll = group_scroll(app, index, &rows, height);
+    let selected = app.selected_row().filter(|_| focused);
+
+    let visible = rows.iter().enumerate().skip(scroll);
+    for (y, (position, row)) in (inner.y..inner.bottom()).zip(visible) {
+        let is_selected = selected == Some(*row);
+        let line = match *row {
+            Row::Header { stack } => {
+                let holds_selection = matches!(
+                    selected,
+                    Some(Row::Card { stack: holder, .. }) if holder == stack
+                );
+                stack_header(
+                    &group.columns[stack],
+                    app.is_collapsed(index, stack),
+                    is_selected,
+                    holds_selection,
+                )
+            }
+            Row::Card { stack, card } => {
+                let card = &group.columns[stack].cards[card];
+                // A card's rows are equal: the second one is its body.
+                if position > 0 && rows[position - 1] == *row {
+                    card_body(card)
+                } else {
+                    card_title(card, is_selected)
+                }
+            }
+        };
+        Paragraph::new(line).render(Rect::new(inner.x, y, inner.width, 1), buf);
+    }
+
+    if rows.len() > height && height > 0 {
+        let mut state = ScrollbarState::new(rows.len() - height).position(scroll);
+        Scrollbar::new(ScrollbarOrientation::VerticalRight).render(
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            buf,
+            &mut state,
+        );
+    }
+
+    GroupArea {
+        index,
+        area: inner,
+        scroll,
+    }
+}
+
+/// A stack's header: an open/closed marker, its name and card count. An
+/// empty stack is dimmed and has no marker; the selection rests on a
+/// collapsed stack's header, and the stack holding it stands out.
+fn stack_header(
+    stack: &Column,
+    collapsed: bool,
+    selected: bool,
+    holds_selection: bool,
+) -> Line<'_> {
+    let label = format!("{} ({})", stack.name, stack.cards.len());
+    if stack.cards.is_empty() {
+        return Line::from(Span::styled(
+            format!("  {label}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    let style = Style::default().fg(Color::Yellow);
+    let label_style = if selected {
+        style.add_modifier(Modifier::REVERSED | Modifier::BOLD)
+    } else if holds_selection {
+        style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        style
+    };
+    Line::from(vec![
+        Span::styled(if collapsed { "▸ " } else { "▾ " }, style),
+        Span::styled(label, label_style),
+    ])
+}
+
+fn card_title(card: &PendingCard, selected: bool) -> Line<'_> {
+    let marker = match card.severity {
+        CardSeverity::Info => Style::default().fg(Color::Blue),
+        CardSeverity::Warning => Style::default().fg(Color::Yellow),
+        CardSeverity::Critical => Style::default().fg(Color::Red),
+    };
+    let title = if selected {
+        Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    Line::from(vec![
+        Span::styled("▍", marker),
+        Span::styled(card.title.as_str(), title),
+    ])
+}
+
+fn card_body(card: &PendingCard) -> Line<'_> {
+    Line::from(Span::styled(
+        format!(" {}", body_summary(&card.body)),
+        Style::default().fg(Color::DarkGray),
+    ))
 }
 
 /// A card's body on one line: its non-blank lines, trimmed and separated by
@@ -426,71 +551,6 @@ fn body_summary(body: &str) -> String {
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join(" · ")
-}
-
-/// Draws a column and returns the index of its first card on screen.
-fn render_column(
-    area: Rect,
-    buf: &mut Buffer,
-    app: &App,
-    index: usize,
-    column: &ColumnRef<'_>,
-) -> usize {
-    let selected_column = index == app.selected_column();
-    let title_style = if selected_column {
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-    } else {
-        Style::default().fg(Color::Yellow)
-    };
-    let block = Block::default()
-        .title(Span::styled(
-            format!("{} ({})", column.column.name, column.column.cards.len()),
-            title_style,
-        ))
-        .borders(Borders::TOP);
-
-    if column.column.cards.is_empty() {
-        Paragraph::new(Span::styled("—", Style::default().fg(Color::DarkGray)))
-            .block(block)
-            .render(area, buf);
-        return 0;
-    }
-
-    let mut state = ListState::default();
-    let items: Vec<ListItem> = column
-        .column
-        .cards
-        .iter()
-        .enumerate()
-        .map(|(position, card)| {
-            let marker = match card.severity {
-                CardSeverity::Info => Style::default().fg(Color::Blue),
-                CardSeverity::Warning => Style::default().fg(Color::Yellow),
-                CardSeverity::Critical => Style::default().fg(Color::Red),
-            };
-            let title_style = if app.is_selected(index, position) {
-                state.select(Some(position));
-                Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            ListItem::new(vec![
-                Line::from(vec![
-                    Span::styled("▍", marker),
-                    Span::styled(card.title.as_str(), title_style),
-                ]),
-                Line::from(Span::styled(
-                    format!(" {}", body_summary(&card.body)),
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ])
-        })
-        .collect();
-
-    StatefulWidget::render(List::new(items).block(block), area, buf, &mut state);
-    state.offset()
 }
 
 #[cfg(test)]
@@ -601,10 +661,10 @@ mod tests {
         ])
     }
 
-    /// The screen shows boards as tabs, each tool as a group of columns with
-    /// their card counts, and the health of the sources.
+    /// The screen shows boards as tabs, each source as a group with its
+    /// stacks and their card counts, and the health of the sources.
     #[test]
-    fn boards_are_tabs_and_sources_are_groups_of_columns() {
+    fn boards_are_tabs_and_sources_are_groups_of_stacks() {
         let screen = screen(&work(), 120, 24);
 
         for expected in [
@@ -618,7 +678,9 @@ mod tests {
             "Fix login",
             "Add cache",
             "calendar failed: feed returned 404",
-            "h/l columns",
+            "h/l groups",
+            "c collapse",
+            "q quit",
         ] {
             assert!(
                 screen.contains(expected),
@@ -631,45 +693,185 @@ mod tests {
         );
     }
 
-    /// With more columns than fit the width, the board scrolls sideways to
-    /// keep the selected column visible.
+    /// Groups sit side by side in config order; inside a group the stacks
+    /// sit one above another, each a header line (name and count) followed
+    /// by its cards.
     #[test]
-    fn wide_boards_scroll_to_the_selected_column() {
-        let names: Vec<String> = (0..8).map(|i| format!("Col{i}")).collect();
-        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    fn groups_sit_side_by_side_and_their_stacks_one_above_another() {
+        let app = app(vec![
+            fresh(
+                "plane",
+                "Work",
+                &["Mine", "Inbox"],
+                vec![
+                    card("Mine", "API-1", "Fix login"),
+                    card("Inbox", "API-2", "Triage report"),
+                ],
+            ),
+            fresh(
+                "github",
+                "Work",
+                &["Review"],
+                vec![card("Review", "gh-1", "Add cache")],
+            ),
+        ]);
+        let screen = screen(&app, 120, 24);
+
+        let (plane_x, group_row) = position(&screen, " plane ");
+        let (github_x, github_row) = position(&screen, " github ");
+        assert_eq!(group_row, github_row, "{screen}");
+        assert!(plane_x < github_x, "{screen}");
+
+        let (mine_x, mine_row) = position(&screen, "▾ Mine (1)");
+        assert_eq!(mine_row, group_row + 1, "{screen}");
+        assert_eq!(position(&screen, "Fix login").1, mine_row + 1, "{screen}");
+        assert_eq!(position(&screen, "API-1 · body").1, mine_row + 2);
+        // The next stack follows right below, in the same group.
+        assert_eq!(
+            position(&screen, "▾ Inbox (1)"),
+            (mine_x, mine_row + 3),
+            "{screen}"
+        );
+        assert_eq!(position(&screen, "Triage report").1, mine_row + 4);
+
+        let (review_x, review_row) = position(&screen, "▾ Review (1)");
+        assert_eq!(review_row, mine_row, "{screen}");
+        assert_eq!(review_x, github_x, "inside the github group\n{screen}");
+    }
+
+    /// An empty stack is only its header, dimmed, with (0): the next stack
+    /// follows on the next row.
+    #[test]
+    fn empty_stacks_are_a_dimmed_header_only() {
+        let app = app(vec![fresh(
+            "plane",
+            "Work",
+            &["Mine", "Idle", "Inbox"],
+            vec![
+                card("Mine", "API-1", "Fix login"),
+                card("Inbox", "API-2", "Triage report"),
+            ],
+        )]);
+        let area = Rect::new(0, 0, 100, 24);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, &app, "", now());
+        let screen = screen(&app, 100, 24);
+
+        let (x, y) = position(&screen, "Idle (0)");
+        assert_eq!(y, position(&screen, "Fix login").1 + 2, "{screen}");
+        assert_eq!(position(&screen, "Inbox (1)").1, y + 1, "{screen}");
+        assert_eq!(buf[(x, y)].fg, Color::DarkGray);
+        let (x, y) = position(&screen, "Inbox (1)");
+        assert_ne!(buf[(x, y)].fg, Color::DarkGray);
+    }
+
+    /// A collapsed stack shows only its header, marked as closed, and the
+    /// next stack moves up; expanding it brings the cards back.
+    #[test]
+    fn collapsed_stacks_show_only_their_header() {
         let mut app = app(vec![fresh(
             "plane",
             "Work",
-            &names,
-            vec![card("Col7", "last", "Last column card")],
+            &["Mine", "Inbox"],
+            vec![
+                card("Mine", "API-1", "Fix login"),
+                card("Inbox", "API-2", "Triage report"),
+            ],
         )]);
+        app.handle_key(KeyEvent::from(KeyCode::Char('c')));
+
+        let collapsed = screen(&app, 100, 24);
+        assert!(!collapsed.contains("Fix login"), "{collapsed}");
+        let (_, y) = position(&collapsed, "▸ Mine (1)");
+        assert_eq!(position(&collapsed, "▾ Inbox (1)").1, y + 1, "{collapsed}");
+        assert!(collapsed.contains("Triage report"), "{collapsed}");
+
+        app.handle_key(KeyEvent::from(KeyCode::Char('c')));
+        let expanded = screen(&app, 100, 24);
+        assert!(expanded.contains("▾ Mine (1)"), "{expanded}");
+        assert!(expanded.contains("Fix login"), "{expanded}");
+    }
+
+    /// With more groups than fit the width, the board scrolls sideways to
+    /// keep the selected group visible, and no group gets narrower than the
+    /// minimum.
+    #[test]
+    fn wide_boards_scroll_to_the_selected_group() {
+        let reports = (0..8)
+            .map(|i| {
+                fresh(
+                    &format!("src{i}"),
+                    "Work",
+                    &["Mine"],
+                    vec![card(
+                        "Mine",
+                        &format!("c{i}"),
+                        &format!("Card of group {i}"),
+                    )],
+                )
+            })
+            .collect();
+        let mut app = app(reports);
+
+        let (start, viewport) = render_screen(&app, 80, 24);
+        assert!(start.contains(" src0 "), "{start}");
+        assert!(start.contains(" src1 "), "{start}");
+        assert!(!start.contains(" src2 "), "{start}");
+        assert_eq!(viewport.groups.len(), 2, "{viewport:?}");
+        assert!(viewport.groups.iter().all(|g| g.area.width >= 28));
+
         for _ in 0..7 {
             app.handle_key(KeyEvent::from(KeyCode::Char('l')));
         }
-
-        let screen = screen(&app, 80, 24);
-
-        assert!(screen.contains("Col7 (1)"), "{screen}");
-        assert!(screen.contains("Last column card"), "{screen}");
-        assert!(!screen.contains("Col0"), "{screen}");
+        let end = screen(&app, 80, 24);
+        assert!(end.contains(" src7 "), "{end}");
+        assert!(end.contains("Card of group 7"), "{end}");
+        assert!(!end.contains(" src0 "), "{end}");
     }
 
-    /// With more cards than fit the height, the column scrolls to keep the
-    /// selected card visible.
+    /// With more cards than fit the height, the group scrolls to keep the
+    /// selected card visible, through its stacks, and back up to the first
+    /// stack's header.
     #[test]
-    fn long_columns_keep_the_selected_card_visible() {
+    fn long_groups_keep_the_selected_card_visible() {
         let items = (0..30)
             .map(|i| card("Mine", &format!("c{i}"), &format!("Card number {i}")))
+            .chain([card("Later", "last", "Final card")])
             .collect();
-        let mut app = app(vec![fresh("plane", "Work", &["Mine"], items)]);
+        let mut app = app(vec![fresh("plane", "Work", &["Mine", "Later"], items)]);
+        // What the event loop does: draw, then record the geometry.
+        let draw = |app: &mut App| {
+            let (screen, viewport) = render_screen(app, 80, 24);
+            app.set_viewport(viewport);
+            screen
+        };
+
+        let top = draw(&mut app);
+        assert!(top.contains("Mine (30)"), "{top}");
+        assert!(top.contains("Card number 0 "), "{top}");
+        assert!(!top.contains("Later (1)"), "{top}");
+
         for _ in 0..29 {
             app.handle_key(KeyEvent::from(KeyCode::Char('j')));
         }
+        let middle = draw(&mut app);
+        assert!(middle.contains("Card number 29"), "{middle}");
+        assert!(!middle.contains("Card number 0 "), "{middle}");
 
-        let screen = screen(&app, 80, 24);
+        app.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        let bottom = draw(&mut app);
+        assert!(bottom.contains("Later (1)"), "{bottom}");
+        assert!(bottom.contains("Final card"), "{bottom}");
 
-        assert!(screen.contains("Card number 29"), "{screen}");
-        assert!(!screen.contains("Card number 0 "), "{screen}");
+        // Moving up one card doesn't jump the view: the last one stays.
+        app.handle_key(KeyEvent::from(KeyCode::Char('k')));
+        let still = draw(&mut app);
+        assert!(still.contains("Final card"), "{still}");
+
+        app.handle_key(KeyEvent::from(KeyCode::Home));
+        let back = draw(&mut app);
+        assert!(back.contains("Mine (30)"), "header comes back\n{back}");
+        assert!(back.contains("Card number 0 "), "{back}");
     }
 
     /// A body with line breaks shows on the card's single body row with the
@@ -809,7 +1011,7 @@ mod tests {
     }
 
     /// Space opens a popup with the whole card: title, source, board and
-    /// column, due date, link and the full body, over the board.
+    /// stack, due date, link and the full body, over the board.
     #[test]
     fn card_details_show_the_whole_card() {
         let mut app = detailed(3);
@@ -819,9 +1021,9 @@ mod tests {
         let due = local(Utc.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap());
         for expected in [
             "Migrate the billing service to the new queue and retire the old worker",
-            "plane",
-            "Work",
-            "Mine",
+            "Source   plane",
+            "Board    Work",
+            "Stack    Mine",
             &due,
             "https://plane.example/api/7",
             "body line 00",
@@ -884,8 +1086,9 @@ mod tests {
             .unwrap_or_else(|| panic!("{text:?} not on screen\n{screen}"))
     }
 
-    /// The screen reports where each column is and how many cards fit, so
-    /// a click on a card as drawn selects it and PageDown moves by a page.
+    /// The screen reports where each group is, how far it scrolled and how
+    /// many cards fit, so a click on a card as drawn selects it, a click on a
+    /// stack header as drawn collapses it, and PageDown moves by a page.
     #[test]
     fn clicks_land_on_the_cards_as_drawn() {
         let items = (0..30)
@@ -902,7 +1105,7 @@ mod tests {
         ]);
 
         let (screen, viewport) = render_screen(&app, 120, 40);
-        assert_eq!(viewport.columns.len(), 2, "{viewport:?}");
+        assert_eq!(viewport.groups.len(), 2, "{viewport:?}");
         assert!(viewport.card_page > 0, "{viewport:?}");
         app.set_viewport(viewport.clone());
 
@@ -920,9 +1123,10 @@ mod tests {
         let expected = format!("c{}", viewport.card_page);
         assert_eq!(app.selected_card().unwrap().id, expected);
 
-        // Scrolled down, the column reports its new first card.
+        // Scrolled down, the group reports how far.
         app.handle_key(KeyEvent::from(KeyCode::End));
         let (screen, viewport) = render_screen(&app, 120, 40);
+        assert!(viewport.groups[0].scroll > 0, "{viewport:?}");
         app.set_viewport(viewport);
         let (x, y) = position(&screen, "Card number 28");
         app.handle_mouse(MouseEvent {
@@ -932,6 +1136,19 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(app.selected_card().unwrap().id, "c28");
+
+        app.handle_key(KeyEvent::from(KeyCode::Home));
+        let (screen, viewport) = render_screen(&app, 120, 40);
+        app.set_viewport(viewport);
+        let (x, y) = position(&screen, "Mine (30)");
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.is_collapsed(0, 0));
+        assert!(app.selected_card().is_none());
     }
 
     /// The Sources panel clips long failure messages; s shows them whole.

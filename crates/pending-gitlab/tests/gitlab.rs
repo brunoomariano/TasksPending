@@ -949,3 +949,23 @@ async fn stacks_run_three_at_a_time() {
     assert_eq!(stub.requests().len(), 7);
     assert_eq!(stub.max_in_flight.load(Ordering::SeqCst), 3);
 }
+
+/// A `GITLAB_BASE_URL` without encryption would send the token in the clear
+/// on every refresh: the source refuses it, naming the variable, and makes
+/// no request. A local address is fine.
+#[tokio::test]
+async fn an_unencrypted_instance_address_is_refused() {
+    let source = GitlabSource::from_env(&|key| match key {
+        "GITLAB_TOKEN" => Some("secret-token".to_owned()),
+        "GITLAB_BASE_URL" => Some("http://gitlab.example.com".to_owned()),
+        _ => None,
+    });
+
+    let error = source.refresh().await.expect_err("refused");
+
+    assert!(
+        error.to_string().contains("GITLAB_BASE_URL") && error.to_string().contains("https://"),
+        "{error}"
+    );
+    assert!(!error.to_string().contains("secret-token"));
+}

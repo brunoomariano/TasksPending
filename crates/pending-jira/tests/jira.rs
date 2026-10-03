@@ -994,3 +994,26 @@ async fn odd_issues_do_not_break_the_stack() {
     assert_eq!(batch.items.len(), 1);
     assert_eq!(card(&batch, "jira:P-1").updated_at, DateTime::UNIX_EPOCH);
 }
+
+/// A `JIRA_BASE_URL` without encryption would send the e-mail and token in
+/// the clear on every refresh: it is refused, naming the variable. A local
+/// address is fine.
+#[test]
+fn an_unencrypted_site_address_is_refused() {
+    let with_url = |url: &'static str| {
+        JiraSettings::from_env(&move |key| match key {
+            "JIRA_BASE_URL" => Some(url.to_owned()),
+            "JIRA_TOKEN" => Some("secret-token".to_owned()),
+            _ => None,
+        })
+    };
+
+    let error = with_url("http://jira.example.com").expect_err("refused");
+    assert!(
+        error.contains("JIRA_BASE_URL") && error.contains("https://"),
+        "{error}"
+    );
+    assert!(!error.contains("secret-token"));
+    assert!(with_url("http://127.0.0.1:8080").is_ok());
+    assert!(with_url("https://jira.example.com").is_ok());
+}

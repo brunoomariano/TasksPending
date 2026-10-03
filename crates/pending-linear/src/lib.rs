@@ -252,10 +252,11 @@ impl LinearSettings {
         };
         let api_key = read("LINEAR_API_KEY")
             .ok_or("Linear is not configured: set LINEAR_API_KEY, then restart")?;
-        Ok(Self {
-            api_url: read("LINEAR_API_URL").unwrap_or_else(|| DEFAULT_API_URL.to_owned()),
-            api_key,
-        })
+        let api_url = read("LINEAR_API_URL").unwrap_or_else(|| DEFAULT_API_URL.to_owned());
+        // The key is a header on every request: never send it unencrypted.
+        pending_http::require_encrypted(&api_url, "LINEAR_API_URL")
+            .map_err(|problem| format!("Linear is not configured: {problem}"))?;
+        Ok(Self { api_url, api_key })
     }
 }
 

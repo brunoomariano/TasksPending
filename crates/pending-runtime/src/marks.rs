@@ -46,13 +46,7 @@ pub struct Marks {
 impl Marks {
     /// Reads the marks at `path`; a missing or unreadable file starts empty.
     pub fn load(path: Option<PathBuf>) -> Self {
-        let marks = path
-            .as_ref()
-            .and_then(|path| std::fs::read(path).ok())
-            .and_then(|bytes| serde_json::from_slice::<File>(&bytes).ok())
-            .filter(|file| file.version == VERSION)
-            .map(|file| file.marks)
-            .unwrap_or_default();
+        let marks = read(path.as_ref()).unwrap_or_default();
         Self {
             path,
             marks: Mutex::new(marks),
@@ -106,8 +100,15 @@ impl Marks {
         snapshot.marked = marks.iter().map(|mark| mark.id.clone()).collect();
     }
 
+    /// The marks, brought up to date with the file first: the daemon and
+    /// the TUI are separate processes sharing it. An unreadable file keeps
+    /// what is in memory.
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Mark>> {
-        self.marks.lock().unwrap_or_else(PoisonError::into_inner)
+        let mut marks = self.marks.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(on_disk) = read(self.path.as_ref()) {
+            *marks = on_disk;
+        }
+        marks
     }
 
     /// Written to a private temporary file and renamed, so a reader never
@@ -143,6 +144,13 @@ impl Marks {
             warn!(%error, "marks not saved; they will be lost on restart");
         }
     }
+}
+
+/// The marks in the file at `path`, when it exists and is readable.
+fn read(path: Option<&PathBuf>) -> Option<Vec<Mark>> {
+    let bytes = std::fs::read(path?).ok()?;
+    let file: File = serde_json::from_slice(&bytes).ok()?;
+    (file.version == VERSION).then_some(file.marks)
 }
 
 /// The source whose group holds the card `id`.

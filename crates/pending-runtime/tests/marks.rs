@@ -175,3 +175,23 @@ fn a_broken_file_starts_empty_and_saved_files_are_private() {
     }
     assert_eq!(marked(&Marks::load(Some(path)), on_screen), ["a"]);
 }
+
+/// The daemon and the TUI are separate processes sharing one marks file: a
+/// mark made by one shows in the other, and neither overwrites the other's
+/// marks with its own older copy.
+#[test]
+fn two_processes_share_the_marks_file() {
+    let path = scratch("shared");
+    let board = || snapshot(vec![("plane", fresh(&["a", "b", "c"]))]);
+    let daemon = Marks::load(Some(path.clone()));
+    let tui = Marks::load(Some(path));
+
+    daemon.set(&board(), "a", true).unwrap();
+    assert_eq!(marked(&tui, board()), ["a"]);
+
+    tui.set(&board(), "b", true).unwrap();
+    assert_eq!(marked(&daemon, board()), ["a", "b"]);
+
+    daemon.set(&board(), "a", false).unwrap();
+    assert_eq!(marked(&tui, board()), ["b"]);
+}

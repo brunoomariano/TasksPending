@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- Every provider shows its Dashboard Icons logo by default: iCal sources now have one too, like GitHub, Google Calendar, Plane and Todoist. `icon` still overrides it.
+
 ## 0.4.0
 
 ### Breaking change

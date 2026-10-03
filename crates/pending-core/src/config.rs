@@ -92,19 +92,23 @@ const GITHUB_DARK_ICON: &str =
     "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github-light.svg";
 const GOOGLE_CALENDAR_ICON: &str =
     "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/google-calendar.svg";
+const ICAL_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ical.svg";
 const PLANE_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/plane.svg";
 const TODOIST_ICON: &str =
     "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/todoist.svg";
 
 impl SourceKind {
-    /// The built-in provider logo, if this kind has one.
+    /// The provider's logo from Dashboard Icons. Every provider kind has
+    /// one; add it here when adding a kind.
     pub fn default_icon(self) -> Option<Icon> {
         let (url, dark_url) = match self {
             Self::Github => (GITHUB_ICON, Some(GITHUB_DARK_ICON)),
             Self::Google => (GOOGLE_CALENDAR_ICON, None),
+            Self::Ical => (ICAL_ICON, None),
             Self::Plane => (PLANE_ICON, None),
             Self::Todoist => (TODOIST_ICON, None),
-            Self::Ical | Self::Sample => return None,
+            // Not a provider: the page falls back to its generic icon.
+            Self::Sample => return None,
         };
 
         Some(Icon {
@@ -385,6 +389,35 @@ mod tests {
             let error = parse(text).validate().expect_err(text);
             assert!(error.to_string().contains("icon"), "{error}");
         }
+    }
+
+    /// Every provider has a logo from Dashboard Icons by default, so a group
+    /// is recognisable without configuring `icon`; only the built-in sample
+    /// source, which is no provider, has none.
+    #[test]
+    fn every_provider_has_a_default_icon() {
+        for kind in [
+            SourceKind::Github,
+            SourceKind::Google,
+            SourceKind::Ical,
+            SourceKind::Plane,
+            SourceKind::Todoist,
+        ] {
+            let icon = kind
+                .default_icon()
+                .unwrap_or_else(|| panic!("{kind:?} has a default icon"));
+            assert!(
+                icon.url
+                    .starts_with("https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/"),
+                "{kind:?}: {}",
+                icon.url
+            );
+        }
+        assert_eq!(
+            SourceKind::Ical.default_icon().map(|icon| icon.url),
+            Some(ICAL_ICON.to_owned())
+        );
+        assert_eq!(SourceKind::Sample.default_icon(), None);
     }
 
     #[test]

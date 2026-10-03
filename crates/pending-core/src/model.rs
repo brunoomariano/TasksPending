@@ -24,6 +24,10 @@ pub struct DashboardSnapshot {
     /// passes or the item changes.
     #[serde(default)]
     pub snoozed: Vec<SnoozedCard>,
+    /// Ids of the cards on the boards that changed since the user last
+    /// looked at the dashboard.
+    #[serde(default)]
+    pub changed: Vec<String>,
 }
 
 /// A card hidden by the user for a while.

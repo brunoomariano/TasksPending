@@ -273,6 +273,7 @@ function renderGroup(
   const key = groupKey(board, group.source);
   const expanded = view.expanded.has(key);
   const marked = new Set(snapshot.marked);
+  const changed = new Set(snapshot.changed);
   const visible = group.columns.filter(
     (column) =>
       !view.hidden.has(hideKey.column(board, group.source, column.name)),
@@ -299,6 +300,7 @@ function renderGroup(
             view.collapsed.has(key),
             health,
             marked,
+            changed,
             view.snoozeMenu,
           );
         })
@@ -325,13 +327,19 @@ function renderStack(
   collapsed: boolean,
   health: SourceHealth | undefined,
   marked: ReadonlySet<string>,
+  changed: ReadonlySet<string>,
   snoozeMenu: string | null,
 ): string {
+  // Shown on the header too, so news in a collapsed or long stack is seen.
+  const news = column.cards.some((card) => changed.has(card.id))
+    ? CHANGED_DOT
+    : "";
   const header = `
     <button type="button" class="stack-header" data-collapse="${escapeHtml(key)}" aria-expanded="${!collapsed}">
       ${icon("chevron")}
       <span class="stack-name">${escapeHtml(column.name)}</span>
       <span class="count">${column.cards.length}</span>
+      ${news}
     </button>`;
   if (collapsed) {
     return `<section class="stack collapsed">${header}</section>`;
@@ -347,7 +355,12 @@ function renderStack(
     ? column.cards
         .slice(0, open ? undefined : COLUMN_LIMIT)
         .map((card) =>
-          renderCard(card, marked.has(card.id), snoozeMenu === card.id),
+          renderCard(
+            card,
+            marked.has(card.id),
+            snoozeMenu === card.id,
+            changed.has(card.id),
+          ),
         )
         .join("") + more
     : `<p class="empty">${icon("inbox")} ${
@@ -390,12 +403,17 @@ function snoozeMenu(card: PendingCard): string {
     </div>`;
 }
 
+/** A small dot: this changed since the user last looked. No count, no label. */
+const CHANGED_DOT =
+  '<span class="changed-dot" title="Changed since you last looked"></span>';
+
 function renderCard(
   card: PendingCard,
   marked: boolean,
   snoozing: boolean,
+  changed: boolean,
 ): string {
-  const title = cardTitle(card);
+  const title = `${changed ? CHANGED_DOT : ""}${cardTitle(card)}`;
   // No date line: sources write the due time or event time into the body,
   // and the last fetch time is at the top. No severity marker either.
 

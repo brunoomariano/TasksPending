@@ -29,6 +29,7 @@ const snapshot = (): DashboardSnapshot => ({
   marked: [],
   version: "0.0.0",
   snoozed: [],
+  changed: [],
   sources: [
     {
       name: "plane",
@@ -610,6 +611,33 @@ describe("renderApp", () => {
     expect(html).toContain("&lt;b&gt;Sleeping&lt;/b&gt;");
     expect(html).toMatch(/plane[\s\S]*until it changes/);
     expect(html).toContain('data-wake="zz-1"');
+  });
+
+  /**
+   * Cards that changed since the user last looked carry a small dot before
+   * the title, and so does the header of a stack holding one, even when the
+   * stack is collapsed. Nothing else is added: no count, no label.
+   */
+  test("changed cards and their stacks carry a shy dot", () => {
+    expect(ready()).not.toContain("changed-dot");
+
+    const data = snapshot();
+    data.changed = ["gh-1"];
+    const html = ready(view(), data);
+
+    expect(html).toMatch(
+      /class="card-title"><span class="changed-dot"[^>]*><\/span>gh-1/,
+    );
+    expect(html.match(/class="changed-dot"/g)).toHaveLength(2);
+    expect(html).toMatch(
+      /class="stack-name">Review<\/span>\s*<span class="count">1<\/span>\s*<span class="changed-dot"/,
+    );
+
+    const collapsed = ready(
+      view({ collapsed: new Set([columnKey("Work", "github", "Review")]) }),
+      data,
+    );
+    expect(collapsed.match(/class="changed-dot"/g)).toHaveLength(1);
   });
 
   /** Before the first response, the page says it is loading. */

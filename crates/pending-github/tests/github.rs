@@ -915,6 +915,73 @@ async fn a_failed_review_lookup_keeps_the_cards_with_a_warning() {
     assert!(!batch.warnings[0].contains(TOKEN));
 }
 
+/// A token that may not read check status (a fine-grained token without
+/// that permission, or an organisation behind SSO) gets one error per pull
+/// request for that field only. The review state still loads, the checks
+/// are simply left out, and the source is not flagged: a permission the
+/// user never granted is not a problem to report on every refresh.
+#[tokio::test]
+async fn unreadable_checks_are_left_out_quietly() {
+    let stub = stub_with(vec![(
+        WAITING,
+        Reply::items(vec![
+            item("o/api", 3, "Rework", true),
+            item("o/api", 4, "Polish", true),
+        ]),
+    )]);
+    let denied = |index: u64| {
+        json!({
+            "type": "FORBIDDEN",
+            "path": ["nodes", index, "commits", "nodes", 0, "commit", "statusCheckRollup"],
+            "message": "Resource not accessible by personal access token",
+        })
+    };
+    *stub.graphql_reply.lock().unwrap() = Some(Reply {
+        status: StatusCode::OK,
+        headers: Vec::new(),
+        body: json!({
+            "data": { "nodes": [
+                { "id": "PR_o/api_3", "isDraft": false, "reviewDecision": "APPROVED" },
+                { "id": "PR_o/api_4", "isDraft": false, "reviewDecision": "CHANGES_REQUESTED" }
+            ] },
+            "errors": [denied(0), denied(1)],
+        }),
+    });
+
+    let batch = refresh(stub).await.expect("cards load");
+
+    assert_eq!(batch.warnings, Vec::<String>::new());
+    let bodies: Vec<&str> = batch.items.iter().map(|i| i.card.body.as_str()).collect();
+    assert!(
+        bodies.iter().any(|body| body.contains("approved")),
+        "{bodies:?}"
+    );
+    assert!(
+        bodies.iter().all(|body| !body.contains("checks")),
+        "{bodies:?}"
+    );
+}
+
+/// The same error repeated for many pull requests is reported once.
+#[tokio::test]
+async fn repeated_graphql_errors_are_reported_once() {
+    let stub = stub_with(vec![(
+        WAITING,
+        Reply::items(vec![item("o/api", 3, "Rework", true)]),
+    )]);
+    let error = json!({ "path": ["nodes", 0], "message": "Could not resolve to a node" });
+    *stub.graphql_reply.lock().unwrap() = Some(Reply {
+        status: StatusCode::OK,
+        headers: Vec::new(),
+        body: json!({ "data": { "nodes": [null] }, "errors": [error, error, error] }),
+    });
+
+    let batch = refresh(stub).await.expect("cards load");
+
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    assert_eq!(batch.warnings[0].matches("Could not resolve").count(), 1);
+}
+
 /// GraphQL reports problems in an `errors` list, even with status 200: the
 /// data that came back is used and the errors become a warning.
 #[tokio::test]

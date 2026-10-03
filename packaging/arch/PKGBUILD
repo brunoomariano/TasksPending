@@ -4,7 +4,7 @@
 pkgname=tasks-pending-bin
 pkgver=0.4.0
 pkgrel=1
-pkgdesc="Local-first dashboard of pending work (GitHub, Plane, calendars, Todoist): daemon, web page and TUI"
+pkgdesc="Local-first dashboard of pending work (GitHub, GitLab, Jira, Linear, Plane, calendars, Todoist): daemon, web page and TUI"
 arch=('x86_64' 'aarch64')
 url="https://github.com/brunoomariano/TasksPending"
 license=('MIT')

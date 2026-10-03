@@ -137,3 +137,24 @@ export async function setSnooze(
     };
   }
 }
+
+/** Tells the daemon the user is looking at the dashboard now. */
+export async function sendLook(
+  fetchFn: Fetch = (input, init) => fetch(input, init),
+): Promise<RefreshResult> {
+  try {
+    const response = await fetchFn("/api/v1/look", {
+      method: "POST",
+      headers: { "x-requested-with": "tasks-pending" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    return response.ok
+      ? { ok: true }
+      : { ok: false, error: `HTTP ${response.status}` };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}

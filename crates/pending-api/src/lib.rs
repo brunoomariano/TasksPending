@@ -13,6 +13,7 @@ use pending_core::{DashboardSnapshot, sandbox_snapshot};
 use pending_runtime::Dashboard;
 use pending_runtime::config::{Origin, cache_path};
 use pending_runtime::live::{Live, process_env};
+use pending_runtime::looks::Looks;
 use pending_runtime::marks::{MarkError, Marks};
 use pending_runtime::snoozes::{SnoozeError, Snoozes};
 use serde::{Deserialize, Serialize};
@@ -168,6 +169,7 @@ struct AppState {
 struct SandboxDashboard {
     marks: Arc<Marks>,
     snoozes: Arc<Snoozes>,
+    looks: Arc<Looks>,
 }
 
 impl Default for SandboxDashboard {
@@ -175,6 +177,7 @@ impl Default for SandboxDashboard {
         Self {
             marks: Arc::new(Marks::load(None)),
             snoozes: Arc::new(Snoozes::load(None)),
+            looks: Arc::new(Looks::load(None)),
         }
     }
 }
@@ -184,6 +187,7 @@ impl Dashboard for SandboxDashboard {
         let mut snapshot = sandbox_snapshot();
         self.marks.apply(&mut snapshot);
         self.snoozes.apply(&mut snapshot);
+        self.looks.apply(&mut snapshot);
         snapshot
     }
 
@@ -203,6 +207,10 @@ impl Dashboard for SandboxDashboard {
 
     fn wake(&self, id: &str) -> Result<(), SnoozeError> {
         self.snoozes.wake(id)
+    }
+
+    fn look(&self) {
+        self.looks.look();
     }
 }
 
@@ -227,6 +235,7 @@ pub fn app_with_weather(
         .route("/api/v1/refresh", post(refresh))
         .route("/api/v1/marks", post(set_mark))
         .route("/api/v1/snooze", post(set_snooze))
+        .route("/api/v1/look", post(look))
         .merge(weather::routes(weather));
     let router = match frontend {
         Some(Frontend::Directory(dir)) => router.fallback_service(ServeDir::new(dir)),
@@ -358,6 +367,17 @@ async fn set_mark(
         Err(MarkError::Unsupported) => StatusCode::NOT_IMPLEMENTED,
         Err(MarkError::NotSaved) => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+/// Records that the user is looking at the dashboard, so the next visit
+/// can flag what changed since.
+async fn look(State(state): State<AppState>, headers: HeaderMap) -> StatusCode {
+    let (name, value) = DASHBOARD_HEADER;
+    if headers.get(name).and_then(|v| v.to_str().ok()) != Some(value) {
+        return StatusCode::FORBIDDEN;
+    }
+    state.dashboard.look();
+    StatusCode::NO_CONTENT
 }
 
 #[derive(Debug, Deserialize)]
@@ -686,6 +706,18 @@ mod tests {
         let ghost = r#"{"id":"ghost","marked":true}"#;
         let status = post_json(app.clone(), "/api/v1/marks", ghost, true).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// The page reports activity so the next visit can flag what changed;
+    /// only the dashboard itself may do so.
+    #[tokio::test]
+    async fn look_endpoint_requires_the_dashboard_header() {
+        let app = app(SandboxDashboard::default(), None);
+
+        let (status, _) = post(app.clone(), "/api/v1/look", false).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, _) = post(app, "/api/v1/look", true).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
     }
 
     /// Whether the card is on the boards, and how many cards are snoozed.

@@ -24,7 +24,12 @@ version: string,
  * Cards the user snoozed: left out of the boards until their time
  * passes or the item changes.
  */
-snoozed: Array<SnoozedCard>, };
+snoozed: Array<SnoozedCard>, 
+/**
+ * Ids of the cards on the boards that changed since the user last
+ * looked at the dashboard.
+ */
+changed: Array<string>, };
 
 export type Board = { name: string, 
 /**

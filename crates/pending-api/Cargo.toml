@@ -10,6 +10,7 @@ homepage.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+chrono.workspace = true
 pending-core = { path = "../pending-core" }
 pending-runtime = { path = "../pending-runtime" }
 serde.workspace = true

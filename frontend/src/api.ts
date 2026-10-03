@@ -103,3 +103,37 @@ export async function setMark(
     };
   }
 }
+
+/**
+ * Snoozes a card until `until` (`null` waits for the item to change), or
+ * wakes it with `"wake"`.
+ */
+export async function setSnooze(
+  id: string,
+  until: Date | null | "wake",
+  fetchFn: Fetch = (input, init) => fetch(input, init),
+): Promise<RefreshResult> {
+  const body =
+    until === "wake"
+      ? { id, snoozed: false }
+      : { id, snoozed: true, until: until ? until.toISOString() : null };
+  try {
+    const response = await fetchFn("/api/v1/snooze", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-requested-with": "tasks-pending",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    return response.ok
+      ? { ok: true }
+      : { ok: false, error: `HTTP ${response.status}` };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}

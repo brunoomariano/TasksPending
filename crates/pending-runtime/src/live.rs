@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use pending_core::DashboardSnapshot;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
@@ -15,6 +16,7 @@ use crate::Aggregator;
 use crate::cache::Cache;
 use crate::config::{LoadError, Origin, load_plan, locate};
 use crate::marks::{MarkError, Marks};
+use crate::snoozes::{SnoozeError, Snoozes};
 
 /// Reads an environment variable; injectable for tests.
 pub type Env = Arc<dyn Fn(&str) -> Option<OsString> + Send + Sync>;
@@ -35,6 +37,7 @@ struct Inner {
     env: Env,
     cache: Option<PathBuf>,
     marks: Marks,
+    snoozes: Snoozes,
     state: Mutex<State>,
     generation: AtomicU64,
 }
@@ -60,19 +63,23 @@ impl Live {
         let (plan, origin) = load_plan(cli.clone(), &*env)?;
         let aggregator =
             Aggregator::start_with_cache(plan.specs, plan.timeout, cache.clone().map(Cache::new));
-        // Marks live next to the cache; without a cache they stay in memory.
-        let marks = Marks::load(
+        // Marks and snoozes live next to the cache; without a cache they
+        // stay in memory.
+        let beside_cache = |name: &str| {
             cache
                 .as_ref()
                 .and_then(|cache| cache.parent())
-                .map(|dir| dir.join("marks.json")),
-        );
+                .map(|dir| dir.join(name))
+        };
+        let marks = Marks::load(beside_cache("marks.json"));
+        let snoozes = Snoozes::load(beside_cache("snoozes.json"));
         let live = Self {
             inner: Arc::new(Inner {
                 cli,
                 env,
                 cache,
                 marks,
+                snoozes,
                 state: Mutex::new(State {
                     aggregator,
                     text,
@@ -89,9 +96,20 @@ impl Live {
             let state = self.state();
             (state.aggregator.clone(), state.error.clone())
         };
-        let mut snapshot = assemble(&aggregator, &self.inner.marks);
+        let mut snapshot = assemble(&aggregator, &self.inner.marks, &self.inner.snoozes);
         snapshot.config_error = error;
         snapshot
+    }
+
+    /// Hides a card until `until`, or until the item changes when `None`;
+    /// only a card on the dashboard can be snoozed.
+    pub fn snooze(&self, id: &str, until: Option<DateTime<Utc>>) -> Result<(), SnoozeError> {
+        self.inner.snoozes.snooze(&self.snapshot(), id, until)
+    }
+
+    /// Brings a snoozed card back now.
+    pub fn wake(&self, id: &str) {
+        self.inner.snoozes.wake(id);
     }
 
     /// Marks or unmarks a card as in progress; only a card on the dashboard
@@ -179,9 +197,12 @@ impl Drop for Watch {
 /// The sources' snapshot with the user's state applied to it. The cards
 /// hidden by `exclude` come from the same batches as the snapshot, so a
 /// hidden card is never taken for a finished one.
-fn assemble(aggregator: &Aggregator, marks: &Marks) -> DashboardSnapshot {
+fn assemble(aggregator: &Aggregator, marks: &Marks, snoozes: &Snoozes) -> DashboardSnapshot {
     let (mut snapshot, hidden) = aggregator.snapshot_with_hidden();
+    // Marks first: they are judged on every card the sources returned,
+    // including the ones a snooze is about to hide.
     marks.apply_hiding(&mut snapshot, &hidden);
+    snoozes.apply_hiding(&mut snapshot, &hidden);
     snapshot
 }
 
@@ -261,17 +282,18 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_mark_survives_its_card_being_excluded() {
         let marks = Marks::load(None);
+        let snoozes = Snoozes::load(None);
         let shown = aggregator("");
         tokio::time::sleep(Duration::from_secs(1)).await;
         marks
-            .set(&assemble(&shown, &marks), "parser", true)
+            .set(&assemble(&shown, &marks, &snoozes), "parser", true)
             .expect("the card is on the dashboard");
 
         // Real time, so that the next refresh is after the mark.
         std::thread::sleep(Duration::from_millis(5));
         let excluding = aggregator("\"wip\"");
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let snapshot = assemble(&excluding, &marks);
+        let snapshot = assemble(&excluding, &marks, &snoozes);
 
         assert!(snapshot.boards[0].groups[0].columns[0].cards.is_empty());
         assert_eq!(snapshot.marked, ["parser"]);

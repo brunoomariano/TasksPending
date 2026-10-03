@@ -28,6 +28,7 @@ const snapshot = (): DashboardSnapshot => ({
   config_error: null,
   marked: [],
   version: "0.0.0",
+  snoozed: [],
   sources: [
     {
       name: "plane",
@@ -552,6 +553,63 @@ describe("renderApp", () => {
 
     expect(html).toMatch(/class="now"[\s\S]*alert\(1\)/);
     expect(html).not.toContain("plane</h2>");
+  });
+
+  /**
+   * Every card has a snooze button; opening it for a card shows the four
+   * choices right on that card.
+   */
+  test("cards carry a snooze button with a menu of choices", () => {
+    const closed = ready();
+    expect(closed).toMatch(/data-snooze-menu="gh-1"[^>]*aria-expanded="false"/);
+    expect(closed).not.toContain("data-snooze-for=");
+
+    const open = ready(view({ snoozeMenu: "gh-1" }));
+    expect(open).toMatch(/data-snooze-menu="gh-1"[^>]*aria-expanded="true"/);
+    for (const choice of ["hour", "tomorrow", "week", "change"]) {
+      expect(open).toMatch(
+        new RegExp(`data-snooze="gh-1" data-snooze-for="${choice}"`),
+      );
+    }
+    expect(open.match(/data-snooze-for=/g)).toHaveLength(4);
+  });
+
+  /**
+   * Snoozed cards are out of the stacks; a quiet link next to the update
+   * time says how many there are, and is absent when there are none.
+   */
+  test("controls link to the snoozed cards when there are any", () => {
+    expect(controls()).not.toContain('data-action="snoozed"');
+
+    const data = snapshot();
+    data.snoozed = [
+      { card: card("zz-1"), source: "plane", until: null },
+      { card: card("zz-2"), source: "github", until: "2026-10-08T11:00:00Z" },
+    ];
+    expect(controls(data)).toMatch(/data-action="snoozed"[^>]*>2 snoozed</);
+  });
+
+  /**
+   * The snoozed list shows each card with its source and when it comes
+   * back, and a button to wake it now.
+   */
+  test("the snoozed dialog lists cards with a wake button", () => {
+    const data = snapshot();
+    data.snoozed = [
+      {
+        card: card("zz-1", { title: "<b>Sleeping</b>" }),
+        source: "plane",
+        until: null,
+      },
+    ];
+
+    expect(ready(view(), data)).not.toContain("snoozed-modal");
+    const html = ready(view({ snoozedOpen: true }), data);
+
+    expect(html).toContain('class="modal snoozed-modal"');
+    expect(html).toContain("&lt;b&gt;Sleeping&lt;/b&gt;");
+    expect(html).toMatch(/plane[\s\S]*until it changes/);
+    expect(html).toContain('data-wake="zz-1"');
   });
 
   /** Before the first response, the page says it is loading. */

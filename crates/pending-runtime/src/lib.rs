@@ -23,6 +23,8 @@ pub mod config;
 pub mod exclude;
 pub mod live;
 pub mod marks;
+pub mod snoozes;
+mod store;
 
 /// What the API and the TUI need from a running dashboard.
 pub trait Dashboard: Send + Sync {
@@ -33,6 +35,18 @@ pub trait Dashboard: Send + Sync {
     /// Marks or unmarks a card as in progress.
     fn set_mark(&self, _id: &str, _marked: bool) -> Result<(), marks::MarkError> {
         Err(marks::MarkError::Unsupported)
+    }
+    /// Hides a card until `until`, or until the item changes when `None`.
+    fn snooze(
+        &self,
+        _id: &str,
+        _until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), snoozes::SnoozeError> {
+        Err(snoozes::SnoozeError::Unsupported)
+    }
+    /// Brings a snoozed card back now.
+    fn wake(&self, _id: &str) -> Result<(), snoozes::SnoozeError> {
+        Err(snoozes::SnoozeError::Unsupported)
     }
 }
 
@@ -57,6 +71,19 @@ impl Dashboard for live::Live {
 
     fn set_mark(&self, id: &str, marked: bool) -> Result<(), marks::MarkError> {
         live::Live::set_mark(self, id, marked)
+    }
+
+    fn snooze(
+        &self,
+        id: &str,
+        until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), snoozes::SnoozeError> {
+        live::Live::snooze(self, id, until)
+    }
+
+    fn wake(&self, id: &str) -> Result<(), snoozes::SnoozeError> {
+        live::Live::wake(self, id);
+        Ok(())
     }
 }
 

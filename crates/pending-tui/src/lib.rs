@@ -1,5 +1,6 @@
 mod app;
 mod clock;
+mod looks;
 mod snooze;
 mod ui;
 
@@ -24,6 +25,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::app::{Action, App, Viewport};
+use crate::looks::LookThrottle;
 use crate::snooze::Choice;
 
 #[derive(Debug)]
@@ -122,6 +124,9 @@ fn run_dashboard(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> 
     let _session = TerminalSession::enter()?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).context("opening terminal")?;
+    // Opening the TUI is looking at it; after that, keys and the mouse are.
+    let mut looks = LookThrottle::default();
+    look(dashboard, &mut looks, Instant::now());
     let mut app = App::new(dashboard.snapshot());
     let mut redraw = true;
     let mut drawn_at = Instant::now();
@@ -152,8 +157,12 @@ fn run_dashboard(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> 
             continue;
         }
         let key = match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => key,
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                look(dashboard, &mut looks, Instant::now());
+                key
+            }
             Event::Mouse(mouse) => {
+                look(dashboard, &mut looks, Instant::now());
                 redraw = !matches!(mouse.kind, MouseEventKind::Moved);
                 app.handle_mouse(mouse);
                 continue;
@@ -184,6 +193,14 @@ fn run_dashboard(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> 
 
     terminal.show_cursor().context("showing cursor")?;
     Ok(())
+}
+
+/// Tells the running dashboard that the user is looking (a key press or a
+/// mouse event at `now`), unless it was told less than a minute ago.
+fn look(dashboard: &dyn Dashboard, throttle: &mut LookThrottle, now: Instant) {
+    if throttle.due(now) {
+        dashboard.look();
+    }
 }
 
 /// Marks or unmarks a card on the running dashboard; the next frame reads
@@ -246,6 +263,52 @@ mod tests {
     use pending_runtime::snoozes::SnoozeError;
 
     use super::*;
+
+    /// A dashboard that counts how often it was told the user is looking.
+    #[derive(Default)]
+    struct Looking {
+        looks: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Dashboard for Looking {
+        fn snapshot(&self) -> pending_core::DashboardSnapshot {
+            pending_core::sample_snapshot()
+        }
+
+        fn refresh_now(&self) {}
+
+        fn look(&self) {
+            self.looks
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Activity (keys, the mouse) tells the dashboard the user is looking:
+    /// right away the first time (startup), then at most once a minute
+    /// however many events arrive.
+    #[test]
+    fn activity_tells_the_dashboard_at_most_once_a_minute() {
+        let dashboard = Looking::default();
+        let looks = || dashboard.looks.load(std::sync::atomic::Ordering::Relaxed);
+        let mut throttle = LookThrottle::default();
+        let start = Instant::now();
+
+        look(&dashboard, &mut throttle, start);
+        assert_eq!(looks(), 1, "at startup");
+
+        for second in 1..60 {
+            look(
+                &dashboard,
+                &mut throttle,
+                start + Duration::from_secs(second),
+            );
+        }
+        assert_eq!(looks(), 1, "a burst of keys within the minute");
+
+        look(&dashboard, &mut throttle, start + Duration::from_secs(60));
+        look(&dashboard, &mut throttle, start + Duration::from_secs(61));
+        assert_eq!(looks(), 2, "a minute later");
+    }
 
     /// What a [`Snoozing`] dashboard was asked: to snooze a card until a
     /// time (or until it changes), or to wake it.

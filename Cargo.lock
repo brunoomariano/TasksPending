@@ -1747,6 +1747,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pending-gitlab"
+version = "0.4.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "futures-util",
+ "pending-core",
+ "pending-http",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "pending-google"
 version = "0.4.0"
 dependencies = [
@@ -1808,6 +1824,7 @@ dependencies = [
  "chrono",
  "pending-core",
  "pending-github",
+ "pending-gitlab",
  "pending-google",
  "pending-ical",
  "pending-plane",

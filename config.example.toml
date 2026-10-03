@@ -80,6 +80,31 @@ enabled = true
 #   name = "Security"
 #   alerts = ["acme/api", "acme/web"]   # open Dependabot, secret and code scanning alerts
 
+# GitLab: every stack is your open merge requests, your open issues or your
+# pending to-do items. Needs GITLAB_TOKEN (personal access token with the
+# read_api scope); GITLAB_BASE_URL for a self-managed instance.
+# [[sources]]
+# name = "gitlab"
+# kind = "gitlab"
+# board = "Work"
+#
+#   [[sources.stacks]]
+#   name = "Review requested"
+#   merge_requests = "review_requested"   # review_requested | assigned | authored
+#   draft = false                 # optional: only non-drafts (true: only drafts)
+#
+#   [[sources.stacks]]
+#   name = "Platform bugs"
+#   issues = "assigned"           # assigned | authored
+#   group = "acme/platform"       # optional: a group with its subgroups,
+#                                 # or project = "acme/api" (not both)
+#   labels = ["bug"]              # optional: items with every label
+#   severity = "warning"          # optional: info, warning, critical
+#
+#   [[sources.stacks]]
+#   name = "To-dos"
+#   todos = true
+
 # Plane: every stack filters the workspace's work items locally.
 # Needs PLANE_BASE_URL, PLANE_WORKSPACE_SLUG (or PLANE_WORKSPACE) and
 # PLANE_API_KEY (or PLANE_TOKEN) in the environment.

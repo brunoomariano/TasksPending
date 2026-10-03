@@ -85,6 +85,7 @@ pub enum StackSort {
 #[serde(rename_all = "lowercase")]
 pub enum SourceKind {
     Github,
+    Gitlab,
     Google,
     Ical,
     Plane,
@@ -95,6 +96,7 @@ pub enum SourceKind {
 const GITHUB_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github.svg";
 const GITHUB_DARK_ICON: &str =
     "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github-light.svg";
+const GITLAB_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/gitlab.svg";
 const GOOGLE_CALENDAR_ICON: &str =
     "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/google-calendar.svg";
 const ICAL_ICON: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/ical.svg";
@@ -108,6 +110,7 @@ impl SourceKind {
     pub fn default_icon(self) -> Option<Icon> {
         let (url, dark_url) = match self {
             Self::Github => (GITHUB_ICON, Some(GITHUB_DARK_ICON)),
+            Self::Gitlab => (GITLAB_ICON, None),
             Self::Google => (GOOGLE_CALENDAR_ICON, None),
             Self::Ical => (ICAL_ICON, None),
             Self::Plane => (PLANE_ICON, None),
@@ -439,7 +442,8 @@ mod tests {
     /// the test below then covers it.
     fn kind_after(kind: SourceKind) -> Option<SourceKind> {
         match kind {
-            SourceKind::Github => Some(SourceKind::Google),
+            SourceKind::Github => Some(SourceKind::Gitlab),
+            SourceKind::Gitlab => Some(SourceKind::Google),
             SourceKind::Google => Some(SourceKind::Ical),
             SourceKind::Ical => Some(SourceKind::Plane),
             SourceKind::Plane => Some(SourceKind::Sample),
@@ -471,7 +475,7 @@ mod tests {
                 icon.url
             );
         }
-        assert_eq!(seen, 6, "the walk visits every kind");
+        assert_eq!(seen, 7, "the walk visits every kind");
         assert_eq!(
             SourceKind::Ical.default_icon().map(|icon| icon.url),
             Some(ICAL_ICON.to_owned())
@@ -527,6 +531,21 @@ mod tests {
                 .as_ref()
                 .map(|icon| icon.url.as_str()),
             Some(TODOIST_ICON)
+        );
+    }
+
+    /// `kind = "gitlab"` is a source kind with GitLab's logo as its icon.
+    #[test]
+    fn gitlab_is_a_source_kind_with_its_own_icon() {
+        let config = parse("[[sources]]\nname = \"gl\"\nkind = \"gitlab\"");
+
+        assert_eq!(config.sources[0].kind, SourceKind::Gitlab);
+        assert_eq!(
+            config.sources[0].icon(),
+            Some(Icon {
+                url: GITLAB_ICON.to_owned(),
+                dark_url: None,
+            })
         );
     }
 

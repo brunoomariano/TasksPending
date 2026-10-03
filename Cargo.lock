@@ -1804,6 +1804,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pending-jira"
+version = "0.4.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "futures-util",
+ "pending-core",
+ "pending-http",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "pending-plane"
 version = "0.4.0"
 dependencies = [
@@ -1827,6 +1842,7 @@ dependencies = [
  "pending-gitlab",
  "pending-google",
  "pending-ical",
+ "pending-jira",
  "pending-plane",
  "pending-todoist",
  "regex",

@@ -30,6 +30,7 @@ body:
         - Installation or update
         - GitHub source
         - Plane source
+        - Jira source
         - Google Calendar source
         - iCal source
         - Todoist source

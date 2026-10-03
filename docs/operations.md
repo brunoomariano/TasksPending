@@ -22,6 +22,7 @@ Each source is a group of stacks, one per `[[sources.stacks]]` entry (or the sou
 | `github` | `query` (search syntax), `notifications` (`unread`/`all`) or `alerts` (`owner/repo` list), `severity` | Review requested, Returned to you, Ready to merge, Not approved yet, Drafts, Assigned issues |
 | `gitlab` | `merge_requests` (review_requested/assigned/authored), `issues` (assigned/authored) or `todos = true`; `group` or `project`, `labels`, `draft`, `severity` | Review requested, Assigned merge requests, Assigned issues, To-dos |
 | `plane` | `assignee` (me/none/others/any), `state_group`, `state`, `project`, `priority` | In progress, To do, Backlog (yours) |
+| `jira` | `jql` (JQL query), `severity` | In progress, To do (yours) |
 | `google` | `when` (now/today/tomorrow/later), `calendar` (names) | Now, Today, Tomorrow, Next 30 days |
 | `ical` | `when` (now/today/tomorrow/later) | Now, Today, Tomorrow, Next 30 days |
 | `todoist` | `filter` (Todoist filter query) | Today (today \| overdue), Next 7 days |
@@ -69,6 +70,29 @@ After every successful refresh, each source's cards are saved to `$XDG_STATE_HOM
 - `PLANE_WEB_URL` (optional): web app origin for card links; defaults to `PLANE_BASE_URL`, or `https://app.plane.so` when the API is Plane Cloud's.
 
 Missing variables make the source fail with their names. Stack filters: `assignee` (`me` by default, `none`, `others`, `any`), `state_group` (`backlog`, `unstarted`, `started`, `completed`, `cancelled`), `state` (names such as `In Review`, compared without case, accents included), `project` (identifiers) and `priority` (`urgent`, `high`, `medium`, `low`, `none`). Without `state_group` and `state`, only open groups match; naming states selects them in any group (`state = ["Done"]` works). Invalid group or priority values fail at startup. Items whose state cannot be resolved are skipped, with a warning only when some stack could have shown them. Cards show the issue reference (e.g. `API-12`) as the title, then the issue name, project, state and assignees' names. Assignee and state filters run locally, because some Plane deployments ignore them server-side. Urgent priority and a past target date make a card critical; high priority makes it a warning. "Overdue" uses the machine's local date. Requests go out one at a time, each waiting for the previous one, so a self-hosted server never gets a burst; each request has 15 s. Work items are listed without `expand` (it makes Plane's responses several times slower); state and assignee names come from each project's states and the workspace's members, kept in memory and fetched again only when an unknown id shows up. A refresh therefore takes the sum of every project's requests: give the source its own `timeout_seconds` (for example 180) instead of raising the global one. A failing or slow project becomes a warning naming its identifier, and the other projects still show.
+
+## Jira Source
+
+`kind = "jira"` runs one JQL query per stack (`jql`, the same syntax as Jira's issue search; optional `severity`). Settings come only from the environment:
+
+- `JIRA_BASE_URL`: the site address, e.g. `https://yourcompany.atlassian.net` (a Data Center context path such as `https://jira.example.com/jira` is kept);
+- Jira Cloud: `JIRA_EMAIL` and `JIRA_API_TOKEN` (an API token from the Atlassian account's security settings), sent as HTTP Basic auth;
+- Jira Data Center: `JIRA_TOKEN` alone (a personal access token), sent as `Authorization: Bearer`.
+
+The credentials also pick the API: with `JIRA_EMAIL` and `JIRA_API_TOKEN` the source asks Jira Cloud's enhanced search (`GET /rest/api/3/search/jql`, paged with `nextPageToken`); with only `JIRA_TOKEN` it asks Data Center's `GET /rest/api/2/search` (paged with `startAt`). When all three are set, the Cloud pair wins. Missing variables make the source fail with their names. Credentials are never logged or shown, and redirects are not followed, so they never reach another host.
+
+By default: **In progress** (`assignee = currentUser() AND statusCategory = "In Progress" ORDER BY updated DESC`) and **To do** (`assignee = currentUser() AND statusCategory = "To Do" ORDER BY priority DESC, updated DESC`). Other useful queries:
+
+- in review: `assignee = currentUser() AND status = "In Review"`;
+- reported by me and still open: `reporter = currentUser() AND statusCategory != Done`;
+- watching: `watcher = currentUser() AND statusCategory != Done`;
+- the current sprint: `assignee = currentUser() AND sprint in openSprints()`.
+
+Jira Cloud refuses a query without any restriction (only `ORDER BY ...`); filter by assignee, project or the like. An issue found by several queries shows in each of those stacks.
+
+- Cards show the issue key (e.g. `PROJ-123`) as the title, then the summary, project, status, assignee and due date, and link to `<JIRA_BASE_URL>/browse/<key>`. A due date in the past is critical; so are the priorities Highest, Blocker and Critical; High and Major are warnings; the rest is info. A stack `severity` replaces all of that.
+- Each query asks only for the fields the cards use, 100 issues per page, up to 5 pages; more than that shows as a warning naming the stack.
+- Queries run three at a time, each limited to 15 s. A failing query (invalid JQL shows Jira's own explanation) becomes a warning naming its stack while the others still show; all queries failing makes the source failed. A rejected login (401, or Data Center answering as an anonymous user) says which variables to check. On a rate limit (429) the source waits for the time Jira gives in `Retry-After` before asking again.
 
 ## Google Calendar Source
 

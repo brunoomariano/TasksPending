@@ -7,6 +7,7 @@ members = [
     "crates/pending-google",
     "crates/pending-http",
     "crates/pending-ical",
+    "crates/pending-jira",
     "crates/pending-plane",
     "crates/pending-runtime",
     "crates/pending-todoist",

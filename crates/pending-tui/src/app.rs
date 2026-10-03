@@ -281,6 +281,11 @@ impl App {
         self.snapshot.marked.iter().any(|marked| marked == id)
     }
 
+    /// Whether the card `id` changed since the user last looked.
+    pub fn is_changed(&self, id: &str) -> bool {
+        self.snapshot.changed.iter().any(|changed| changed == id)
+    }
+
     /// The marked cards that are on the dashboard, on any board, in marking
     /// order, each with its source.
     pub fn marked_cards(&self) -> Vec<(&PendingCard, &str)> {
@@ -1228,6 +1233,25 @@ mod tests {
         app.handle_mouse(mouse(MouseEventKind::ScrollDown, 5, 12));
         assert_eq!(app.popup_selected(), 1, "stops at the last snoozed card");
         assert_eq!(selected(&app), Some("p1"), "the board selection stayed");
+    }
+
+    /// The cards the dashboard lists as changed since the user last looked
+    /// are the changed ones, also after a refresh brings a new list.
+    #[test]
+    fn changed_cards_are_the_ones_the_dashboard_lists() {
+        let mut snapshot = sample();
+        snapshot.changed = vec!["p2".to_owned(), "g1".to_owned()];
+        let mut app = App::new(snapshot);
+
+        assert!(app.is_changed("p2"));
+        assert!(app.is_changed("g1"));
+        assert!(!app.is_changed("p1"));
+
+        app.update(sample());
+        assert!(
+            !app.is_changed("p2"),
+            "the user came back: the list cleared"
+        );
     }
 
     /// The marked cards are listed in marking order with their source,

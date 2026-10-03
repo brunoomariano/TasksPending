@@ -39,6 +39,9 @@ const NOW_MAX_ROWS: usize = 5;
 /// without colour too.
 const MARK: &str = "● ";
 const MARK_COLOR: Color = Color::Magenta;
+/// Goes before the title of a card that changed since the user last looked,
+/// and after the count of a stack holding one. Small and dim on purpose.
+const CHANGED: &str = "•";
 /// Glyphs in `HH:MM:SS`.
 const CLOCK_TEXT_LEN: usize = 8;
 /// The same calm accent as the source titles and the selected tab.
@@ -663,11 +666,13 @@ fn render_group(area: Rect, buf: &mut Buffer, app: &App, index: usize, group: &G
                     selected,
                     Some(Row::Card { stack: holder, .. }) if holder == stack
                 );
+                let column = &group.columns[stack];
                 stack_header(
-                    &group.columns[stack],
+                    column,
                     app.is_collapsed(index, stack),
                     is_selected,
                     holds_selection,
+                    column.cards.iter().any(|card| app.is_changed(&card.id)),
                 )
             }
             Row::Card { stack, card } => {
@@ -676,7 +681,12 @@ fn render_group(area: Rect, buf: &mut Buffer, app: &App, index: usize, group: &G
                 if position > 0 && rows[position - 1] == *row {
                     card_body(card)
                 } else {
-                    card_title(card, is_selected, app.is_marked(&card.id))
+                    card_title(
+                        card,
+                        is_selected,
+                        app.is_marked(&card.id),
+                        app.is_changed(&card.id),
+                    )
                 }
             }
         };
@@ -702,14 +712,21 @@ fn render_group(area: Rect, buf: &mut Buffer, app: &App, index: usize, group: &G
     }
 }
 
-/// A stack's header: an open/closed marker, its name and card count. An
-/// empty stack is dimmed and has no marker; the selection rests on a
-/// collapsed stack's header, and the stack holding it stands out.
+/// The quiet look of the dot for what changed: the calm accent, dimmed.
+fn changed_style() -> Style {
+    Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM)
+}
+
+/// A stack's header: an open/closed marker, its name and card count, then
+/// a small dot when it holds a card that changed since the user last
+/// looked. An empty stack is dimmed and has no marker; the selection rests
+/// on a collapsed stack's header, and the stack holding it stands out.
 fn stack_header(
     stack: &Column,
     collapsed: bool,
     selected: bool,
     holds_selection: bool,
+    changed: bool,
 ) -> Line<'_> {
     let label = format!("{} ({})", stack.name, stack.cards.len());
     if stack.cards.is_empty() {
@@ -726,15 +743,20 @@ fn stack_header(
     } else {
         style
     };
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(if collapsed { "▸ " } else { "▾ " }, style),
         Span::styled(label, label_style),
-    ])
+    ];
+    if changed {
+        spans.push(Span::styled(format!(" {CHANGED}"), changed_style()));
+    }
+    Line::from(spans)
 }
 
 /// A card's title row: the severity bar, the mark when the card is marked
-/// as in progress, then the title.
-fn card_title(card: &PendingCard, selected: bool, marked: bool) -> Line<'_> {
+/// as in progress, a small dot when it changed since the user last looked,
+/// then the title.
+fn card_title(card: &PendingCard, selected: bool, marked: bool, changed: bool) -> Line<'_> {
     let marker = match card.severity {
         CardSeverity::Info => Style::default().fg(Color::Blue),
         CardSeverity::Warning => Style::default().fg(Color::Yellow),
@@ -752,6 +774,9 @@ fn card_title(card: &PendingCard, selected: bool, marked: bool) -> Line<'_> {
     let mut spans = vec![Span::styled("▍", marker)];
     if marked {
         spans.push(Span::styled(MARK, Style::default().fg(MARK_COLOR)));
+    }
+    if changed {
+        spans.push(Span::styled(format!("{CHANGED} "), changed_style()));
     }
     spans.push(Span::styled(card.title.as_str(), title));
     Line::from(spans)
@@ -1409,6 +1434,81 @@ mod tests {
         assert!(bottom.contains("Snoozed number 59"), "{bottom}");
         assert!(!bottom.contains("Snoozed number 00"), "{bottom}");
         assert!(is_reversed(&app, 100, 30, "Snoozed number 59"));
+    }
+
+    /// The `marked` dashboard (Work: plane and github; Personal: calendar)
+    /// with `changed` as the ids of the cards that changed since the user
+    /// last looked.
+    fn changed(marks: &[&str], changed: &[&str]) -> App {
+        let mut snapshot = marked(marks).snapshot().clone();
+        snapshot.changed = changed.iter().map(|id| (*id).to_owned()).collect();
+        App::new(snapshot)
+    }
+
+    /// The style of the cell where `text` starts.
+    fn style_at(app: &App, width: u16, height: u16, text: &str) -> Style {
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, app, "", now());
+        let (x, y) = position(&screen(app, width, height), text);
+        buf[(x, y)].style()
+    }
+
+    /// A card that changed since the user last looked has a small dim dot
+    /// before its title, and the header of its stack has the same dot after
+    /// the count; other cards and stacks have none, and keep their place.
+    /// Nothing else says so: no count, no text.
+    #[test]
+    fn changed_cards_and_their_stacks_carry_a_small_dot() {
+        let app = changed(&[], &["API-1"]);
+        let board = screen(&app, 120, 24);
+
+        assert!(board.contains("▍• Fix login"), "{board}");
+        assert!(board.contains("▾ Mine (1) •"), "{board}");
+        assert!(board.contains("▍Add cache"), "unchanged card\n{board}");
+        assert!(board.contains("▾ Review (1)  "), "unchanged stack\n{board}");
+        assert_eq!(board.matches('•').count(), 2, "{board}");
+        assert!(!board.to_lowercase().contains("changed"), "{board}");
+
+        for dot in ["• Fix login", "•  "] {
+            let style = style_at(&app, 120, 24, dot);
+            assert!(style.add_modifier.contains(Modifier::DIM), "{dot:?}");
+            assert!(!style.add_modifier.contains(Modifier::REVERSED), "{dot:?}");
+        }
+
+        let quiet = screen(&changed(&[], &[]), 120, 24);
+        assert!(!quiet.contains('•'), "{quiet}");
+        assert_eq!(
+            position(&quiet, "▍Fix login"),
+            position(&board, "▍• Fix login"),
+            "{quiet}"
+        );
+    }
+
+    /// A collapsed stack holding a changed card still shows the dot on its
+    /// header, selected or not.
+    #[test]
+    fn collapsed_stacks_keep_the_dot_of_their_changed_cards() {
+        let mut app = changed(&[], &["API-1"]);
+        app.handle_key(KeyEvent::from(KeyCode::Char('c')));
+        let collapsed = screen(&app, 120, 24);
+
+        assert!(collapsed.contains("▸ Mine (1) •"), "{collapsed}");
+        assert!(!collapsed.contains("Fix login"), "{collapsed}");
+        assert_eq!(collapsed.matches('•').count(), 1, "{collapsed}");
+        let style = style_at(&app, 120, 24, "•");
+        assert!(!style.add_modifier.contains(Modifier::REVERSED));
+    }
+
+    /// A card both marked as in progress and changed shows the mark, then
+    /// the dot, then its title; the Now panel repeats it without the dot.
+    #[test]
+    fn marked_and_changed_cards_show_both_signs() {
+        let both = screen(&changed(&["API-1"], &["API-1"]), 120, 30);
+
+        assert!(both.contains("▍● • Fix login"), "{both}");
+        assert!(both.contains("● Fix login  plane"), "the Now panel\n{both}");
+        assert!(both.contains("▾ Mine (1) •"), "{both}");
     }
 
     /// With no sources, the screen explains that none are configured.

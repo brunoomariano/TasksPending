@@ -4,12 +4,32 @@
 
 TasksPending is a local-first pending-work dashboard. It collects auto-refreshing sources and shows the same model through a Rust TUI, a Rust HTTP API, and a lightweight TypeScript frontend.
 
-![TasksPending dashboard with simulated cards](docs/assets/tasks-pending-sandbox.png)
+![TasksPending dashboard with simulated cards: a clock and weather, the cards in progress in a Now row, and one group of stacks per source](docs/assets/tasks-pending-sandbox.png)
+
+Every picture here comes from `tasks-pending sandbox`, which shows simulated cards without any configuration or credentials; `make screenshots` regenerates them.
+
+## What it shows
+
+- **One group per source, in your order.** GitHub, GitLab, Jira, Linear, Plane, Todoist, Google Calendar and iCal feeds, each with its logo. Inside a group, every stack is a filter you declare in the config; stacks collapse, and long ones show their first cards.
+- **What to do next.** GitHub pull requests are split by next action (review requested, returned to you, ready to merge, waiting on reviewers), with review state, checks and comment counts on the card.
+- **Now.** Pin the cards you are working on: they are highlighted in place and repeated in a row at the top.
+- **Snooze.** Hide a card for an hour, until tomorrow, until next week, or until it changes. It always comes back when the item changes, and nothing is written to the provider.
+- **What changed.** A small dot marks the cards that changed since you last looked.
+- **Local only.** The daemon listens on this machine, reads tokens from the environment, and keeps your marks and snoozes in a state folder shared by the web page and the TUI.
 
 <p align="center">
-  <img src="docs/assets/tasks-pending-sources.png" alt="TasksPending source health dialog" width="49%">
-  <img src="docs/assets/tasks-pending-settings.png" alt="TasksPending settings dialog" width="49%">
+  <img src="docs/assets/tasks-pending-snooze.png" alt="A card with its snooze menu open: 1 hour, Tomorrow, Next week, Until it changes" width="49%">
+  <img src="docs/assets/tasks-pending-snoozed.png" alt="The list of snoozed cards, each with a Wake button" width="49%">
 </p>
+
+<p align="center">
+  <img src="docs/assets/tasks-pending-sources.png" alt="The source health dialog" width="49%">
+  <img src="docs/assets/tasks-pending-settings.png" alt="The settings dialog: board filter, auto-refresh and show or hide switches" width="49%">
+</p>
+
+The page follows the system theme:
+
+![The same dashboard in the light theme](docs/assets/tasks-pending-sandbox-light.png)
 
 ## Install
 

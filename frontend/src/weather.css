@@ -1,0 +1,66 @@
+/* Weather beside the clock, on the side opposite the controls. */
+.weather {
+  display: grid;
+  flex: none;
+  justify-items: center;
+  gap: 6px;
+  max-width: 150px;
+  color: var(--text-2);
+}
+
+.weather p {
+  margin: 0;
+}
+
+.weather-now {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+
+.weather-icon {
+  width: 30px;
+  height: 30px;
+  stroke-width: 1.75;
+  color: var(--text-2);
+}
+
+.weather-temperature {
+  font-size: 1.9rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-details {
+  display: grid;
+  justify-items: center;
+  max-width: 100%;
+}
+
+.weather-place {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weather-wind {
+  color: var(--text-3);
+  font-size: 0.8rem;
+}
+
+/*
+ * The clock at full size (880px), the controls (about 260px), the widest
+ * weather (150px), two gaps and the padding need about 1425px. Below that
+ * the weather would squeeze the clock; it is the optional one, so it goes.
+ */
+@media (max-width: 1439px) {
+  .weather {
+    display: none;
+  }
+}

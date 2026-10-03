@@ -5,6 +5,8 @@ import { startClock } from "./clock";
 import { startPolling } from "./poll";
 import { DEFAULT_VIEW, renderApp, renderControls, type View } from "./render";
 import type { ViewState } from "./state";
+import "./weather.css";
+import { mountWeather } from "./weather";
 
 const POLL_INTERVAL_MS = 15_000;
 /** Sources refresh in the background; read the result shortly after. */
@@ -84,6 +86,11 @@ function flip(set: ReadonlySet<string>, key: string): Set<string> {
 const clock = document.querySelector<HTMLElement>("#clock");
 if (clock) {
   startClock(clock);
+}
+
+const hero = document.querySelector<HTMLElement>(".hero");
+if (hero) {
+  mountWeather(hero);
 }
 
 const app = document.querySelector<HTMLElement>("#app");

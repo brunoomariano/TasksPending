@@ -3,7 +3,8 @@
 //!
 //! Every stack key becomes part of an `IssueFilter`, so only matching issues
 //! travel. Stacks are queried a few at a time, each request with its own
-//! timeout; a failing stack becomes a warning and the others still show.
+//! timeout and each stack with a time budget for all its pages; a failing or
+//! slow stack becomes a warning and the others still show.
 
 use std::time::Duration;
 
@@ -22,6 +23,11 @@ pub const DEFAULT_API_URL: &str = "https://api.linear.app/graphql";
 
 /// Per request; a stack whose request times out becomes a warning.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+/// What one stack may take for all its pages together. The default stacks
+/// run in at most two rounds of [`MAX_CONCURRENT_QUERIES`], so two rounds fit
+/// the aggregator's default source timeout (60s) and a slow stack becomes a
+/// warning instead of failing the whole source.
+const DEFAULT_STACK_BUDGET: Duration = Duration::from_secs(25);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const PAGE_SIZE: usize = 100;
 /// Pages read per stack before giving up with a warning.
@@ -264,6 +270,7 @@ pub struct LinearSource {
     client: Client,
     settings: Result<LinearSettings, String>,
     request_timeout: Duration,
+    stack_budget: Duration,
     columns: Vec<LinearColumn>,
 }
 
@@ -281,6 +288,7 @@ impl LinearSource {
             client,
             settings,
             request_timeout: REQUEST_TIMEOUT,
+            stack_budget: DEFAULT_STACK_BUDGET,
             columns: default_columns(),
         }
     }
@@ -298,6 +306,13 @@ impl LinearSource {
         self
     }
 
+    /// Replaces [`DEFAULT_STACK_BUDGET`], the time one stack has for all its
+    /// pages together.
+    pub fn with_stack_budget(mut self, budget: Duration) -> Self {
+        self.stack_budget = budget;
+        self
+    }
+
     async fn refresh_with(&self, settings: &LinearSettings) -> Result<SourceBatch, SourceError> {
         // A few at a time, to stay far from Linear's rate limits. Results
         // keep stack order.
@@ -307,7 +322,7 @@ impl LinearSource {
                 join_all(
                     chunk
                         .iter()
-                        .map(|column| self.column_issues(settings, column)),
+                        .map(|column| self.within_budget(self.column_issues(settings, column))),
                 )
                 .await,
             );
@@ -356,6 +371,19 @@ impl LinearSource {
         }
         batch.warnings.extend(failures);
         Ok(batch)
+    }
+
+    /// Runs one stack within the stack budget. A stack that runs out of time
+    /// fails like any other failing stack; the pages it had already read are
+    /// dropped, because the stack would be incomplete.
+    async fn within_budget<T>(
+        &self,
+        stack: impl Future<Output = Result<T, Failure>>,
+    ) -> Result<T, Failure> {
+        match tokio::time::timeout(self.stack_budget, stack).await {
+            Ok(result) => result,
+            Err(_) => Err(format!("timed out after {:?}", self.stack_budget).into()),
+        }
     }
 
     /// Every page of one stack's issues; `true` when pages were left unread.

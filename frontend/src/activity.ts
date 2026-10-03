@@ -4,13 +4,21 @@ export const ACTIVITY_EVENTS = [
   "pointerdown",
   "keydown",
   "focus",
+  // Reading by scrolling moves no pointer.
+  "wheel",
+  "scroll",
+  "touchstart",
 ] as const;
 
 /** Activity is reported at most this often. */
 const REPORT_EVERY_MS = 60_000;
 
 interface ActivityTarget {
-  addEventListener: (type: string, listener: () => void) => void;
+  addEventListener: (
+    type: string,
+    listener: () => void,
+    options?: { passive: boolean },
+  ) => void;
   removeEventListener: (type: string, listener: () => void) => void;
 }
 
@@ -32,7 +40,8 @@ export function startActivity(
     }
   };
   for (const type of ACTIVITY_EVENTS) {
-    options.target.addEventListener(type, onActivity);
+    // Passive: the listener never blocks scrolling.
+    options.target.addEventListener(type, onActivity, { passive: true });
   }
   return () => {
     for (const type of ACTIVITY_EVENTS) {

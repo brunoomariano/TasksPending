@@ -41,6 +41,22 @@ describe("startActivity", () => {
     expect(report).toHaveBeenCalledTimes(2);
   });
 
+  /**
+   * Reading by scrolling is looking too: the wheel, a touch and the page
+   * scrolling all count, so a long read is not mistaken for time away.
+   */
+  test("scrolling and touch count as activity", () => {
+    for (const type of ["wheel", "scroll", "touchstart"]) {
+      const target = fakeTarget();
+      const report = vi.fn();
+      startActivity(report, { target, now: () => 0 });
+
+      target.listeners.get(type)?.();
+
+      expect(report, type).toHaveBeenCalledTimes(1);
+    }
+  });
+
   /** Stopping removes the listeners. */
   test("stop removes the listeners", () => {
     const target = fakeTarget();

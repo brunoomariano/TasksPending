@@ -148,7 +148,14 @@ export function renderControls(
           : '<span class="filter-dot"></span>'
       }</button>
     </div>
-    <p class="updated">${icon("clock")} Updated ${escapeHtml(localTime(snapshot.generated_at))}</p>
+    <p class="updated">
+      ${icon("clock")} Updated ${escapeHtml(localTime(snapshot.generated_at))}
+      ${
+        snapshot.version
+          ? `<span class="version" title="TasksPending version">v${escapeHtml(snapshot.version)}</span>`
+          : ""
+      }
+    </p>
   `;
 }
 

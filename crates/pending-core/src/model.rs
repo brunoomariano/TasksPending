@@ -17,6 +17,9 @@ pub struct DashboardSnapshot {
     /// is failing.
     #[serde(default)]
     pub marked: Vec<String>,
+    /// Version of the program that produced the snapshot, e.g. `0.4.0`.
+    #[serde(default)]
+    pub version: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

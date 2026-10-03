@@ -93,6 +93,10 @@ pub fn render(
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(
+            concat!(" ", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(Color::DarkGray),
+        ),
         Span::raw(format!("  {}  ", local(snapshot.generated_at))),
         Span::styled(header, Style::default().fg(Color::DarkGray)),
     ]))
@@ -689,6 +693,17 @@ mod tests {
                 updated_at: Utc.with_ymd_and_hms(2026, 9, 28, 12, 0, 0).unwrap(),
             },
         }
+    }
+
+    /// The header says which version is running.
+    #[test]
+    fn header_shows_the_running_version() {
+        let screen = screen(&app(Vec::new()), 100, 20);
+
+        assert!(
+            screen.contains(&format!("TasksPending {}", env!("CARGO_PKG_VERSION"))),
+            "{screen}"
+        );
     }
 
     fn fresh(name: &str, board: &str, columns: &[&str], items: Vec<SourceItem>) -> SourceReport {

@@ -20,6 +20,7 @@ describe("loadSnapshot", () => {
       generated_at: "2026-09-28T10:00:00Z",
       config_error: null,
       marked: [],
+      version: "0.0.0",
       boards: [],
       sources: [],
     };

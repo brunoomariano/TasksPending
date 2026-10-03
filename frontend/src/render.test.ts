@@ -27,6 +27,7 @@ const snapshot = (): DashboardSnapshot => ({
   generated_at: "2026-09-28T10:00:00Z",
   config_error: null,
   marked: [],
+  version: "0.0.0",
   sources: [
     {
       name: "plane",
@@ -569,6 +570,16 @@ describe("renderApp", () => {
       /data-action="sources"[\s\S]*data-action="refresh"[\s\S]*class="updated"/,
     );
     expect(renderControls({ kind: "loading" })).toBe("");
+  });
+
+  /** The running version shows next to the last update, under the buttons. */
+  test("controls show the running version", () => {
+    const data = snapshot();
+    data.version = "1.2.3";
+
+    expect(controls(data)).toMatch(
+      /class="updated"[\s\S]*Updated[\s\S]*<span class="version"[^>]*>v1\.2\.3<\/span>/,
+    );
   });
 
   /** The page has no header: no product title, no pending count. */

@@ -830,3 +830,9 @@ button {
     margin: 16px 16px 0;
   }
 }
+
+/* The running version, after the last update. */
+.version::before {
+  margin-right: 6px;
+  content: "·";
+}

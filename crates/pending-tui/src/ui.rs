@@ -418,6 +418,16 @@ fn render_board(area: Rect, buf: &mut Buffer, app: &App, viewport: &mut Viewport
     }
 }
 
+/// A card's body on one line: its non-blank lines, trimmed and separated by
+/// " · " (the separator sources already use between details).
+fn body_summary(body: &str) -> String {
+    body.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// Draws a column and returns the index of its first card on screen.
 fn render_column(
     area: Rect,
@@ -472,7 +482,7 @@ fn render_column(
                     Span::styled(card.title.as_str(), title_style),
                 ]),
                 Line::from(Span::styled(
-                    format!(" {}", card.body),
+                    format!(" {}", body_summary(&card.body)),
                     Style::default().fg(Color::DarkGray),
                 )),
             ])
@@ -660,6 +670,33 @@ mod tests {
 
         assert!(screen.contains("Card number 29"), "{screen}");
         assert!(!screen.contains("Card number 0 "), "{screen}");
+    }
+
+    /// A body with line breaks shows on the card's single body row with the
+    /// lines separated by " · " (blank ones dropped), not run together; the
+    /// details popup still shows each line on its own.
+    #[test]
+    fn multi_line_bodies_are_joined_on_the_board() {
+        let mut item = card("Mine", "API-1", "Fix login");
+        item.card.body = "first line\r\n\n  second line\nthird".to_owned();
+        let mut app = app(vec![fresh("plane", "Work", &["Mine"], vec![item])]);
+
+        let board = screen(&app, 100, 24);
+        assert!(
+            board.contains("first line · second line · third"),
+            "{board}"
+        );
+
+        app.handle_key(KeyEvent::from(KeyCode::Char(' ')));
+        let details = screen(&app, 100, 24);
+        let popup_line = |text: &str| {
+            details
+                .lines()
+                .position(|line| line.contains(text))
+                .unwrap_or_else(|| panic!("{text:?} not in the popup\n{details}"))
+        };
+        assert_eq!(popup_line("second line"), popup_line("first line") + 2);
+        assert_eq!(popup_line("third"), popup_line("first line") + 3);
     }
 
     /// With no sources, the screen explains that none are configured.

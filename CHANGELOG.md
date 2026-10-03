@@ -13,6 +13,10 @@
 - Any stack can be switched off in the config with `enabled = false`: it is not queried and not shown, in the web page or the TUI.
 - On Omarchy, the web dashboard shows a small weather widget beside the clock (condition icon, temperature, place and wind, from Omarchy's weather commands through the new `GET /api/v1/weather`). It is absent when weather is unavailable and hidden in windows narrower than 1440 px. The systemd service's PATH now includes Omarchy's command directories; install again to update an existing service file.
 
+### Fixed
+
+- The TUI board no longer runs a card's body lines together: line breaks show as ` · ` on the card, and the details popup keeps the full text.
+
 ## 0.3.1
 
 ### Fixed

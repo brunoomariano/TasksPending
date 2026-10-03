@@ -21,6 +21,7 @@ use tracing::{info, warn};
 pub mod cache;
 pub mod config;
 pub mod live;
+pub mod marks;
 
 /// What the API and the TUI need from a running dashboard.
 pub trait Dashboard: Send + Sync {
@@ -28,6 +29,10 @@ pub trait Dashboard: Send + Sync {
     /// Refreshes every source now (reloading a changed config first, when
     /// the dashboard follows a config file).
     fn refresh_now(&self);
+    /// Marks or unmarks a card as in progress.
+    fn set_mark(&self, _id: &str, _marked: bool) -> Result<(), marks::MarkError> {
+        Err(marks::MarkError::Unsupported)
+    }
 }
 
 impl Dashboard for Aggregator {
@@ -47,6 +52,10 @@ impl Dashboard for live::Live {
 
     fn refresh_now(&self) {
         live::Live::refresh_now(self);
+    }
+
+    fn set_mark(&self, id: &str, marked: bool) -> Result<(), marks::MarkError> {
+        live::Live::set_mark(self, id, marked)
     }
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { loadSnapshot, requestRefresh } from "./api";
+import { loadSnapshot, requestRefresh, setMark } from "./api";
 
 describe("loadSnapshot", () => {
   /**
@@ -19,6 +19,7 @@ describe("loadSnapshot", () => {
     const snapshot = {
       generated_at: "2026-09-28T10:00:00Z",
       config_error: null,
+      marked: [],
       boards: [],
       sources: [],
     };
@@ -91,6 +92,50 @@ describe("requestRefresh", () => {
     expect(await requestRefresh(tooSoon)).toEqual({
       ok: false,
       error: "wait 7s",
+    });
+  });
+});
+
+describe("setMark", () => {
+  /**
+   * Marking a card posts its id and the new state, with the header the API
+   * requires from the dashboard.
+   */
+  test("posts the card id and the new state", async () => {
+    let sent: RequestInit | undefined;
+    let path = "";
+    const done = async (input: string, init?: RequestInit) => {
+      path = input;
+      sent = init;
+      return new Response(null, { status: 204 });
+    };
+
+    expect(await setMark("plane:API-1", true, done)).toEqual({ ok: true });
+    expect(path).toBe("/api/v1/marks");
+    expect(sent?.method).toBe("POST");
+    expect(new Headers(sent?.headers).get("x-requested-with")).toBe(
+      "tasks-pending",
+    );
+    expect(JSON.parse(String(sent?.body))).toEqual({
+      id: "plane:API-1",
+      marked: true,
+    });
+  });
+
+  /** A refused or failed request is reported, not thrown. */
+  test("reports failures", async () => {
+    const gone = async () => new Response(null, { status: 404 });
+    const offline = async () => {
+      throw new Error("offline");
+    };
+
+    expect(await setMark("x", true, gone)).toEqual({
+      ok: false,
+      error: "HTTP 404",
+    });
+    expect(await setMark("x", false, offline)).toEqual({
+      ok: false,
+      error: "offline",
     });
   });
 });

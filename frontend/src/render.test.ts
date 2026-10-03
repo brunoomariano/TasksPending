@@ -26,6 +26,7 @@ const card = (id: string, extra: Partial<PendingCard> = {}): PendingCard => ({
 const snapshot = (): DashboardSnapshot => ({
   generated_at: "2026-09-28T10:00:00Z",
   config_error: null,
+  marked: [],
   sources: [
     {
       name: "plane",
@@ -479,6 +480,77 @@ describe("renderApp", () => {
     );
     expect(html).toContain('<img src="https://cdn.example/github.svg"');
     expect(html).not.toContain("javascript:");
+  });
+
+  /**
+   * Cards marked as in progress are repeated in a row above the stacks, in
+   * the order they were marked, any number of them, each once even when two
+   * stacks hold it, with the source it comes from and a button to unmark.
+   */
+  test("marked cards show in a Now row above the stacks", () => {
+    const data = snapshot();
+    data.boards[0].groups[1].columns[1].cards.push(card("gh-1"));
+    data.marked = ["gh-1", "API-1"];
+
+    const html = ready(view(), data);
+    const row =
+      html.match(/<section class="now"[\s\S]*?<\/section>/)?.[0] ?? "";
+
+    expect(html.indexOf('class="now"')).toBeLessThan(
+      html.indexOf('class="board"'),
+    );
+    expect(row).toMatch(/Now <span class="count">2</);
+    expect(row).toMatch(/gh-1[\s\S]*alert\(1\)/);
+    expect(row.match(/data-mark="gh-1"/g)).toHaveLength(1);
+    expect(row).toMatch(/data-mark="gh-1"[^>]*aria-pressed="true"/);
+    expect(row).toContain("github");
+    expect(row).not.toContain("todo-1");
+  });
+
+  /**
+   * With nothing marked the row is gone; so it is when the marked cards are
+   * not on the page (their source is failing).
+   */
+  test("the Now row disappears when it is empty", () => {
+    expect(ready()).not.toContain('class="now"');
+
+    const data = snapshot();
+    data.marked = ["not-loaded"];
+    expect(ready(view(), data)).not.toContain('class="now"');
+  });
+
+  /**
+   * Every card has a button to mark it; a marked card stays in its stack,
+   * highlighted, with the button pressed.
+   */
+  test("cards carry a mark button and marked ones are highlighted", () => {
+    const data = snapshot();
+    data.marked = ["todo-1"];
+
+    const board = ready(view(), data).split('class="board"')[1];
+
+    expect(board).toMatch(
+      /<article class="card marked">[\s\S]*?data-mark="todo-1"[^>]*aria-pressed="true"/,
+    );
+    expect(board).toMatch(/data-mark="gh-1"[^>]*aria-pressed="false"/);
+    expect(board).toMatch(/<article class="card">[\s\S]*?gh-1/);
+  });
+
+  /**
+   * The row shows what you are working on whatever the board filter or the
+   * hidden items: marking a card is an explicit choice.
+   */
+  test("the Now row ignores the board filter and hidden items", () => {
+    const data = snapshot();
+    data.marked = ["API-1"];
+
+    const html = ready(
+      view({ board: "Personal", hidden: new Set([hideKey.board("Work")]) }),
+      data,
+    );
+
+    expect(html).toMatch(/class="now"[\s\S]*alert\(1\)/);
+    expect(html).not.toContain("plane</h2>");
   });
 
   /** Before the first response, the page says it is loading. */

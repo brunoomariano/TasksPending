@@ -76,3 +76,30 @@ export async function requestRefresh(
     };
   }
 }
+
+/** Marks or unmarks a card as in progress. */
+export async function setMark(
+  id: string,
+  marked: boolean,
+  fetchFn: Fetch = (input, init) => fetch(input, init),
+): Promise<RefreshResult> {
+  try {
+    const response = await fetchFn("/api/v1/marks", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-requested-with": "tasks-pending",
+      },
+      body: JSON.stringify({ id, marked }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    return response.ok
+      ? { ok: true }
+      : { ok: false, error: `HTTP ${response.status}` };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}

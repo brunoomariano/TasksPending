@@ -13,7 +13,8 @@ use pending_core::{DashboardSnapshot, sandbox_snapshot};
 use pending_runtime::Dashboard;
 use pending_runtime::config::{Origin, cache_path};
 use pending_runtime::live::{Live, process_env};
-use serde::Serialize;
+use pending_runtime::marks::{MarkError, Marks};
+use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
@@ -125,7 +126,7 @@ pub async fn serve_sandbox(options: SandboxOptions) -> anyhow::Result<()> {
         .with_context(|| format!("binding {}", options.listen))?;
     info!(addr = %options.listen, "TasksPending sandbox listening");
 
-    axum::serve(listener, app(SandboxDashboard, frontend))
+    axum::serve(listener, app(SandboxDashboard::default(), frontend))
         .await
         .context("serving sandbox API")?;
     Ok(())
@@ -157,15 +158,32 @@ struct AppState {
     last_refresh: Arc<Mutex<Option<Instant>>>,
 }
 
-#[derive(Clone, Copy)]
-struct SandboxDashboard;
+/// Simulated cards; marks are kept in memory while the sandbox runs.
+#[derive(Clone)]
+struct SandboxDashboard {
+    marks: Arc<Marks>,
+}
+
+impl Default for SandboxDashboard {
+    fn default() -> Self {
+        Self {
+            marks: Arc::new(Marks::load(None)),
+        }
+    }
+}
 
 impl Dashboard for SandboxDashboard {
     fn snapshot(&self) -> DashboardSnapshot {
-        sandbox_snapshot()
+        let mut snapshot = sandbox_snapshot();
+        self.marks.apply(&mut snapshot);
+        snapshot
     }
 
     fn refresh_now(&self) {}
+
+    fn set_mark(&self, id: &str, marked: bool) -> Result<(), MarkError> {
+        self.marks.set(&sandbox_snapshot(), id, marked)
+    }
 }
 
 /// API routes, plus the configured frontend for any other path.
@@ -177,7 +195,8 @@ pub fn app(dashboard: impl Dashboard + 'static, frontend: Option<Frontend>) -> R
     let router = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/v1/snapshot", get(snapshot))
-        .route("/api/v1/refresh", post(refresh));
+        .route("/api/v1/refresh", post(refresh))
+        .route("/api/v1/marks", post(set_mark));
     let router = match frontend {
         Some(Frontend::Directory(dir)) => router.fallback_service(ServeDir::new(dir)),
         Some(Frontend::Embedded(files)) => {
@@ -286,6 +305,29 @@ enum RefreshReply {
     Forbidden { error: &'static str },
 }
 
+#[derive(Debug, Deserialize)]
+struct MarkRequest {
+    id: String,
+    marked: bool,
+}
+
+/// Marks or unmarks a card as in progress.
+async fn set_mark(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<MarkRequest>,
+) -> StatusCode {
+    let (name, value) = DASHBOARD_HEADER;
+    if headers.get(name).and_then(|v| v.to_str().ok()) != Some(value) {
+        return StatusCode::FORBIDDEN;
+    }
+    match state.dashboard.set_mark(&request.id, request.marked) {
+        Ok(()) => StatusCode::NO_CONTENT,
+        Err(MarkError::UnknownCard) => StatusCode::NOT_FOUND,
+        Err(MarkError::Unsupported) => StatusCode::NOT_IMPLEMENTED,
+    }
+}
+
 /// Refreshes every source now, at most once per [`REFRESH_COOLDOWN`].
 async fn refresh(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
     let (name, value) = DASHBOARD_HEADER;
@@ -383,7 +425,7 @@ mod tests {
     /// contacts a provider before returning its simulated cards.
     #[tokio::test]
     async fn sandbox_snapshot_endpoint_serves_simulated_cards() {
-        let response = app(SandboxDashboard, None)
+        let response = app(SandboxDashboard::default(), None)
             .oneshot(
                 Request::get("/api/v1/snapshot")
                     .body(Body::empty())
@@ -535,6 +577,62 @@ mod tests {
         let (status, _) = post(app(idle_aggregator(), None), "/api/v1/refresh", false).await;
 
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    async fn post_json(app: Router, path: &str, body: &str, marked: bool) -> StatusCode {
+        let mut request = Request::post(path).header("content-type", "application/json");
+        if marked {
+            request = request.header("x-requested-with", "tasks-pending");
+        }
+        app.oneshot(request.body(Body::from(body.to_owned())).unwrap())
+            .await
+            .unwrap()
+            .status()
+    }
+
+    async fn marked_ids(app: Router) -> Vec<String> {
+        let (_, body) = get(app, "/api/v1/snapshot").await;
+        let snapshot: DashboardSnapshot = serde_json::from_str(&body).unwrap();
+        snapshot.marked
+    }
+
+    /// The page marks a card as in progress and unmarks it again; the
+    /// snapshot lists the marked cards. Unknown cards are refused.
+    #[tokio::test]
+    async fn marks_endpoint_marks_and_unmarks_cards() {
+        let app = app(SandboxDashboard::default(), None);
+        let id = sandbox_snapshot().boards[0].groups[0].columns[0].cards[0]
+            .id
+            .clone();
+        let mark = |marked: bool| format!(r#"{{"id":{id:?},"marked":{marked}}}"#);
+
+        let status = post_json(app.clone(), "/api/v1/marks", &mark(true), true).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(marked_ids(app.clone()).await, std::slice::from_ref(&id));
+
+        let status = post_json(app.clone(), "/api/v1/marks", &mark(false), true).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(marked_ids(app.clone()).await.is_empty());
+
+        let ghost = r#"{"id":"ghost","marked":true}"#;
+        let status = post_json(app.clone(), "/api/v1/marks", ghost, true).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// Another site open in the browser can't mark cards: without the header
+    /// only the dashboard sends, the request is refused and nothing changes.
+    #[tokio::test]
+    async fn marks_require_the_dashboard_header() {
+        let app = app(SandboxDashboard::default(), None);
+        let id = sandbox_snapshot().boards[0].groups[0].columns[0].cards[0]
+            .id
+            .clone();
+        let body = format!(r#"{{"id":{id:?},"marked":true}}"#);
+
+        let status = post_json(app.clone(), "/api/v1/marks", &body, false).await;
+
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(marked_ids(app).await.is_empty());
     }
 
     /// An explicit directory remains a development override, but it must have

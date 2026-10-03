@@ -15,6 +15,7 @@ import type { ViewState } from "./state";
 /** Stroke icons (Lucide shapes), inline so the page needs no icon font. */
 const ICON_PATHS = {
   refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+  pin: '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
   sources: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
   warning:
     '<path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
@@ -201,6 +202,7 @@ function renderSnapshot(
   );
   return `
     ${banner}
+    ${renderNow(snapshot)}
     <section class="board">
       ${boards
         .flatMap((board) =>
@@ -249,6 +251,7 @@ function renderGroup(
 ): string {
   const key = groupKey(board, group.source);
   const expanded = view.expanded.has(key);
+  const marked = new Set(snapshot.marked);
   const visible = group.columns.filter(
     (column) =>
       !view.hidden.has(hideKey.column(board, group.source, column.name)),
@@ -274,6 +277,7 @@ function renderGroup(
             view.openColumns.has(key),
             view.collapsed.has(key),
             health,
+            marked,
           );
         })
         .join("")
@@ -298,6 +302,7 @@ function renderStack(
   open: boolean,
   collapsed: boolean,
   health: SourceHealth | undefined,
+  marked: ReadonlySet<string>,
 ): string {
   const header = `
     <button type="button" class="stack-header" data-collapse="${escapeHtml(key)}" aria-expanded="${!collapsed}">
@@ -318,7 +323,7 @@ function renderStack(
   const cards = column.cards.length
     ? column.cards
         .slice(0, open ? undefined : COLUMN_LIMIT)
-        .map(renderCard)
+        .map((card) => renderCard(card, marked.has(card.id)))
         .join("") + more
     : `<p class="empty">${icon("inbox")} ${
         health?.last_refresh_at
@@ -339,16 +344,69 @@ function cardTitle(card: PendingCard): string {
     : escapeHtml(card.title);
 }
 
-function renderCard(card: PendingCard): string {
+/** The button that marks a card as in progress, or unmarks it. */
+function markButton(card: PendingCard, marked: boolean): string {
+  const label = marked ? "Unmark as in progress" : "Mark as in progress";
+  return `<button type="button" class="mark" data-mark="${escapeHtml(card.id)}" aria-pressed="${marked}" aria-label="${label}" title="${label}">${icon("pin")}</button>`;
+}
+
+function renderCard(card: PendingCard, marked: boolean): string {
   const title = cardTitle(card);
   // No date line: sources write the due time or event time into the body,
   // and the last fetch time is at the top. No severity marker either.
 
   return `
-    <article class="card">
-      <strong class="card-title">${title}</strong>
+    <article class="card${marked ? " marked" : ""}">
+      <header class="card-header">
+        <strong class="card-title">${title}</strong>
+        ${markButton(card, marked)}
+      </header>
       <p title="${escapeHtml(card.body)}">${escapeHtml(card.body)}</p>
     </article>
+  `;
+}
+
+/**
+ * The cards marked as in progress, above the stacks, in marking order and
+ * once each. It ignores the board filter and hidden items, since marking is
+ * an explicit choice, and it is absent when no marked card is on the page.
+ */
+function renderNow(snapshot: DashboardSnapshot): string {
+  const found = new Map<string, { card: PendingCard; group: Group }>();
+  for (const board of snapshot.boards) {
+    for (const group of board.groups) {
+      for (const column of group.columns) {
+        for (const card of column.cards) {
+          if (!found.has(card.id)) {
+            found.set(card.id, { card, group });
+          }
+        }
+      }
+    }
+  }
+  const items = snapshot.marked.flatMap((id) => found.get(id) ?? []);
+  if (items.length === 0) {
+    return "";
+  }
+  return `
+    <section class="now" aria-label="Now">
+      <h2>${icon("pin")} Now <span class="count">${items.length}</span></h2>
+      <div class="now-cards">
+        ${items
+          .map(
+            ({ card, group }) => `
+              <article class="card marked">
+                <header class="card-header">
+                  <strong class="card-title">${cardTitle(card)}</strong>
+                  ${markButton(card, true)}
+                </header>
+                <p title="${escapeHtml(card.body)}">${escapeHtml(card.body)}</p>
+                <footer class="card-source">${sourceIcon(group.icon)}${escapeHtml(group.source)}</footer>
+              </article>`,
+          )
+          .join("")}
+      </div>
+    </section>
   `;
 }
 

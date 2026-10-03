@@ -930,6 +930,54 @@ async fn a_hanging_stack_times_out_as_a_warning() {
     assert_eq!(batch.warnings, ["Assigned issues: timed out after 200ms"]);
 }
 
+/// Each stack also has a time budget for all its pages together: a stack
+/// whose pages each answer within the request limit, but add up to more than
+/// the budget, becomes a warning naming it and shows no cards, while the
+/// other stacks still show theirs.
+#[tokio::test]
+async fn a_stack_over_its_time_budget_is_a_warning_naming_it() {
+    let stub = Stub::default();
+    let page = |first: u64, next: &str| {
+        Reply::items(vec![merge_request("acme/api", 5, first, "MR")]).header("x-next-page", next)
+    };
+    stub.set(
+        MERGE_REQUESTS,
+        "created_by_me",
+        vec![
+            page(1, "2"),
+            page(2, "3"),
+            page(3, "4"),
+            page(4, "5"),
+            page(5, ""),
+        ],
+    );
+    // Five pages of 150 ms each: 750 ms in all.
+    *stub.slow.lock().unwrap() = Some((
+        (MERGE_REQUESTS.to_owned(), "created_by_me".to_owned()),
+        Duration::from_millis(150),
+    ));
+    stub.set(
+        TODOS,
+        "",
+        vec![Reply::items(vec![todo(1, "assigned", "T")])],
+    );
+    let base = serve(stub.clone()).await;
+
+    let batch = source(&base)
+        .with_stack_budget(Duration::from_millis(400))
+        .with_columns(vec![
+            stack("Mine", "merge_requests = \"authored\""),
+            stack("To-dos", "todos = true"),
+        ])
+        .refresh()
+        .await
+        .expect("partial refresh");
+
+    assert_eq!(cards(&batch, "To-dos").len(), 1);
+    assert_eq!(cards(&batch, "Mine").len(), 0);
+    assert_eq!(batch.warnings, ["Mine: timed out after 400ms"]);
+}
+
 /// The stacks of one refresh are asked for at most three at a time.
 #[tokio::test]
 async fn stacks_run_three_at_a_time() {

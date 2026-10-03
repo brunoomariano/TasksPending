@@ -21,6 +21,11 @@ use serde_json::Value;
 
 /// Per request; a stack whose request times out becomes a warning.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+/// What one stack may take for all its pages together. The default stacks
+/// run in at most two rounds of [`MAX_CONCURRENT_QUERIES`], so two rounds fit
+/// the aggregator's default source timeout (60s) and a slow stack becomes a
+/// warning instead of failing the whole source.
+const DEFAULT_STACK_BUDGET: Duration = Duration::from_secs(25);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Queries running at once. Each stack is one query.
 const MAX_CONCURRENT_QUERIES: usize = 3;
@@ -170,6 +175,7 @@ pub struct JiraSource {
     client: Client,
     settings: Result<JiraSettings, String>,
     request_timeout: Duration,
+    stack_budget: Duration,
     columns: Vec<JiraColumn>,
     today: fn() -> NaiveDate,
 }
@@ -195,6 +201,7 @@ impl JiraSource {
                 s
             }),
             request_timeout: REQUEST_TIMEOUT,
+            stack_budget: DEFAULT_STACK_BUDGET,
             columns: default_columns(),
             today: local_today,
         }
@@ -213,6 +220,13 @@ impl JiraSource {
         self
     }
 
+    /// Replaces [`DEFAULT_STACK_BUDGET`], the time one stack has for all its
+    /// pages together.
+    pub fn with_stack_budget(mut self, budget: Duration) -> Self {
+        self.stack_budget = budget;
+        self
+    }
+
     /// The date "overdue" is measured against (the local date by default).
     pub fn with_today(mut self, today: fn() -> NaiveDate) -> Self {
         self.today = today;
@@ -228,7 +242,7 @@ impl JiraSource {
                 join_all(
                     chunk
                         .iter()
-                        .map(|column| self.search(settings, &column.jql)),
+                        .map(|column| self.within_budget(self.search(settings, &column.jql))),
                 )
                 .await,
             );
@@ -271,6 +285,19 @@ impl JiraSource {
         }
         batch.warnings.extend(failures);
         Ok(batch)
+    }
+
+    /// Runs one stack within the stack budget. A stack that runs out of time
+    /// fails like any other failing stack; the pages it had already read are
+    /// dropped, because the stack would be incomplete.
+    async fn within_budget<T>(
+        &self,
+        stack: impl Future<Output = Result<T, Failure>>,
+    ) -> Result<T, Failure> {
+        match tokio::time::timeout(self.stack_budget, stack).await {
+            Ok(result) => result,
+            Err(_) => Err(format!("timed out after {:?}", self.stack_budget).into()),
+        }
     }
 
     /// Every issue matching a JQL query, up to [`MAX_PAGES`] pages; `true`

@@ -214,6 +214,7 @@ pub fn build_snapshot(
         sources,
         config_error: None,
         marked: Vec::new(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
     }
 }
 

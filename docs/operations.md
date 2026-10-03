@@ -85,7 +85,7 @@ The TUI captures the mouse: the wheel moves the selection through the group unde
 
 ## Web Dashboard
 
-A big clock sits at the top of the page: the date, then the local time as `HH:MM:SS` in block digits (the "bricks" font of clock-tui), redrawn each second on its own, without touching the dashboard below. Next to it are the **Sources**, **Refresh** and settings (gear) buttons, with the time of the last data fetch below them; there is no other page header.
+A big clock sits at the top of the page: the date, then the local time as `HH:MM:SS` in block digits (the "bricks" font of clock-tui), redrawn each second on its own, without touching the dashboard below. Next to it are the **Sources**, **Refresh** and settings (gear) buttons, with the time of the last data fetch and the running version (e.g. `v0.4.0`) below them; there is no other page header.
 
 On Omarchy, a small weather widget sits on the other side of the clock: an icon for the current condition, the temperature, and below them the place and the wind, as `omarchy-weather-status` reports them (set the place with `omarchy-weather-location --set <name>`). It is optional context. It is not on the page at all when weather is unavailable (another system, no network, the commands failing), and it is hidden when the window is narrower than 1440 px, so it never takes room from the clock. The page asks `GET /api/v1/weather` on load, every 10 minutes while the tab is visible, and when the tab becomes visible again, independently of the dashboard polling. The sandbox shows a fixed sample.
 

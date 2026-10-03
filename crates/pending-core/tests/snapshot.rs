@@ -462,3 +462,12 @@ fn cached_source_shows_previous_cards_while_refreshing() {
         "{github:?}"
     );
 }
+
+/// The snapshot says which version produced it, so the page can show it.
+#[test]
+fn snapshot_carries_the_running_version() {
+    let snapshot = build_snapshot(at(12), Vec::new());
+
+    assert_eq!(snapshot.version, env!("CARGO_PKG_VERSION"));
+    assert!(!snapshot.version.is_empty());
+}

@@ -15,7 +15,11 @@ config_error: string | null,
  * marked. A marked card may be absent from the boards while its source
  * is failing.
  */
-marked: Array<string>, };
+marked: Array<string>, 
+/**
+ * Version of the program that produced the snapshot, e.g. `0.4.0`.
+ */
+version: string, };
 
 export type Board = { name: string, 
 /**

@@ -174,10 +174,14 @@ struct SandboxDashboard {
 
 impl Default for SandboxDashboard {
     fn default() -> Self {
+        // The demo's one look is an hour before its data was "fetched",
+        // so the newest simulated cards show as changed.
+        let looks = Looks::load(None);
+        looks.look_at(sandbox_snapshot().generated_at - chrono::Duration::hours(1));
         Self {
             marks: Arc::new(Marks::load(None)),
             snoozes: Arc::new(Snoozes::load(None)),
-            looks: Arc::new(Looks::load(None)),
+            looks: Arc::new(looks),
         }
     }
 }
@@ -209,9 +213,10 @@ impl Dashboard for SandboxDashboard {
         self.snoozes.wake(id)
     }
 
-    fn look(&self) {
-        self.looks.look(&self.snapshot());
-    }
+    /// The simulated cards have fixed dates in the past: a real look would
+    /// start a sitting today and no card would ever be newer than it. The
+    /// demo keeps its one look, and with it the changed dots.
+    fn look(&self) {}
 }
 
 /// API routes, plus the configured frontend for any other path.
@@ -536,6 +541,35 @@ mod tests {
                 .flat_map(|column| &column.cards)
                 .any(|card| card.title == "Review the release checklist")
         );
+    }
+
+    /// The sandbox shows some cards as changed since the last look, and
+    /// keeps showing them however the page is used: activity reported by
+    /// the page does not start a new sitting there.
+    #[tokio::test]
+    async fn sandbox_keeps_its_changed_cards() {
+        let dashboard = SandboxDashboard::default();
+        let changed = dashboard.snapshot().changed;
+        assert!(
+            changed.contains(&"github:review:214".to_owned()),
+            "{changed:?}"
+        );
+        let cards = dashboard
+            .snapshot()
+            .boards
+            .iter()
+            .flat_map(|board| &board.groups)
+            .flat_map(|group| &group.columns)
+            .map(|column| column.cards.len())
+            .sum::<usize>();
+        assert!(changed.len() < cards, "only the newest cards are flagged");
+
+        let app = app(dashboard, None);
+        let status = post_json(app.clone(), "/api/v1/look", "", true).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, body) = get(app, "/api/v1/snapshot").await;
+        let snapshot: DashboardSnapshot = serde_json::from_str(&body).unwrap();
+        assert_eq!(snapshot.changed, changed);
     }
 
     async fn get(app: Router, path: &str) -> (StatusCode, String) {

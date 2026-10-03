@@ -287,7 +287,18 @@ impl GithubSource {
                     break;
                 }
             };
-            problems.extend(reply.errors.into_iter().map(|error| error.message));
+            for error in reply.errors {
+                // A token that may not read check status gets one error per
+                // pull request for that field alone: the checks are left
+                // out, which is not worth a warning on every refresh.
+                let only_checks = matches!(
+                    error.path.last(),
+                    Some(PathSegment::Field(field)) if field == "statusCheckRollup"
+                );
+                if !only_checks && !problems.contains(&error.message) {
+                    problems.push(error.message);
+                }
+            }
             let nodes = reply.data.map(|data| data.nodes).unwrap_or_default();
             for node in nodes.into_iter().flatten() {
                 if let Some(id) = node.id.clone() {
@@ -947,6 +958,18 @@ struct NodesData {
 #[derive(Deserialize)]
 struct GraphqlError {
     message: String,
+    /// Where in the reply the error applies, e.g.
+    /// `["nodes", 0, "commits", ..., "statusCheckRollup"]`.
+    #[serde(default)]
+    path: Vec<PathSegment>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PathSegment {
+    Field(String),
+    #[allow(dead_code)]
+    Index(u64),
 }
 
 /// What GraphQL says about one pull request.

@@ -40,10 +40,16 @@ fn batch(ids: &[&str]) -> SourceBatch {
     }
 }
 
+/// A clean refresh that finished a moment from now, i.e. after any mark
+/// made so far.
 fn fresh(ids: &[&str]) -> SourceOutcome {
+    fresh_at(ids, Utc::now() + chrono::Duration::seconds(1))
+}
+
+fn fresh_at(ids: &[&str], refreshed_at: chrono::DateTime<Utc>) -> SourceOutcome {
     SourceOutcome::Fresh {
         batch: batch(ids),
-        refreshed_at: Utc::now(),
+        refreshed_at,
     }
 }
 
@@ -144,15 +150,79 @@ fn marks_of_finished_cards_are_dropped() {
     assert!(marked(&reloaded, snapshot(vec![("plane", fresh(&["a", "b"]))])).is_empty());
 }
 
-/// Marks of a source that was removed from the config are dropped.
+/// The daemon and the TUI fetch on their own schedules. A process whose
+/// last clean refresh is older than the mark has simply not seen the card
+/// yet: it must not drop the mark.
 #[test]
-fn marks_of_removed_sources_are_dropped() {
-    let marks = Marks::load(None);
+fn a_refresh_older_than_the_mark_does_not_drop_it() {
+    let path = scratch("older-refresh");
+    let marks = Marks::load(Some(path.clone()));
+    let earlier = Utc::now() - chrono::Duration::minutes(5);
+    marks
+        .set(
+            &snapshot(vec![("github", fresh(&["new-pr"]))]),
+            "new-pr",
+            true,
+        )
+        .unwrap();
+
+    let behind = snapshot(vec![("github", fresh_at(&[], earlier))]);
+    assert_eq!(marked(&Marks::load(Some(path.clone())), behind), ["new-pr"]);
+
+    // Once that process refreshes cleanly and still lacks it, it is done.
+    let caught_up = snapshot(vec![("github", fresh(&[]))]);
+    assert!(marked(&Marks::load(Some(path)), caught_up).is_empty());
+}
+
+/// A source missing from the snapshot says nothing about its cards: the TUI
+/// may run another config, the config file may be briefly absent, or the
+/// source may be switched off. Its marks are kept and work again when the
+/// source is back; only marks left behind for a month are cleaned up.
+#[test]
+fn marks_survive_their_source_leaving_the_config() {
+    let path = scratch("absent-source");
+    let marks = Marks::load(Some(path.clone()));
     marks
         .set(&snapshot(vec![("plane", fresh(&["a"]))]), "a", true)
         .unwrap();
 
-    assert!(marked(&marks, snapshot(vec![("github", fresh(&["a"]))])).is_empty());
+    assert_eq!(
+        marked(&marks, snapshot(vec![("sample", fresh(&["x"]))])),
+        ["a"]
+    );
+    assert_eq!(
+        marked(&marks, snapshot(vec![("plane", fresh(&["a"]))])),
+        ["a"]
+    );
+
+    let old = Utc::now() - chrono::Duration::days(40);
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{"version":1,"marks":[{{"id":"a","source":"plane","marked_at":"{}"}}]}}"#,
+            old.to_rfc3339()
+        ),
+    )
+    .unwrap();
+    assert!(marked(&marks, snapshot(vec![("sample", fresh(&["x"]))])).is_empty());
+}
+
+/// The file is the truth: deleting it clears the marks, and a file written
+/// by a newer version is left alone instead of being overwritten.
+#[test]
+fn the_file_can_be_deleted_and_newer_files_are_left_alone() {
+    let path = scratch("file-truth");
+    let marks = Marks::load(Some(path.clone()));
+    let board = || snapshot(vec![("plane", fresh(&["a", "b"]))]);
+    marks.set(&board(), "a", true).unwrap();
+
+    std::fs::remove_file(&path).unwrap();
+    assert!(marked(&marks, board()).is_empty());
+
+    let newer = r#"{"version":99,"marks":[]}"#;
+    std::fs::write(&path, newer).unwrap();
+    marks.set(&board(), "b", true).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
 }
 
 /// An unreadable marks file starts empty instead of failing, and the file

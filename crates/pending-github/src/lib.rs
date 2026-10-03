@@ -31,8 +31,11 @@ const ALERT_PAGE_SIZE: usize = 100;
 /// Pull requests per GraphQL review-state request; `nodes` takes at most 100.
 const GRAPHQL_BATCH: usize = 100;
 
-const REVIEW_STATE_QUERY: &str =
-    "query($ids: [ID!]!) { nodes(ids: $ids) { ... on PullRequest { id isDraft reviewDecision } } }";
+/// Draft, review decision and the check rollup of the last commit, for a list
+/// of pull requests: one node list, so checks cost no extra request.
+const REVIEW_STATE_QUERY: &str = "query($ids: [ID!]!) { nodes(ids: $ids) { ... on PullRequest { \
+     id isDraft reviewDecision \
+     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } } } }";
 
 /// One column: a GitHub search query (the search syntax of github.com).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -251,9 +254,9 @@ impl GithubSource {
         Ok(batch)
     }
 
-    /// Draft and review state of every pull request among `entries`, by node
-    /// id, asked [`GRAPHQL_BATCH`] at a time. A failure is a warning: the
-    /// cards show without review state.
+    /// Draft, review and check state of every pull request among `entries`,
+    /// by node id, asked [`GRAPHQL_BATCH`] at a time. A failure is a warning:
+    /// the cards show without review state and checks.
     async fn review_states(
         &self,
         token: &str,
@@ -295,7 +298,7 @@ impl GithubSource {
 
         let warning = (!problems.is_empty()).then(|| {
             format!(
-                "pull request review state unavailable: {}",
+                "pull request review state and checks unavailable: {}",
                 problems.join("; ")
             )
         });
@@ -861,8 +864,8 @@ impl Entry {
         }
     }
 
-    /// Appends draft, review state and comment count to the body; changes
-    /// requested make the card at least a warning.
+    /// Appends draft, review state, checks and comment count to the body;
+    /// changes requested or failing checks make the card at least a warning.
     fn finish(self, states: &HashMap<String, PullRequestState>) -> PendingCard {
         let mut card = self.card;
         let state = self.node_id.as_ref().and_then(|id| states.get(id));
@@ -881,6 +884,21 @@ impl Entry {
         if let Some(review) = review {
             card.body.push_str(" · ");
             card.body.push_str(review);
+        }
+        // No rollup (a repository without checks) or an unknown state says
+        // nothing.
+        let checks = match state.and_then(PullRequestState::checks) {
+            Some("FAILURE" | "ERROR") => {
+                card.severity = card.severity.max(CardSeverity::Warning);
+                Some("checks failing")
+            }
+            Some("PENDING" | "EXPECTED") => Some("checks pending"),
+            Some("SUCCESS") => Some("checks passing"),
+            _ => None,
+        };
+        if let Some(checks) = checks {
+            card.body.push_str(" · ");
+            card.body.push_str(checks);
         }
         match self.comments {
             0 => {}
@@ -941,6 +959,50 @@ struct PullRequestState {
     is_draft: Option<bool>,
     #[serde(default)]
     review_decision: Option<String>,
+    /// The last commit only (`commits(last: 1)`).
+    #[serde(default)]
+    commits: Option<CommitList>,
+}
+
+impl PullRequestState {
+    /// Check rollup state of the last commit (`SUCCESS`, `FAILURE`, `ERROR`,
+    /// `PENDING`, `EXPECTED`); `None` when the repository has no checks.
+    fn checks(&self) -> Option<&str> {
+        self.commits
+            .as_ref()?
+            .nodes
+            .last()?
+            .as_ref()?
+            .commit
+            .status_check_rollup
+            .as_ref()?
+            .state
+            .as_deref()
+    }
+}
+
+#[derive(Deserialize)]
+struct CommitList {
+    #[serde(default)]
+    nodes: Vec<Option<CommitNode>>,
+}
+
+#[derive(Deserialize)]
+struct CommitNode {
+    commit: Commit,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Commit {
+    #[serde(default)]
+    status_check_rollup: Option<CheckRollup>,
+}
+
+#[derive(Deserialize)]
+struct CheckRollup {
+    #[serde(default)]
+    state: Option<String>,
 }
 
 /// The security alert APIs an `alerts` column reads.

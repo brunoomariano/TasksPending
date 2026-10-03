@@ -16,8 +16,9 @@ ExecStart=@BINDIR@/tasks-pending serve --listen 127.0.0.1:61000
 # one KEY=value per line; keep it chmod 600. Optional.
 EnvironmentFile=-%h/.config/tasks-pending/env
 # `gh auth token` is the GitHub fallback; user services don't get your
-# shell's PATH, so add the usual places for user-installed tools.
-Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+# shell's PATH, so add the usual places for user-installed tools. The last
+# two are where Omarchy keeps the commands behind the weather widget.
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin:/usr/share/omarchy/bin:%h/.local/share/omarchy/bin
 Environment=RUST_LOG=info
 Restart=on-failure
 RestartSec=5

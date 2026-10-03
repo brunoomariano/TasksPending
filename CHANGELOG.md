@@ -14,6 +14,10 @@
 - The GitLab, Jira and Linear sources were built from each provider's API documentation and are covered by tests against stand-in servers; they have not yet been run against live accounts. Please report anything that behaves differently.
 - Snooze a card from the web page: it leaves its stacks for an hour, until tomorrow, until next week or until it changes, and always comes back early when its item changes. A quiet "N snoozed" link opens the list to wake a card. Snoozes are kept by the daemon and nothing is written to the provider.
 
+### Fixed
+
+- Calendar events without a modification time no longer look changed on every refresh.
+
 ## 0.4.0
 
 ### Breaking change

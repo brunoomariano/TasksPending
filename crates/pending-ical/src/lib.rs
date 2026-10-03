@@ -408,7 +408,9 @@ fn card(o: Occurrence, now: DateTime<Utc>, today: NaiveDate, zone: Tz) -> Source
             } else {
                 CardSeverity::Info
             },
-            updated_at: o.updated_at.unwrap_or(now),
+            // Unknown: a fixed time, so the card does not look changed on
+            // every refresh.
+            updated_at: o.updated_at.unwrap_or(DateTime::UNIX_EPOCH),
         },
     }
 }

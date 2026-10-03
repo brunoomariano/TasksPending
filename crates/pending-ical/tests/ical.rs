@@ -482,3 +482,35 @@ fn configured_columns_group_time_buckets() {
         ]
     );
 }
+
+/// An event without LAST-MODIFIED has no known update time: its card must
+/// carry the same one on every refresh, not the time of the refresh.
+/// Otherwise the event would look changed each time, waking a snoozed card
+/// and flagging it as new.
+#[test]
+fn events_without_a_modification_time_keep_a_stable_update_time() {
+    let ics = calendar(&event(
+        "stable@example",
+        "DTSTART:20260928T150000Z\r\nDTEND:20260928T160000Z\r\nSUMMARY:Review\r\n",
+    ));
+    let at = |now: DateTime<Utc>| {
+        occurrences(&ics, now, Window::default(), chrono_tz::UTC, None)
+            .expect("valid calendar")
+            .items[0]
+            .card
+            .updated_at
+    };
+
+    assert_eq!(at(now()), at(now() + chrono::Duration::minutes(5)));
+
+    let modified = calendar(&event(
+        "edited@example",
+        "DTSTART:20260928T150000Z\r\nDTEND:20260928T160000Z\r\nSUMMARY:Review\r\n\
+LAST-MODIFIED:20260920T101500Z\r\n",
+    ));
+    let card = &items(&modified)[0].card;
+    assert_eq!(
+        card.updated_at,
+        Utc.with_ymd_and_hms(2026, 9, 20, 10, 15, 0).unwrap()
+    );
+}

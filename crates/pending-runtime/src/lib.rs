@@ -236,14 +236,31 @@ impl Aggregator {
     /// pending at their source, just not on the dashboard. Marks use it to
     /// tell a hidden card from a finished one.
     pub fn hidden_ids(&self) -> HashSet<String> {
-        self.shared
-            .hidden
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .flatten()
-            .cloned()
-            .collect()
+        self.snapshot_with_hidden().1
+    }
+
+    /// The snapshot together with the hidden ids of the very batches it
+    /// was built from (see [`Aggregator::hidden_ids`]). Reading the two
+    /// separately could pair a new batch with old hidden ids.
+    pub fn snapshot_with_hidden(&self) -> (DashboardSnapshot, HashSet<String>) {
+        let (reports, hidden) = {
+            let reports = self
+                .shared
+                .reports
+                .read()
+                .unwrap_or_else(PoisonError::into_inner);
+            let hidden = self
+                .shared
+                .hidden
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .flatten()
+                .cloned()
+                .collect();
+            (reports.clone(), hidden)
+        };
+        (build_snapshot(Utc::now(), reports), hidden)
     }
 }
 
@@ -288,19 +305,20 @@ async fn refresh_loop(index: usize, spec: SourceSpec, timeout: Duration, shared:
                 wait
             }
         };
-        // Before the batch, so a reader never sees the new batch with the
-        // old hidden cards and takes a hidden card for a finished one.
-        if let Some(hidden) = hidden {
-            shared
-                .hidden
-                .write()
-                .unwrap_or_else(PoisonError::into_inner)[index] = hidden;
-        }
         {
             let mut reports = shared
                 .reports
                 .write()
                 .unwrap_or_else(PoisonError::into_inner);
+            // Under the reports lock, so a reader holding it sees a batch
+            // together with the cards hidden from that same batch, and
+            // never takes a hidden card for a finished one (or the reverse).
+            if let Some(hidden) = hidden {
+                shared
+                    .hidden
+                    .write()
+                    .unwrap_or_else(PoisonError::into_inner)[index] = hidden;
+            }
             let report = &mut reports[index];
             let previous = std::mem::replace(&mut report.outcome, SourceOutcome::Pending);
             report.outcome = next_outcome(previous, result);

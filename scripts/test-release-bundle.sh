@@ -27,8 +27,8 @@ tar -xzf "$ARCHIVE" -C "$WORK"
 BUNDLE="$WORK/$NAME"
 
 test -x "$BUNDLE/bin/tasks-pending"
-test ! -e "$BUNDLE/bin/pending-api"
-test ! -e "$BUNDLE/bin/pending-tui"
+# One executable, nothing else.
+test "$(find "$BUNDLE/bin" -mindepth 1 | wc -l)" -eq 1
 test ! -e "$BUNDLE/frontend"
 for path in CHANGELOG.md LICENSE README.md config.example.toml docs/install.md docs/operations.md \
   packaging/systemd/tasks-pending.service scripts/install.sh; do

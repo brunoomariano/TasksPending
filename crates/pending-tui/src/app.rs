@@ -4,8 +4,10 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use pending_core::{Board, Column, DashboardSnapshot, Group, PendingCard};
+use pending_core::{Board, Column, DashboardSnapshot, Group, PendingCard, SnoozedCard};
 use ratatui::layout::{Position, Rect};
+
+use crate::snooze::{CHOICES, Choice};
 
 /// Minimum wait between manual refreshes. Each one queries every source, and
 /// provider APIs rate-limit (GitHub search: 30 requests per minute, and every
@@ -28,6 +30,15 @@ pub enum Action {
         id: String,
         marked: bool,
     },
+    /// Hide the card `id` for as long as `choice` says.
+    Snooze {
+        id: String,
+        choice: Choice,
+    },
+    /// Bring the snoozed card `id` back now.
+    Wake {
+        id: String,
+    },
 }
 
 /// One screen row of a group as drawn, before scrolling: the group's stacks
@@ -48,6 +59,10 @@ pub enum Popup {
     Card,
     /// Every source's status and full message.
     Sources,
+    /// The menu of how long to snooze the selected card.
+    Snooze,
+    /// The snoozed cards, to wake one.
+    Snoozed,
 }
 
 /// Screen geometry the last render reported, which keys and the mouse need:
@@ -109,6 +124,8 @@ pub struct App {
     popup: Option<Popup>,
     /// First popup line shown.
     popup_scroll: u16,
+    /// The selected line of the snooze menu or of the snoozed list.
+    popup_selected: usize,
     viewport: Viewport,
 }
 
@@ -125,6 +142,7 @@ impl App {
             last_refresh: None,
             popup: None,
             popup_scroll: 0,
+            popup_selected: 0,
             viewport: Viewport::default(),
         };
         app.select_first();
@@ -137,6 +155,16 @@ impl App {
 
     pub fn popup_scroll(&self) -> u16 {
         self.popup_scroll
+    }
+
+    /// The selected line of the snooze menu or of the snoozed list.
+    pub fn popup_selected(&self) -> usize {
+        self.popup_selected
+    }
+
+    /// The cards the user snoozed, as the dashboard lists them.
+    pub fn snoozed(&self) -> &[SnoozedCard] {
+        &self.snapshot.snoozed
     }
 
     /// Records the geometry of the frame just drawn.
@@ -343,9 +371,15 @@ impl App {
         }
     }
 
+    /// Closes the popups about the selected card when there is none, and
+    /// keeps the snoozed list's selection inside the list.
     fn close_card_popup_without_card(&mut self) {
-        if self.popup == Some(Popup::Card) && self.selected_card().is_none() {
-            self.popup = None;
+        match self.popup {
+            Some(Popup::Card | Popup::Snooze) if self.selected_card().is_none() => {
+                self.popup = None;
+            }
+            Some(Popup::Snoozed) => self.move_popup_selection(0),
+            _ => {}
         }
     }
 
@@ -478,6 +512,16 @@ impl App {
             }
             KeyCode::Enter => self.open_selected(),
             KeyCode::Char('m') => self.toggle_mark(),
+            KeyCode::Char('z') => {
+                if self.selected_card().is_some() {
+                    self.open_popup(Popup::Snooze);
+                }
+                Action::None
+            }
+            KeyCode::Char('Z') => {
+                self.open_popup(Popup::Snoozed);
+                Action::None
+            }
             KeyCode::Char(' ' | 'd') => {
                 if self.selected_card().is_some() {
                     self.open_popup(Popup::Card);
@@ -501,6 +545,9 @@ impl App {
                 return Action::Quit;
             }
             KeyCode::Char('q') | KeyCode::Esc => self.popup = None,
+            code if matches!(popup, Popup::Snooze | Popup::Snoozed) => {
+                return self.handle_list_key(popup, code);
+            }
             KeyCode::Char(' ' | 'd') if popup == Popup::Card => self.popup = None,
             KeyCode::Char('s') if popup == Popup::Sources => self.popup = None,
             KeyCode::Enter if popup == Popup::Card => return self.open_selected(),
@@ -518,9 +565,71 @@ impl App {
         Action::None
     }
 
+    /// Keys of the snooze menu and of the snoozed list: both are a list
+    /// with one line selected. In the menu a number key chooses right away
+    /// and Enter chooses the selected line; in the list `w` or Enter wakes
+    /// the selected card. The key that opened the popup closes it.
+    fn handle_list_key(&mut self, popup: Popup, code: KeyCode) -> Action {
+        let all = isize::try_from(self.popup_lines()).unwrap_or(isize::MAX);
+        match (popup, code) {
+            (Popup::Snooze, KeyCode::Char('z')) | (Popup::Snoozed, KeyCode::Char('Z')) => {
+                self.popup = None;
+            }
+            (_, KeyCode::Char('j') | KeyCode::Down) => self.move_popup_selection(1),
+            (_, KeyCode::Char('k') | KeyCode::Up) => self.move_popup_selection(-1),
+            (_, KeyCode::Home | KeyCode::Char('g')) => self.move_popup_selection(-all),
+            (_, KeyCode::End | KeyCode::Char('G')) => self.move_popup_selection(all),
+            (Popup::Snooze, KeyCode::Char(digit @ '1'..='9')) => {
+                return self.choose_snooze(digit as usize - '1' as usize);
+            }
+            (Popup::Snooze, KeyCode::Enter) => return self.choose_snooze(self.popup_selected),
+            (Popup::Snoozed, KeyCode::Enter | KeyCode::Char('w')) => {
+                return self.snapshot.snoozed.get(self.popup_selected).map_or(
+                    Action::None,
+                    |snoozed| Action::Wake {
+                        id: snoozed.card.id.clone(),
+                    },
+                );
+            }
+            _ => {}
+        }
+        Action::None
+    }
+
+    /// Lines the open list popup has to select from.
+    fn popup_lines(&self) -> usize {
+        match self.popup {
+            Some(Popup::Snooze) => CHOICES.len(),
+            Some(Popup::Snoozed) => self.snapshot.snoozed.len(),
+            _ => 0,
+        }
+    }
+
+    /// Moves the selection of the open list popup by `delta` lines, stopping
+    /// at its ends.
+    fn move_popup_selection(&mut self, delta: isize) {
+        let last = self.popup_lines().saturating_sub(1);
+        self.popup_selected = self.popup_selected.saturating_add_signed(delta).min(last);
+    }
+
+    /// Asks to snooze the selected card with the menu's choice `index`, and
+    /// closes the menu; an index past the choices does nothing.
+    fn choose_snooze(&mut self, index: usize) -> Action {
+        let (Some((choice, _)), Some(card)) = (CHOICES.get(index), self.selected_card()) else {
+            return Action::None;
+        };
+        let action = Action::Snooze {
+            id: card.id.clone(),
+            choice: *choice,
+        };
+        self.popup = None;
+        action
+    }
+
     fn open_popup(&mut self, popup: Popup) {
         self.popup = Some(popup);
         self.popup_scroll = 0;
+        self.popup_selected = 0;
         // Unknown until the popup is drawn.
         self.viewport.popup_max_scroll = 0;
     }
@@ -532,7 +641,8 @@ impl App {
         self.popup_scroll = scroll as u16;
     }
 
-    /// The wheel scrolls an open popup, or else moves through the group under
+    /// The wheel scrolls an open popup (or moves the selection of the snooze
+    /// menu and the snoozed list), or else moves through the group under
     /// the pointer (focusing it first) or the focused one; a left click
     /// selects the card under it, collapses or expands the stack whose header
     /// is under it, or just focuses the group.
@@ -547,9 +657,16 @@ impl App {
             _ => return,
         };
         self.notice = None;
-        if self.popup.is_some() {
-            self.scroll_popup(delta * WHEEL_LINES);
-            return;
+        match self.popup {
+            Some(Popup::Snooze | Popup::Snoozed) => {
+                self.move_popup_selection(delta as isize);
+                return;
+            }
+            Some(Popup::Card | Popup::Sources) => {
+                self.scroll_popup(delta * WHEEL_LINES);
+                return;
+            }
+            None => {}
         }
         match self.group_at(mouse.column, mouse.row) {
             Some(group) if group.index != self.group => self.focus_group(group.index),
@@ -680,8 +797,8 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use pending_core::{
-        CardSeverity, DashboardSnapshot, PendingCard, SourceBatch, SourceItem, SourceOutcome,
-        SourceReport, build_snapshot,
+        CardSeverity, DashboardSnapshot, PendingCard, SnoozedCard, SourceBatch, SourceItem,
+        SourceOutcome, SourceReport, build_snapshot,
     };
 
     use super::*;
@@ -915,6 +1032,169 @@ mod tests {
 
         app.handle_key(key(KeyCode::Char('c')));
         assert_eq!(app.handle_key(m), Action::None, "a header is not a card");
+    }
+
+    /// The sample dashboard with `ids` snoozed: `s1` until a time, the
+    /// others until they change.
+    fn with_snoozed(ids: &[&str]) -> DashboardSnapshot {
+        let mut snapshot = sample();
+        snapshot.snoozed = ids
+            .iter()
+            .map(|id| SnoozedCard {
+                card: card("Mine", id, None).card,
+                source: "plane".to_owned(),
+                until: (*id == "s1").then(|| Utc.with_ymd_and_hms(2026, 10, 8, 11, 0, 0).unwrap()),
+            })
+            .collect();
+        snapshot
+    }
+
+    /// z opens the snooze menu for the selected card. A number key chooses
+    /// right away; j/k move through the four choices (stopping at the ends)
+    /// and Enter chooses the selected one. Choosing asks to snooze the card
+    /// and closes the menu; digits there never switch boards.
+    #[test]
+    fn z_opens_the_snooze_menu_and_a_choice_asks_to_snooze() {
+        let mut app = App::new(sample());
+        let z = key(KeyCode::Char('z'));
+        let snooze = |choice| Action::Snooze {
+            id: "p1".to_owned(),
+            choice,
+        };
+
+        assert_eq!(app.handle_key(z), Action::None);
+        assert_eq!(app.popup(), Some(Popup::Snooze));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('2'))),
+            snooze(Choice::Tomorrow)
+        );
+        assert_eq!(app.popup(), None, "choosing closes the menu");
+        assert_eq!(app.current_board().unwrap().name, "Work", "same board");
+
+        for (digit, choice) in [
+            ('1', Choice::Hour),
+            ('3', Choice::NextWeek),
+            ('4', Choice::UntilChange),
+        ] {
+            app.handle_key(z);
+            assert_eq!(app.handle_key(key(KeyCode::Char(digit))), snooze(choice));
+        }
+
+        app.handle_key(z);
+        assert_eq!(app.popup_selected(), 0, "starts on the first choice");
+        app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(app.popup_selected(), 0, "stops at the top");
+        app.handle_key(key(KeyCode::Char('j')));
+        app.handle_key(key(KeyCode::Down));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Enter)),
+            snooze(Choice::NextWeek)
+        );
+        assert_eq!(selected(&app), Some("p1"), "the board selection stayed");
+
+        app.handle_key(z);
+        for _ in 0..6 {
+            app.handle_key(key(KeyCode::Char('j')));
+        }
+        assert_eq!(app.popup_selected(), 3, "stops at the last choice");
+        app.handle_key(key(KeyCode::Up));
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(
+            app.handle_key(key(KeyCode::Enter)),
+            snooze(Choice::UntilChange)
+        );
+
+        app.handle_key(z);
+        assert_eq!(app.handle_key(key(KeyCode::Char('9'))), Action::None);
+        assert_eq!(app.popup(), Some(Popup::Snooze), "not a choice");
+    }
+
+    /// Esc, q or z close the snooze menu without snoozing (and without
+    /// quitting); on a collapsed header there is no card to snooze, and the
+    /// menu closes when a refresh takes the card away.
+    #[test]
+    fn the_snooze_menu_closes_without_snoozing() {
+        let mut app = App::new(sample());
+        let z = key(KeyCode::Char('z'));
+
+        for close in [KeyCode::Esc, KeyCode::Char('q'), KeyCode::Char('z')] {
+            app.handle_key(z);
+            assert_eq!(app.popup(), Some(Popup::Snooze));
+            assert_eq!(app.handle_key(key(close)), Action::None);
+            assert_eq!(app.popup(), None);
+        }
+
+        app.handle_key(z);
+        app.update(snapshot(Vec::new()));
+        assert_eq!(app.popup(), None, "the card is gone");
+
+        let mut app = App::new(sample());
+        app.handle_key(key(KeyCode::Char('c')));
+        app.handle_key(z);
+        assert_eq!(app.popup(), None, "a header is not a card");
+    }
+
+    /// Z opens the list of snoozed cards: j/k select one (stopping at the
+    /// ends), w or Enter asks to wake it and the list stays open; Esc, q or
+    /// Z close it without quitting. The selection stays inside the list when
+    /// it shrinks, and with nothing snoozed there is nothing to wake.
+    #[test]
+    fn capital_z_lists_the_snoozed_cards_and_w_wakes_one() {
+        let mut app = App::new(with_snoozed(&["s1", "s2", "s3"]));
+        let list = key(KeyCode::Char('Z'));
+        let wake = |id: &str| Action::Wake { id: id.to_owned() };
+
+        assert_eq!(app.handle_key(list), Action::None);
+        assert_eq!(app.popup(), Some(Popup::Snoozed));
+        assert_eq!(app.handle_key(key(KeyCode::Char('w'))), wake("s1"));
+        assert_eq!(app.popup(), Some(Popup::Snoozed), "stays open");
+
+        app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(app.popup_selected(), 0, "stops at the top");
+        app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(app.handle_key(key(KeyCode::Enter)), wake("s2"));
+        for _ in 0..5 {
+            app.handle_key(key(KeyCode::Down));
+        }
+        assert_eq!(app.handle_key(key(KeyCode::Char('w'))), wake("s3"));
+
+        // s3 woke up: the selection moves to the new last card.
+        app.update(with_snoozed(&["s1", "s2"]));
+        assert_eq!(app.handle_key(key(KeyCode::Char('w'))), wake("s2"));
+        assert_eq!(selected(&app), Some("p1"), "the board selection stayed");
+
+        for close in [KeyCode::Esc, KeyCode::Char('q'), KeyCode::Char('Z')] {
+            assert_eq!(app.handle_key(key(close)), Action::None);
+            assert_eq!(app.popup(), None);
+            app.handle_key(list);
+        }
+        assert_eq!(app.popup_selected(), 0, "reopening starts at the top");
+
+        app.update(with_snoozed(&[]));
+        assert_eq!(app.popup(), Some(Popup::Snoozed), "an empty list stays");
+        assert_eq!(app.handle_key(key(KeyCode::Char('w'))), Action::None);
+        assert_eq!(app.handle_key(key(KeyCode::Enter)), Action::None);
+    }
+
+    /// While the snooze menu or the snoozed list is open, the wheel moves
+    /// its selection instead of the board's.
+    #[test]
+    fn mouse_wheel_moves_through_the_snooze_popups() {
+        let mut app = App::new(with_snoozed(&["s1", "s2"]));
+        app.set_viewport(two_groups());
+
+        app.handle_key(key(KeyCode::Char('z')));
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 5, 12));
+        assert_eq!(app.popup_selected(), 1);
+        app.handle_mouse(mouse(MouseEventKind::ScrollUp, 5, 12));
+        assert_eq!(app.popup_selected(), 0);
+        app.handle_key(key(KeyCode::Esc));
+
+        app.handle_key(key(KeyCode::Char('Z')));
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 5, 12));
+        app.handle_mouse(mouse(MouseEventKind::ScrollDown, 5, 12));
+        assert_eq!(app.popup_selected(), 1, "stops at the last snoozed card");
+        assert_eq!(selected(&app), Some("p1"), "the board selection stayed");
     }
 
     /// The marked cards are listed in marking order with their source,

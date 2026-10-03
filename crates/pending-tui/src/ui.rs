@@ -15,11 +15,17 @@ use ratatui::widgets::{
 
 use crate::app::{App, CARD_ROWS, GroupArea, Popup, Row, Viewport};
 use crate::clock;
+use crate::snooze::{self, CHOICES};
 
-const HELP: &str = "tab boards · h/l groups · j/k cards · c collapse · m mark · enter open · space details · s sources · r refresh · q quit";
+/// The everyday keys, short enough for a 120-column terminal; the docs list
+/// them all.
+const HELP: &str = "hjkl move · c collapse · m mark · z snooze · Z snoozed · enter open · space details · s sources · r refresh · q quit";
 /// Largest details popup, so long lines stay readable on wide terminals.
 const POPUP_MAX_WIDTH: u16 = 110;
 const POPUP_MAX_HEIGHT: u16 = 30;
+/// The snooze menu, border included: room for the longest choice and its
+/// time.
+const SNOOZE_MENU_WIDTH: u16 = 44;
 /// Narrowest useful group, border included; with less room the board scrolls
 /// sideways.
 const MIN_GROUP_WIDTH: u16 = 30;
@@ -97,6 +103,10 @@ pub fn render(
             concat!(" ", env!("CARGO_PKG_VERSION")),
             Style::default().fg(Color::DarkGray),
         ),
+        Span::styled(
+            snoozed_count(app.snoozed().len()),
+            Style::default().fg(Color::DarkGray),
+        ),
         Span::raw(format!("  {}  ", local(snapshot.generated_at))),
         Span::styled(header, Style::default().fg(Color::DarkGray)),
     ]))
@@ -142,9 +152,19 @@ pub fn render(
     Paragraph::new(footer).render(layout[5], buf);
 
     if let Some(popup) = app.popup() {
-        render_popup(screen, buf, app, popup, &mut viewport);
+        render_popup(screen, buf, app, popup, now, &mut viewport);
     }
     viewport
+}
+
+/// " · N snoozed" for the header while cards are snoozed, so the snoozed
+/// list is known to have something; nothing otherwise.
+fn snoozed_count(snoozed: usize) -> String {
+    if snoozed == 0 {
+        String::new()
+    } else {
+        format!(" · {snoozed} snoozed")
+    }
 }
 
 /// Rows the Now panel takes, border included, for `marked` cards when the
@@ -200,8 +220,14 @@ fn render_now(area: Rect, buf: &mut Buffer, marked: &[(&PendingCard, &str)]) {
 /// The popup's area: centered, at most `POPUP_MAX_WIDTH` × `POPUP_MAX_HEIGHT`,
 /// with a margin around it on smaller terminals.
 fn popup_area(screen: Rect) -> Rect {
-    let width = POPUP_MAX_WIDTH.min(screen.width.saturating_sub(4));
-    let height = POPUP_MAX_HEIGHT.min(screen.height.saturating_sub(2));
+    centered(screen, POPUP_MAX_WIDTH, POPUP_MAX_HEIGHT)
+}
+
+/// An area of at most `width` × `height` in the middle of the screen, with
+/// a margin around it on smaller terminals.
+fn centered(screen: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(screen.width.saturating_sub(4));
+    let height = height.min(screen.height.saturating_sub(2));
     Rect::new(
         screen.x + (screen.width - width) / 2,
         screen.y + (screen.height - height) / 2,
@@ -210,9 +236,127 @@ fn popup_area(screen: Rect) -> Rect {
     )
 }
 
+/// A popup's box: its title on top and the keys it takes at the bottom.
+fn popup_block<'a>(title: &'a str, hint: &'a str) -> Block<'a> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .padding(Padding::horizontal(1))
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(
+            Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))).right_aligned(),
+        )
+}
+
+/// How the selected line of a list popup is drawn.
+fn selected_style(selected: bool) -> Style {
+    if selected {
+        Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    }
+}
+
+/// The snooze menu: the selected card's title, then the four choices,
+/// numbered, each with the local time it ends when snoozed at `now`.
+fn render_snooze_menu(screen: Rect, buf: &mut Buffer, app: &App, now: DateTime<Local>) {
+    let Some(card) = app.selected_card() else {
+        return;
+    };
+    let mut lines = vec![
+        Line::from(Span::styled(
+            card.title.as_str(),
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::default(),
+    ];
+    for (index, (choice, label)) in CHOICES.iter().enumerate() {
+        let when = snooze::until(*choice, &now)
+            .map(|at| at.format(snooze::TIME_FORMAT).to_string())
+            .unwrap_or_default();
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{}  ", index + 1),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(*label, selected_style(index == app.popup_selected())),
+            Span::styled(
+                format!(
+                    "{:pad$}{when}",
+                    "",
+                    pad = 18usize.saturating_sub(label.len())
+                ),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
+    let area = centered(screen, SNOOZE_MENU_WIDTH, lines.len() as u16 + 2);
+    Clear.render(area, buf);
+    Paragraph::new(lines)
+        .block(popup_block(" Snooze ", " 1-4 or j/k + enter · esc close "))
+        .render(area, buf);
+}
+
+/// The snoozed cards, one line each (title, source, when it comes back),
+/// scrolled to keep the selected one visible.
+fn render_snoozed(screen: Rect, buf: &mut Buffer, app: &App) {
+    let selected = app.popup_selected();
+    let mut lines: Vec<Line> = app
+        .snoozed()
+        .iter()
+        .enumerate()
+        .map(|(index, snoozed)| {
+            Line::from(vec![
+                Span::styled(
+                    snoozed.card.title.as_str(),
+                    selected_style(index == selected),
+                ),
+                Span::styled(
+                    format!(
+                        "  {}  {}",
+                        snoozed.source,
+                        snooze::until_text(snoozed.until)
+                    ),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])
+        })
+        .collect();
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No snoozed cards.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    let height = u16::try_from(lines.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(2);
+    let area = centered(screen, POPUP_MAX_WIDTH, height.min(POPUP_MAX_HEIGHT));
+    let block = popup_block(" Snoozed ", " j/k select · w wake · esc close ");
+    let page = usize::from(block.inner(area).height);
+    let scroll = (selected + 1).saturating_sub(page);
+    Clear.render(area, buf);
+    Paragraph::new(lines)
+        .block(block)
+        .scroll((u16::try_from(scroll).unwrap_or(u16::MAX), 0))
+        .render(area, buf);
+}
+
 /// Draws `popup` over the screen, scrolled as far as the app asks within its
 /// text, and records its page size and scroll limit in `viewport`.
-fn render_popup(screen: Rect, buf: &mut Buffer, app: &App, popup: Popup, viewport: &mut Viewport) {
+fn render_popup(
+    screen: Rect,
+    buf: &mut Buffer,
+    app: &App,
+    popup: Popup,
+    now: DateTime<Local>,
+    viewport: &mut Viewport,
+) {
     let (title, lines, hint) = match popup {
         Popup::Card => {
             let Some(card) = app.selected_card() else {
@@ -225,22 +369,12 @@ fn render_popup(screen: Rect, buf: &mut Buffer, app: &App, popup: Popup, viewpor
             )
         }
         Popup::Sources => (" Sources ", source_details(app), " j/k scroll · esc close "),
+        Popup::Snooze => return render_snooze_menu(screen, buf, app, now),
+        Popup::Snoozed => return render_snoozed(screen, buf, app),
     };
 
     let area = popup_area(screen);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .padding(Padding::horizontal(1))
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .title_bottom(
-            Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))).right_aligned(),
-        );
+    let block = popup_block(title, hint);
     let inner = block.inner(area);
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     let total = u16::try_from(paragraph.line_count(inner.width)).unwrap_or(u16::MAX);
@@ -643,8 +777,8 @@ mod tests {
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
     use pending_core::{
-        CardSeverity, PendingCard, SourceBatch, SourceError, SourceItem, SourceOutcome,
-        SourceReport, build_snapshot,
+        CardSeverity, PendingCard, SnoozedCard, SourceBatch, SourceError, SourceItem,
+        SourceOutcome, SourceReport, build_snapshot,
     };
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
@@ -772,9 +906,11 @@ mod tests {
             "Fix login",
             "Add cache",
             "calendar failed: feed returned 404",
-            "h/l groups",
+            "hjkl move",
             "c collapse",
             "m mark",
+            "z snooze",
+            "Z snoozed",
             "q quit",
         ] {
             assert!(
@@ -1117,6 +1253,158 @@ mod tests {
         app.handle_key(KeyEvent::from(KeyCode::Char(' ')));
         let details = screen(&app, 120, 40);
         assert!(details.contains("Marked   no"), "{details}");
+    }
+
+    /// The footer help fits a 120-column terminal whole.
+    #[test]
+    fn footer_help_fits_120_columns() {
+        assert!(HELP.chars().count() <= 120, "{}", HELP.chars().count());
+    }
+
+    /// The `work` dashboard with two snoozed cards: a calendar one until a
+    /// time and a github one until it changes.
+    fn with_snoozed() -> App {
+        let mut snapshot = work().snapshot().clone();
+        let snoozed = |id: &str, title: &str, source: &str, until| SnoozedCard {
+            card: card("Mine", id, title).card,
+            source: source.to_owned(),
+            until,
+        };
+        snapshot.snoozed = vec![
+            snoozed("ev-9", "Renew passport", "calendar", Some(wake_time())),
+            snoozed("gh-9", "Stale pull request", "github", None),
+        ];
+        App::new(snapshot)
+    }
+
+    fn wake_time() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 8, 11, 0, 0).unwrap()
+    }
+
+    /// Whether the cell where `text` starts is drawn reversed (selected).
+    fn is_reversed(app: &App, width: u16, height: u16, text: &str) -> bool {
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+        render(area, &mut buf, app, "", now());
+        let (x, y) = position(&screen(app, width, height), text);
+        buf[(x, y)].modifier.contains(Modifier::REVERSED)
+    }
+
+    /// While cards are snoozed the header quietly says how many, next to
+    /// the version; with none it says nothing.
+    #[test]
+    fn header_counts_the_snoozed_cards_quietly() {
+        let version = env!("CARGO_PKG_VERSION");
+
+        let some = screen(&with_snoozed(), 120, 24);
+        assert!(
+            some.contains(&format!("TasksPending {version} · 2 snoozed  ")),
+            "{some}"
+        );
+
+        let none = screen(&work(), 120, 24);
+        assert!(!none.contains("snoozed  "), "{none}");
+    }
+
+    /// z opens a small menu over the board with the card's title and the
+    /// four choices, numbered, each with the local time it ends; the
+    /// selected choice stands out and j moves it.
+    #[test]
+    fn snooze_menu_lists_the_four_choices_with_their_times() {
+        let mut app = work();
+        app.handle_key(KeyEvent::from(KeyCode::Char('z')));
+        let menu = screen(&app, 120, 30);
+
+        // Now is Tuesday, 2026-09-29 14:05.
+        for expected in [
+            "┌ Snooze ",
+            "1  1 hour            Tue 29 Sep 15:05",
+            "2  Tomorrow          Wed 30 Sep 08:00",
+            "3  Next week         Mon 5 Oct 08:00",
+            "4  Until it changes",
+            "1-4 or j/k + enter",
+            "esc close",
+        ] {
+            assert!(menu.contains(expected), "missing {expected:?} in\n{menu}");
+        }
+        let (_, top) = position(&menu, "┌ Snooze ");
+        let title_row = menu.lines().nth(usize::from(top) + 1).unwrap();
+        assert!(title_row.contains("Fix login"), "the card's title\n{menu}");
+        assert!(
+            menu.contains("▍Fix login"),
+            "the board stays around it\n{menu}"
+        );
+
+        assert!(is_reversed(&app, 120, 30, "1 hour  "));
+        assert!(!is_reversed(&app, 120, 30, "Tomorrow  "));
+        app.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        assert!(is_reversed(&app, 120, 30, "Tomorrow  "));
+        assert!(!is_reversed(&app, 120, 30, "1 hour  "));
+    }
+
+    /// Z lists the snoozed cards, one line each: title, source, and when it
+    /// comes back (a local time, or "until it changes"); the selected one
+    /// stands out and the hint says how to wake it.
+    #[test]
+    fn snoozed_popup_lists_the_cards_and_when_they_come_back() {
+        let mut app = with_snoozed();
+        app.handle_key(KeyEvent::from(KeyCode::Char('Z')));
+        let list = screen(&app, 120, 30);
+
+        let (_, top) = position(&list, "┌ Snoozed ");
+        let (_, first) = position(&list, "Renew passport");
+        let (_, second) = position(&list, "Stale pull request");
+        assert_eq!((first, second), (top + 1, top + 2), "{list}");
+        let line = |row: u16| list.lines().nth(usize::from(row)).unwrap();
+        let until = crate::snooze::until_text(Some(wake_time()));
+        assert!(line(first).contains("calendar"), "{list}");
+        assert!(line(first).contains(&until), "{until}\n{list}");
+        assert!(line(second).contains("github"), "{list}");
+        assert!(line(second).contains("until it changes"), "{list}");
+        assert!(list.contains("w wake"), "{list}");
+        assert!(list.contains("esc close"), "{list}");
+
+        assert!(is_reversed(&app, 120, 30, "Renew passport"));
+        app.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        assert!(is_reversed(&app, 120, 30, "Stale pull request"));
+        assert!(!is_reversed(&app, 120, 30, "Renew passport"));
+    }
+
+    /// With nothing snoozed, the snoozed popup says so.
+    #[test]
+    fn snoozed_popup_says_when_nothing_is_snoozed() {
+        let mut app = work();
+        app.handle_key(KeyEvent::from(KeyCode::Char('Z')));
+        let list = screen(&app, 120, 30);
+
+        assert!(list.contains("┌ Snoozed "), "{list}");
+        assert!(list.contains("No snoozed cards."), "{list}");
+    }
+
+    /// A snoozed list longer than the popup scrolls to keep the selected
+    /// card visible.
+    #[test]
+    fn long_snoozed_lists_keep_the_selected_card_visible() {
+        let mut snapshot = work().snapshot().clone();
+        snapshot.snoozed = (0..60)
+            .map(|i| SnoozedCard {
+                card: card("Mine", &format!("s{i}"), &format!("Snoozed number {i:02}")).card,
+                source: "plane".to_owned(),
+                until: None,
+            })
+            .collect();
+        let mut app = App::new(snapshot);
+        app.handle_key(KeyEvent::from(KeyCode::Char('Z')));
+
+        let top = screen(&app, 100, 30);
+        assert!(top.contains("Snoozed number 00"), "{top}");
+        assert!(!top.contains("Snoozed number 59"), "{top}");
+
+        app.handle_key(KeyEvent::from(KeyCode::End));
+        let bottom = screen(&app, 100, 30);
+        assert!(bottom.contains("Snoozed number 59"), "{bottom}");
+        assert!(!bottom.contains("Snoozed number 00"), "{bottom}");
+        assert!(is_reversed(&app, 100, 30, "Snoozed number 59"));
     }
 
     /// With no sources, the screen explains that none are configured.

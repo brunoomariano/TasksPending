@@ -179,9 +179,12 @@ if (app && controls) {
       change({ hidden: flip(view.hidden, hide.dataset.hide ?? "") });
       return;
     }
-    const mark = target.closest<HTMLElement>("[data-mark]");
+    const mark = target.closest<HTMLButtonElement>("[data-mark]");
     if (mark) {
-      // The snapshot holds the marks: ask the API, then read it again.
+      // The snapshot holds the marks: ask the API, then read it again. The
+      // button stays off until the page redraws, so a second click cannot
+      // send the same change twice.
+      mark.disabled = true;
       const result = await setMark(
         mark.dataset.mark ?? "",
         mark.getAttribute("aria-pressed") !== "true",
@@ -189,6 +192,7 @@ if (app && controls) {
       if (result.ok) {
         poller.pollNow();
       } else {
+        mark.disabled = false;
         mark.title = `Could not change the mark (${result.error})`;
       }
       return;

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 ### Breaking change
 
@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- The web page now redraws when only the config error changes, so a broken config shows up without waiting for the cards to change.
 - The TUI board no longer runs a card's body lines together: line breaks show as ` · ` on the card, and the details popup keeps the full text.
 
 ## 0.3.1

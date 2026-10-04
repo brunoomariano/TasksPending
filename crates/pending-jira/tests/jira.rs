@@ -281,15 +281,13 @@ fn local_midnight(year: i32, month: u32, day: u32) -> DateTime<Utc> {
 /// Fails without printing the text or the credential it found: a test log
 /// is no place for either, even made-up ones.
 fn assert_no_secret(text: &str) {
-    let secrets = [
-        ("the API token", API_TOKEN),
-        ("the access token", PAT),
-        ("the e-mail", EMAIL),
-        ("the encoded e-mail", "bWVAZXhhbXBsZS5jb20"),
-    ];
-    for (name, secret) in secrets {
-        assert!(!text.contains(secret), "the message leaks {name}");
-    }
+    assert!(!text.contains(API_TOKEN), "the message leaks the API token");
+    assert!(!text.contains(PAT), "the message leaks the access token");
+    assert!(!text.contains(EMAIL), "the message leaks the e-mail");
+    assert!(
+        !text.contains("bWVAZXhhbXBsZS5jb20"),
+        "the message leaks the encoded e-mail"
+    );
 }
 
 /// Without configured stacks, the source shows "In progress" and "To do":

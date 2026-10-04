@@ -198,7 +198,8 @@ impl Dashboard for SandboxDashboard {
     fn refresh_now(&self) {}
 
     fn set_mark(&self, id: &str, marked: bool) -> Result<(), MarkError> {
-        self.marks.set(&sandbox_snapshot(), id, marked)
+        // Like the live dashboard: a snoozed card is off the boards.
+        self.marks.set(&self.snapshot(), id, marked)
     }
 
     fn snooze(

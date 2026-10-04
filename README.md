@@ -11,7 +11,7 @@ Every picture here comes from `tasks-pending sandbox`, which shows simulated car
 ## What it shows
 
 - **One group per source, in your order.** GitHub, GitLab, Jira, Linear, Plane, Todoist, Google Calendar and iCal feeds, each with its logo. Inside a group, every stack is a filter you declare in the config; stacks collapse, and long ones show their first cards.
-- **What to do next.** GitHub pull requests are split by next action (review requested, returned to you, ready to merge, waiting on reviewers), with review state, checks and comment counts on the card.
+- **What to do next.** GitHub pull requests are split by next action (review requested, returned to you, ready to merge, not approved yet, drafts), with review state, checks and comment counts on the card.
 - **Now.** Pin the cards you are working on: they are highlighted in place and repeated in a row at the top.
 - **Snooze.** Hide a card for an hour, until tomorrow, until next week, or until it changes. It always comes back when the item changes, and nothing is written to the provider.
 - **What changed.** A small dot marks the cards that changed since you last looked.

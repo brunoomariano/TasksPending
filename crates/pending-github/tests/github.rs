@@ -270,10 +270,7 @@ async fn pending_github_work_is_split_by_next_action() {
             ("Review requested".to_owned(), "github:o/api#7".to_owned()),
             ("Returned to you".to_owned(), "github:o/web#1".to_owned()),
             ("Ready to merge".to_owned(), "github:o/web#2".to_owned()),
-            (
-                "Waiting on reviewers".to_owned(),
-                "github:o/web#3".to_owned()
-            ),
+            ("Not approved yet".to_owned(), "github:o/web#3".to_owned()),
             ("Drafts".to_owned(), "github:o/web#4".to_owned()),
             ("Assigned issues".to_owned(), "github:o/api#9".to_owned()),
         ]
@@ -304,7 +301,7 @@ async fn pending_github_work_is_split_by_next_action() {
 
 /// The default stacks of my pull requests do not overlap: each query asks for
 /// my open pull requests in live repositories, drafts go only to "Drafts",
-/// and "Waiting on reviewers" is whatever is neither approved nor returned
+/// and "Not approved yet" is whatever is neither approved nor returned
 /// (so a pull request with only comment reviews still shows there).
 #[test]
 fn default_stacks_of_my_pull_requests_do_not_overlap() {
@@ -328,7 +325,7 @@ fn default_stacks_of_my_pull_requests_do_not_overlap() {
         format!("{mine} draft:false review:approved")
     );
     assert_eq!(
-        queries["Waiting on reviewers"],
+        queries["Not approved yet"],
         format!("{mine} draft:false -review:approved -review:changes_requested")
     );
     assert_eq!(queries["Drafts"], format!("{mine} draft:true"));
@@ -426,10 +423,7 @@ async fn one_failed_search_keeps_the_other_sections_with_a_warning() {
 
     assert_eq!(
         sections(&batch),
-        vec![(
-            "Waiting on reviewers".to_owned(),
-            "github:o/web#3".to_owned()
-        )]
+        vec![("Not approved yet".to_owned(), "github:o/web#3".to_owned())]
     );
     assert_eq!(batch.warnings.len(), 1);
     assert!(
@@ -500,7 +494,7 @@ async fn truncated_results_are_reported() {
         batch
             .warnings
             .iter()
-            .any(|w| w.contains("Waiting on reviewers") && w.contains("120")),
+            .any(|w| w.contains("Not approved yet") && w.contains("120")),
         "{:?}",
         batch.warnings
     );
@@ -598,10 +592,7 @@ async fn a_hanging_search_times_out_without_losing_the_other_sections() {
 
     assert_eq!(
         sections(&batch),
-        vec![(
-            "Waiting on reviewers".to_owned(),
-            "github:o/web#3".to_owned()
-        )]
+        vec![("Not approved yet".to_owned(), "github:o/web#3".to_owned())]
     );
     assert!(
         batch
@@ -627,7 +618,7 @@ async fn incomplete_search_results_are_reported() {
         batch
             .warnings
             .iter()
-            .any(|w| w.contains("Waiting on reviewers") && w.contains("incomplete")),
+            .any(|w| w.contains("Not approved yet") && w.contains("incomplete")),
         "{:?}",
         batch.warnings
     );
@@ -734,7 +725,7 @@ async fn pull_requests_show_draft_and_review_state_from_one_lookup() {
     let review = card("Review requested", "github:o/api#1");
     assert!(review.body.contains("review required"), "{}", review.body);
     assert_eq!(review.severity, CardSeverity::Warning);
-    let mine = card("Waiting on reviewers", "github:o/api#1");
+    let mine = card("Not approved yet", "github:o/api#1");
     assert!(mine.body.contains("review required"), "{}", mine.body);
     assert_eq!(mine.severity, CardSeverity::Info);
     let approved = card("Ready to merge", "github:o/api#2");
@@ -779,10 +770,7 @@ async fn a_failed_review_lookup_keeps_the_cards_with_a_warning() {
 
     assert_eq!(
         sections(&batch),
-        vec![(
-            "Waiting on reviewers".to_owned(),
-            "github:o/api#3".to_owned()
-        )]
+        vec![("Not approved yet".to_owned(), "github:o/api#3".to_owned())]
     );
     assert_eq!(batch.items[0].card.body, "o/api#3 · @octocat");
     assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);

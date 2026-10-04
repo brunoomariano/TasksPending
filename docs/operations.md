@@ -19,7 +19,7 @@ Each source is a group of stacks, one per `[[sources.stacks]]` entry (or the sou
 
 | kind | stack keys | default stacks |
 |---|---|---|
-| `github` | `query` (search syntax), `notifications` (`unread`/`all`) or `alerts` (`owner/repo` list), `severity` | Review requested, Returned to you, Ready to merge, Waiting on reviewers, Drafts, Assigned issues |
+| `github` | `query` (search syntax), `notifications` (`unread`/`all`) or `alerts` (`owner/repo` list), `severity` | Review requested, Returned to you, Ready to merge, Not approved yet, Drafts, Assigned issues |
 | `plane` | `assignee` (me/none/others/any), `state_group`, `state`, `project`, `priority` | In progress, To do, Backlog (yours) |
 | `google` | `when` (now/today/tomorrow/later), `calendar` (names) | Now, Today, Tomorrow, Next 30 days |
 | `ical` | `when` (now/today/tomorrow/later) | Now, Today, Tomorrow, Next 30 days |
@@ -162,11 +162,11 @@ Without `[[sources.stacks]]`, the stacks say what to do next:
 | Review requested | `is:open is:pr archived:false review-requested:@me` | warning |
 | Returned to you | `is:open is:pr archived:false author:@me draft:false review:changes_requested` | warning |
 | Ready to merge | `is:open is:pr archived:false author:@me draft:false review:approved` | info |
-| Waiting on reviewers | `is:open is:pr archived:false author:@me draft:false -review:approved -review:changes_requested` | info |
+| Not approved yet | `is:open is:pr archived:false author:@me draft:false -review:approved -review:changes_requested` | info |
 | Drafts | `is:open is:pr archived:false author:@me draft:true` | info |
 | Assigned issues | `is:open is:issue archived:false assignee:@me` | info |
 
-Each of your open pull requests is in exactly one of the four middle stacks. "Waiting on reviewers" is whatever is neither approved nor returned, so a pull request that only got comments stays there (`review:none` would drop it, and `review:required` only matches repositories that require reviews). "Ready to merge" means approved; it does not look at checks or merge conflicts. To get a single stack of your pull requests back (`is:open is:pr archived:false author:@me`), or to keep to one organization (`org:acme`), declare your own stacks; `config.example.toml` has these as a starting point. The defaults are six searches per refresh.
+Each of your open pull requests is in exactly one of the four middle stacks. "Not approved yet" is whatever is neither approved nor returned, so a pull request that only got comments stays there (`review:none` would drop it, and `review:required` only matches repositories that require reviews). The name states only what the search knows: in a repository that needs no review, such a pull request may be yours to merge rather than waiting on anyone. "Ready to merge" means approved; it does not look at checks or merge conflicts. "Returned to you" follows GitHub's review state, which can stay at "changes requested" after you push fixes and ask for a new review, until the reviewer answers or the old review is dismissed. To get a single stack of your pull requests back (`is:open is:pr archived:false author:@me`), or to keep to one organization (`org:acme`), declare your own stacks; `config.example.toml` has these as a starting point. The defaults are six searches per refresh.
 
 - Token: `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token` (given up after 5 s; the API logs before running it, the TUI starts silently until then), resolved once at startup for all GitHub sources. Without a token the source shows as failed with a setup hint; restart after logging in.
 - Each stack is one search; they run three at a time (GitHub discourages concurrent searches, and the search API allows 30 requests per minute per user, so keep the number of GitHub stacks modest). Each search is limited to 10 s, so a hanging search becomes a warning for its stack instead of failing the refresh. Keep `timeout_seconds` (default 60) above 10, or the aggregator timeout fails the whole refresh first.

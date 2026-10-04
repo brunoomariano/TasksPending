@@ -111,7 +111,7 @@ fn is_repo_name(repo: &str) -> bool {
 /// Columns used when the configuration declares none: one per next action.
 ///
 /// The four columns of my pull requests do not overlap. Drafts go only to
-/// "Drafts". "Waiting on reviewers" excludes the two decided states instead of
+/// "Drafts". "Not approved yet" excludes the two decided states instead of
 /// asking for `review:none` or `review:required`: `review:none` leaves out a
 /// pull request that only got comment reviews, and `review:required` matches
 /// only repositories that require reviews.
@@ -140,7 +140,7 @@ pub fn default_columns() -> Vec<GithubColumn> {
             CardSeverity::Info,
         ),
         column(
-            "Waiting on reviewers",
+            "Not approved yet",
             "is:open is:pr archived:false author:@me draft:false -review:approved -review:changes_requested",
             CardSeverity::Info,
         ),

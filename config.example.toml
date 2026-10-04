@@ -64,7 +64,7 @@ enabled = true
 #   query = "is:open is:pr archived:false author:@me draft:false review:approved"
 #
 #   [[sources.stacks]]
-#   name = "Waiting on reviewers" # neither approved nor returned yet
+#   name = "Not approved yet"     # neither approved nor returned
 #   query = "is:open is:pr archived:false author:@me draft:false -review:approved -review:changes_requested"
 #   sort = "oldest"               # stale ones first (default "newest")
 #

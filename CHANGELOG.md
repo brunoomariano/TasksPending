@@ -11,6 +11,7 @@
 - New `gitlab` source: your open merge requests (review requested, assigned or authored), open issues (assigned or authored) and pending to-do items, on gitlab.com or a self-managed instance. Stacks can be narrowed by group, project, labels and draft state; overdue issues are critical. It needs `GITLAB_TOKEN` (a personal access token with `read_api`) and, for a self-managed instance, `GITLAB_BASE_URL`. See "GitLab Source" in [docs/operations.md](docs/operations.md).
 - New `jira` source: one JQL query per stack, for Jira Cloud (`JIRA_EMAIL` and `JIRA_API_TOKEN`) and Jira Data Center (`JIRA_TOKEN`), both with `JIRA_BASE_URL`. By default it shows your issues in progress and to do. Cards show the issue key, summary, project, status, assignee and due date; overdue and top-priority issues are critical. See "Jira Source" in [docs/operations.md](docs/operations.md).
 - New source `kind = "linear"`: Linear issues, by default the ones assigned to you, in the In progress, To do and Backlog stacks. Stacks filter by `assignee`, `state_type`, `state`, `team` and `priority`. Cards show the issue reference as the title and mark overdue and urgent issues as critical. Set `LINEAR_API_KEY` (a personal API key) in the environment. See "Linear Source" in [docs/operations.md](docs/operations.md).
+- The GitLab, Jira and Linear sources were built from each provider's API documentation and are covered by tests against stand-in servers; they have not yet been run against live accounts. Please report anything that behaves differently.
 
 ## 0.4.0
 

@@ -16,7 +16,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use pending_core::{
-    BoxFuture, CardSeverity, PendingCard, PendingSource, SourceBatch, SourceError, SourceItem,
+    BoxFuture, CardSeverity, DueDay, PendingCard, PendingSource, SourceBatch, SourceError,
+    SourceItem,
 };
 use reqwest::Client;
 use reqwest::redirect::Policy;
@@ -627,8 +628,8 @@ impl Api {
         let due = issue
             .get("target_date")
             .and_then(Value::as_str)
-            .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok());
-        let overdue = due.is_some_and(|due| due < today);
+            .and_then(|date| DueDay::parse(date, today));
+        let overdue = due.is_some_and(DueDay::is_overdue);
         let priority = issue
             .get("priority")
             .and_then(Value::as_str)
@@ -661,10 +662,7 @@ impl Api {
             body.push_str(&format!(" · {}", names.join(" ")));
         }
         if let Some(due) = due {
-            body.push_str(&format!(
-                " · {} {due}",
-                if overdue { "overdue since" } else { "due" }
-            ));
+            body.push_str(&format!(" · {}", due.label()));
         }
 
         let timestamp = |key: &str| {
@@ -692,11 +690,7 @@ impl Api {
                     "{}/{}/projects/{}/issues/{id}",
                     settings.web_url, settings.workspace_slug, project.id
                 )),
-                // Local midnight, matching how "overdue" is decided.
-                due_at: due
-                    .and_then(|due| due.and_hms_opt(0, 0, 0))
-                    .and_then(|due| due.and_local_timezone(Local).earliest())
-                    .map(|due| due.with_timezone(&Utc)),
+                due_at: due.and_then(DueDay::at),
                 severity,
                 updated_at: timestamp("updated_at")
                     .or_else(|| timestamp("created_at"))

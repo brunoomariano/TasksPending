@@ -11,8 +11,10 @@ use std::time::Duration;
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use futures_util::future::join_all;
 use pending_core::{
-    BoxFuture, CardSeverity, PendingCard, PendingSource, SourceBatch, SourceError, SourceItem,
+    BoxFuture, CardSeverity, DueDay, PendingCard, PendingSource, SourceBatch, SourceError,
+    SourceItem,
 };
+use pending_http::{Budget, DEFAULT_REFRESH_BUDGET};
 use reqwest::redirect::Policy;
 use reqwest::{Client, StatusCode};
 use serde::Deserialize;
@@ -23,10 +25,9 @@ pub const DEFAULT_API_URL: &str = "https://api.linear.app/graphql";
 
 /// Per request; a stack whose request times out becomes a warning.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-/// What one stack may take for all its pages together. The default stacks
-/// run in at most two rounds of [`MAX_CONCURRENT_QUERIES`], so two rounds fit
-/// the aggregator's default source timeout (60s) and a slow stack becomes a
-/// warning instead of failing the whole source.
+/// What one stack may take for all its pages together, so a slow stack
+/// becomes a warning instead of failing the whole source. All the stacks
+/// together have [`DEFAULT_REFRESH_BUDGET`], whatever their number.
 const DEFAULT_STACK_BUDGET: Duration = Duration::from_secs(25);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const PAGE_SIZE: usize = 100;
@@ -50,7 +51,7 @@ query PendingIssues($filter: IssueFilter, $first: Int!, $after: String) {
       dueDate
       updatedAt
       team { name }
-      state { name }
+      state { name type }
       assignee { displayName }
     }
     pageInfo { hasNextPage endCursor }
@@ -271,6 +272,7 @@ pub struct LinearSource {
     settings: Result<LinearSettings, String>,
     request_timeout: Duration,
     stack_budget: Duration,
+    refresh_budget: Duration,
     columns: Vec<LinearColumn>,
 }
 
@@ -289,6 +291,7 @@ impl LinearSource {
             settings,
             request_timeout: REQUEST_TIMEOUT,
             stack_budget: DEFAULT_STACK_BUDGET,
+            refresh_budget: DEFAULT_REFRESH_BUDGET,
             columns: default_columns(),
         }
     }
@@ -313,7 +316,15 @@ impl LinearSource {
         self
     }
 
+    /// Replaces [`DEFAULT_REFRESH_BUDGET`], the time all stacks of one
+    /// refresh have together.
+    pub fn with_refresh_budget(mut self, budget: Duration) -> Self {
+        self.refresh_budget = budget;
+        self
+    }
+
     async fn refresh_with(&self, settings: &LinearSettings) -> Result<SourceBatch, SourceError> {
+        let budget = Budget::start(self.stack_budget, self.refresh_budget);
         // A few at a time, to stay far from Linear's rate limits. Results
         // keep stack order.
         let mut results = Vec::with_capacity(self.columns.len());
@@ -322,7 +333,7 @@ impl LinearSource {
                 join_all(
                     chunk
                         .iter()
-                        .map(|column| self.within_budget(self.column_issues(settings, column))),
+                        .map(|column| budget.run(self.column_issues(settings, column))),
                 )
                 .await,
             );
@@ -371,19 +382,6 @@ impl LinearSource {
         }
         batch.warnings.extend(failures);
         Ok(batch)
-    }
-
-    /// Runs one stack within the stack budget. A stack that runs out of time
-    /// fails like any other failing stack; the pages it had already read are
-    /// dropped, because the stack would be incomplete.
-    async fn within_budget<T>(
-        &self,
-        stack: impl Future<Output = Result<T, Failure>>,
-    ) -> Result<T, Failure> {
-        match tokio::time::timeout(self.stack_budget, stack).await {
-            Ok(result) => result,
-            Err(_) => Err(format!("timed out after {:?}", self.stack_budget).into()),
-        }
     }
 
     /// Every page of one stack's issues; `true` when pages were left unread.
@@ -640,7 +638,7 @@ struct Issue {
     #[serde(default)]
     team: Option<Named>,
     #[serde(default)]
-    state: Option<Named>,
+    state: Option<State>,
     #[serde(default)]
     assignee: Option<User>,
 }
@@ -649,6 +647,22 @@ struct Issue {
 struct Named {
     #[serde(default)]
     name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct State {
+    #[serde(default)]
+    name: Option<String>,
+    /// `triage`, `backlog`, `unstarted`, `started`, `completed` or `canceled`.
+    #[serde(default, rename = "type")]
+    kind: Option<String>,
+}
+
+impl State {
+    /// Whether the workflow state ends the work on the issue.
+    fn is_closed(&self) -> bool {
+        matches!(self.kind.as_deref(), Some("completed" | "canceled"))
+    }
 }
 
 #[derive(Deserialize)]
@@ -664,11 +678,15 @@ impl Issue {
     /// assignee.
     fn into_card(self, stack_assignee: Assignee, today: NaiveDate) -> Option<PendingCard> {
         let identifier = self.identifier.filter(|id| !id.trim().is_empty())?;
+        // A stack may list finished issues (`state_type = ["completed"]`):
+        // their due day stays in the details, but nothing is late any more.
+        let closed = self.state.as_ref().is_some_and(State::is_closed);
         let due = self
             .due_date
             .as_deref()
-            .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok());
-        let overdue = due.is_some_and(|due| due < today);
+            .and_then(|date| DueDay::parse(date, today))
+            .map(|due| if closed { due.of_closed_item() } else { due });
+        let overdue = due.is_some_and(DueDay::is_overdue);
         let priority = self.priority.map(|p| p.round() as i64).unwrap_or(0);
         let severity = match priority {
             _ if overdue => CardSeverity::Critical,
@@ -693,10 +711,7 @@ impl Issue {
             details.push(format!("@{name}"));
         }
         if let Some(due) = due {
-            details.push(format!(
-                "{} {due}",
-                if overdue { "overdue since" } else { "due" }
-            ));
+            details.push(due.label());
         }
 
         Some(PendingCard {
@@ -705,11 +720,7 @@ impl Issue {
             body: details.join(" · "),
             source: "linear".to_owned(),
             url: non_empty(self.url),
-            // Local midnight, matching how "overdue" is decided.
-            due_at: due
-                .and_then(|due| due.and_hms_opt(0, 0, 0))
-                .and_then(|due| due.and_local_timezone(Local).earliest())
-                .map(|due| due.with_timezone(&Utc)),
+            due_at: due.and_then(DueDay::at),
             severity,
             updated_at: self
                 .updated_at

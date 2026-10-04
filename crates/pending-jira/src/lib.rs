@@ -11,8 +11,10 @@ use std::time::Duration;
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use futures_util::future::join_all;
 use pending_core::{
-    BoxFuture, CardSeverity, PendingCard, PendingSource, SourceBatch, SourceError, SourceItem,
+    BoxFuture, CardSeverity, DueDay, PendingCard, PendingSource, SourceBatch, SourceError,
+    SourceItem,
 };
+use pending_http::{Budget, DEFAULT_REFRESH_BUDGET};
 use reqwest::header::HeaderMap;
 use reqwest::redirect::Policy;
 use reqwest::{Client, StatusCode};
@@ -21,10 +23,9 @@ use serde_json::Value;
 
 /// Per request; a stack whose request times out becomes a warning.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-/// What one stack may take for all its pages together. The default stacks
-/// run in at most two rounds of [`MAX_CONCURRENT_QUERIES`], so two rounds fit
-/// the aggregator's default source timeout (60s) and a slow stack becomes a
-/// warning instead of failing the whole source.
+/// What one stack may take for all its pages together, so a slow stack
+/// becomes a warning instead of failing the whole source. All the stacks
+/// together have [`DEFAULT_REFRESH_BUDGET`], whatever their number.
 const DEFAULT_STACK_BUDGET: Duration = Duration::from_secs(25);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Queries running at once. Each stack is one query.
@@ -119,8 +120,9 @@ impl std::fmt::Debug for JiraSettings {
 impl JiraSettings {
     /// Reads `JIRA_BASE_URL` and either `JIRA_EMAIL` with `JIRA_API_TOKEN`
     /// (Jira Cloud) or `JIRA_TOKEN` alone (Jira Data Center). With all three
-    /// credentials set, the Cloud pair wins. The error names the missing
-    /// variables.
+    /// credentials set, the Cloud pair wins; `JIRA_EMAIL` with `JIRA_TOKEN`
+    /// but no `JIRA_API_TOKEN` is a mix-up and an error. The error names
+    /// the variables to set.
     pub fn from_env(env: &dyn Fn(&str) -> Option<String>) -> Result<Self, String> {
         let read = |key: &str| {
             env(key)
@@ -134,7 +136,14 @@ impl JiraSettings {
             read("JIRA_TOKEN"),
         ) {
             (Some(email), Some(api_token), _) => Ok(JiraAuth::Cloud { email, api_token }),
-            (_, _, Some(token)) => Ok(JiraAuth::DataCenter { token }),
+            // An e-mail says Jira Cloud, whose token goes in JIRA_API_TOKEN.
+            // Guessing Data Center here would send a Bearer token to a
+            // Cloud site and fail with a login error that explains nothing.
+            (Some(_), None, Some(_)) => Err(
+                "JIRA_API_TOKEN instead of JIRA_TOKEN (Jira Cloud), or unset JIRA_EMAIL \
+                 (Jira Data Center)",
+            ),
+            (None, _, Some(token)) => Ok(JiraAuth::DataCenter { token }),
             (Some(_), None, None) => {
                 Err("JIRA_API_TOKEN (Jira Cloud; or JIRA_TOKEN alone for Jira Data Center)")
             }
@@ -176,6 +185,7 @@ pub struct JiraSource {
     settings: Result<JiraSettings, String>,
     request_timeout: Duration,
     stack_budget: Duration,
+    refresh_budget: Duration,
     columns: Vec<JiraColumn>,
     today: fn() -> NaiveDate,
 }
@@ -202,6 +212,7 @@ impl JiraSource {
             }),
             request_timeout: REQUEST_TIMEOUT,
             stack_budget: DEFAULT_STACK_BUDGET,
+            refresh_budget: DEFAULT_REFRESH_BUDGET,
             columns: default_columns(),
             today: local_today,
         }
@@ -227,6 +238,13 @@ impl JiraSource {
         self
     }
 
+    /// Replaces [`DEFAULT_REFRESH_BUDGET`], the time all stacks of one
+    /// refresh have together.
+    pub fn with_refresh_budget(mut self, budget: Duration) -> Self {
+        self.refresh_budget = budget;
+        self
+    }
+
     /// The date "overdue" is measured against (the local date by default).
     pub fn with_today(mut self, today: fn() -> NaiveDate) -> Self {
         self.today = today;
@@ -234,6 +252,7 @@ impl JiraSource {
     }
 
     async fn refresh_with(&self, settings: &JiraSettings) -> Result<SourceBatch, SourceError> {
+        let budget = Budget::start(self.stack_budget, self.refresh_budget);
         // A few at a time, so the server never sees a burst. Results keep
         // column order.
         let mut results = Vec::with_capacity(self.columns.len());
@@ -242,7 +261,7 @@ impl JiraSource {
                 join_all(
                     chunk
                         .iter()
-                        .map(|column| self.within_budget(self.search(settings, &column.jql))),
+                        .map(|column| budget.run(self.search(settings, &column.jql))),
                 )
                 .await,
             );
@@ -285,19 +304,6 @@ impl JiraSource {
         }
         batch.warnings.extend(failures);
         Ok(batch)
-    }
-
-    /// Runs one stack within the stack budget. A stack that runs out of time
-    /// fails like any other failing stack; the pages it had already read are
-    /// dropped, because the stack would be incomplete.
-    async fn within_budget<T>(
-        &self,
-        stack: impl Future<Output = Result<T, Failure>>,
-    ) -> Result<T, Failure> {
-        match tokio::time::timeout(self.stack_budget, stack).await {
-            Ok(result) => result,
-            Err(_) => Err(format!("timed out after {:?}", self.stack_budget).into()),
-        }
     }
 
     /// Every issue matching a JQL query, up to [`MAX_PAGES`] pages; `true`
@@ -556,8 +562,8 @@ fn to_card(
             .filter(|text| !text.is_empty())
     };
 
-    let due = text("/fields/duedate").and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
-    let overdue = due.is_some_and(|due| due < today);
+    let due = text("/fields/duedate").and_then(|date| DueDay::parse(date, today));
+    let overdue = due.is_some_and(DueDay::is_overdue);
     let priority = text("/fields/priority/name")
         .unwrap_or_default()
         .to_lowercase();
@@ -580,10 +586,7 @@ fn to_card(
         body.push_str(&format!(" · @{assignee}"));
     }
     if let Some(due) = due {
-        body.push_str(&format!(
-            " · {} {due}",
-            if overdue { "overdue since" } else { "due" }
-        ));
+        body.push_str(&format!(" · {}", due.label()));
     }
 
     Some(PendingCard {
@@ -592,11 +595,7 @@ fn to_card(
         body,
         source: "jira".to_owned(),
         url: Some(format!("{base_url}/browse/{key}")),
-        // Local midnight, matching how "overdue" is decided.
-        due_at: due
-            .and_then(|due| due.and_hms_opt(0, 0, 0))
-            .and_then(|due| due.and_local_timezone(Local).earliest())
-            .map(|due| due.with_timezone(&Utc)),
+        due_at: due.and_then(DueDay::at),
         severity: severity.unwrap_or(computed),
         updated_at: text("/fields/updated")
             .and_then(parse_timestamp)

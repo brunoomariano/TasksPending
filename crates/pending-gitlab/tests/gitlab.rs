@@ -562,6 +562,8 @@ fn stacks_are_validated() {
         "merge_requests = \"assigned\"\ngroup = \"acme\"\nlabels = [\"bug\"]\ndraft = true",
         "issues = \"authored\"\nproject = \"acme/api\"\nseverity = \"warning\"",
         "issues = \"assigned\"\nproject = \"42\"",
+        "issues = \"assigned\"\nproject = \"acme/.github\"",
+        "issues = \"assigned\"\ngroup = \"acme/v1.2\"",
         "todos = true",
     ] {
         assert_eq!(check(valid), Ok(()), "{valid}");
@@ -590,6 +592,13 @@ fn stacks_are_validated() {
             "issues = \"assigned\"\nproject = \"/acme/api\"",
             "`project`",
         ),
+        ("issues = \"assigned\"\nproject = \"..\"", "`project`"),
+        (
+            "issues = \"assigned\"\nproject = \"acme/../../admin\"",
+            "`project`",
+        ),
+        ("issues = \"assigned\"\ngroup = \"acme/./api\"", "`group`"),
+        ("issues = \"assigned\"\ngroup = \".\"", "`group`"),
         ("issues = \"assigned\"\nlabels = []", "`labels`"),
         ("issues = \"assigned\"\nlabels = [\"a,b\"]", "`labels`"),
     ] {
@@ -976,6 +985,45 @@ async fn a_stack_over_its_time_budget_is_a_warning_naming_it() {
     assert_eq!(cards(&batch, "To-dos").len(), 1);
     assert_eq!(cards(&batch, "Mine").len(), 0);
     assert_eq!(batch.warnings, ["Mine: timed out after 400ms"]);
+}
+
+/// All the stacks of one refresh share a time limit kept below the
+/// aggregator's source timeout: with many slow stacks, the ones the refresh
+/// has no time left for become warnings saying so, and the stacks that did
+/// answer are still shown, instead of the whole source failing.
+#[tokio::test]
+async fn many_slow_stacks_do_not_fail_the_whole_source() {
+    let stub = Stub::default();
+    stub.set(
+        TODOS,
+        "",
+        vec![Reply::items(vec![todo(1, "assigned", "T")])],
+    );
+    *stub.delay.lock().unwrap() = Duration::from_millis(150);
+    let base = serve(stub.clone()).await;
+
+    // Three rounds of three; each round takes 150 ms and the refresh has
+    // 400 ms: the third round is cut short.
+    let stacks = (0..9)
+        .map(|n| stack(&format!("Stack {n}"), "todos = true"))
+        .collect();
+    let batch = source(&base)
+        .with_refresh_budget(Duration::from_millis(400))
+        .with_columns(stacks)
+        .refresh()
+        .await
+        .expect("partial refresh");
+
+    for n in 0..6 {
+        assert_eq!(cards(&batch, &format!("Stack {n}")).len(), 1, "stack {n}");
+    }
+    assert_eq!(batch.warnings.len(), 3, "{:?}", batch.warnings);
+    for (n, warning) in (6..9).zip(&batch.warnings) {
+        assert_eq!(
+            warning,
+            &format!("Stack {n}: not finished: the refresh used up its 400ms for all stacks")
+        );
+    }
 }
 
 /// The stacks of one refresh are asked for at most three at a time.

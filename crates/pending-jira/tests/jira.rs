@@ -555,6 +555,77 @@ async fn too_many_pages_are_cut_short_with_a_warning() {
     );
 }
 
+/// Jira Data Center pages by offset: each request starts after the issues
+/// already read, and the same cap of pages applies, with the warning.
+#[tokio::test]
+async fn data_center_pages_by_offset_up_to_the_cap() {
+    let stub = Stub::default();
+    let pages = (0..20)
+        .map(|n| ok(json!({ "issues": [issue(&format!("OPS-{n}"), "x")], "total": 20 })))
+        .collect();
+    stub.reply("project = OPS", pages);
+    let source = data_center_source(serve(stub.clone()).await)
+        .with_columns(vec![column("Ops", "project = OPS")]);
+
+    let batch = source.refresh().await.expect("refresh");
+
+    let offsets: Vec<Option<String>> = stub
+        .seen()
+        .iter()
+        .map(|request| request.params.get("startAt").cloned())
+        .collect();
+    let expected: Vec<Option<String>> = (0..5).map(|n| Some(n.to_string())).collect();
+    assert_eq!(offsets, expected);
+    assert_eq!(batch.items.len(), 5);
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    assert!(
+        batch.warnings[0].starts_with("Ops: more than 5 pages"),
+        "{:?}",
+        batch.warnings
+    );
+
+    // A list that ends within the cap has no warning.
+    let stub = Stub::default();
+    stub.reply(
+        "project = OPS",
+        vec![
+            ok(json!({ "issues": [issue("OPS-1", "One")], "total": 2 })),
+            ok(json!({ "issues": [issue("OPS-2", "Two")], "total": 2 })),
+        ],
+    );
+    let source = data_center_source(serve(stub.clone()).await)
+        .with_columns(vec![column("Ops", "project = OPS")]);
+    let batch = source.refresh().await.expect("refresh");
+    assert_eq!(batch.items.len(), 2);
+    assert_eq!(batch.warnings, Vec::<String>::new());
+    assert_eq!(stub.seen().len(), 2);
+}
+
+/// A Cloud page that hands back the token it was asked with would be read
+/// forever: the stack stops there and says the list is cut short.
+#[tokio::test]
+async fn a_repeated_page_token_stops_the_stack() {
+    let stub = Stub::default();
+    let same = |key: &str| ok(json!({ "issues": [issue(key, "x")], "nextPageToken": "tok" }));
+    stub.reply(
+        "project = OPS",
+        vec![same("OPS-1"), same("OPS-2"), same("OPS-3"), same("OPS-4")],
+    );
+    let source =
+        cloud_source(serve(stub.clone()).await).with_columns(vec![column("Ops", "project = OPS")]);
+
+    let batch = source.refresh().await.expect("refresh");
+
+    assert_eq!(stub.seen().len(), 2);
+    assert_eq!(batch.items.len(), 2);
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    assert!(
+        batch.warnings[0].starts_with("Ops: "),
+        "{:?}",
+        batch.warnings
+    );
+}
+
 /// Invalid JQL in one stack becomes a warning naming the stack, with the
 /// server's explanation; the other stacks still show.
 #[tokio::test]
@@ -699,6 +770,33 @@ async fn rate_limit_is_reported_with_the_retry_time() {
     assert!(
         retry_at <= after + chrono::Duration::seconds(120),
         "{retry_at}"
+    );
+}
+
+/// A rate limit on one stack among working ones is that stack's warning,
+/// naming the time the server asked for; the other stacks show, and the
+/// source is asked again at its usual interval.
+#[tokio::test]
+async fn a_rate_limit_on_one_stack_is_a_warning() {
+    let stub = Stub::default();
+    stub.reply(
+        "project = OPS",
+        vec![status(StatusCode::TOO_MANY_REQUESTS, json!({})).header("retry-after", "120")],
+    );
+    stub.issues("project = WEB", vec![issue("WEB-1", "One")]);
+    let source = cloud_source(serve(stub).await).with_columns(vec![
+        column("Ops", "project = OPS"),
+        column("Web", "project = WEB"),
+    ]);
+
+    let batch = source.refresh().await.expect("partial refresh");
+
+    assert_eq!(batch.items.len(), 1);
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    assert!(
+        batch.warnings[0].starts_with("Ops: ") && batch.warnings[0].contains("rate limit"),
+        "{:?}",
+        batch.warnings
     );
 }
 
@@ -905,6 +1003,40 @@ fn settings_pick_the_flavour_from_the_variables() {
                 token: PAT.to_owned(),
             }
     );
+}
+
+/// With all three credentials set, the Cloud pair is used. An e-mail with
+/// `JIRA_TOKEN` but no `JIRA_API_TOKEN` is a mix-up of the two flavours: it
+/// is refused with the way out, instead of being taken for Data Center.
+#[test]
+fn mixed_credentials_are_settled_or_refused() {
+    let all = JiraSettings::from_env(&env(&[
+        ("JIRA_BASE_URL", "https://acme.atlassian.net"),
+        ("JIRA_EMAIL", EMAIL),
+        ("JIRA_API_TOKEN", API_TOKEN),
+        ("JIRA_TOKEN", PAT),
+    ]))
+    .expect("cloud settings");
+    assert!(
+        all.auth
+            == JiraAuth::Cloud {
+                email: EMAIL.to_owned(),
+                api_token: API_TOKEN.to_owned(),
+            }
+    );
+
+    let mixed = JiraSettings::from_env(&env(&[
+        ("JIRA_BASE_URL", "https://acme.atlassian.net"),
+        ("JIRA_EMAIL", EMAIL),
+        ("JIRA_TOKEN", PAT),
+    ]))
+    .expect_err("e-mail with the Data Center token");
+    assert_eq!(
+        mixed,
+        "Jira is not configured: set JIRA_API_TOKEN instead of JIRA_TOKEN (Jira Cloud), or \
+         unset JIRA_EMAIL (Jira Data Center), then restart"
+    );
+    assert_no_secret(&mixed);
 }
 
 /// Missing settings are named, and every refresh fails with that message.

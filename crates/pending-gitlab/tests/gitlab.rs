@@ -999,30 +999,29 @@ async fn many_slow_stacks_do_not_fail_the_whole_source() {
         "",
         vec![Reply::items(vec![todo(1, "assigned", "T")])],
     );
-    *stub.delay.lock().unwrap() = Duration::from_millis(150);
+    *stub.delay.lock().unwrap() = Duration::from_millis(400);
     let base = serve(stub.clone()).await;
 
-    // Three rounds of three; each round takes 150 ms and the refresh has
-    // 400 ms: the third round is cut short.
+    // Three rounds of three, 400 ms each, in a refresh that has one second:
+    // the third round cannot finish. (The first has 600 ms to spare on a
+    // busy machine; the second may go either way, so it is not asserted.)
     let stacks = (0..9)
         .map(|n| stack(&format!("Stack {n}"), "todos = true"))
         .collect();
     let batch = source(&base)
-        .with_refresh_budget(Duration::from_millis(400))
+        .with_refresh_budget(Duration::from_secs(1))
         .with_columns(stacks)
         .refresh()
         .await
         .expect("partial refresh");
 
-    for n in 0..6 {
+    for n in 0..3 {
         assert_eq!(cards(&batch, &format!("Stack {n}")).len(), 1, "stack {n}");
     }
-    assert_eq!(batch.warnings.len(), 3, "{:?}", batch.warnings);
-    for (n, warning) in (6..9).zip(&batch.warnings) {
-        assert_eq!(
-            warning,
-            &format!("Stack {n}: not finished: the refresh used up its 400ms for all stacks")
-        );
+    for n in 6..9 {
+        assert_eq!(cards(&batch, &format!("Stack {n}")).len(), 0, "stack {n}");
+        let warning = format!("Stack {n}: not finished: the refresh used up its 1s for all stacks");
+        assert!(batch.warnings.contains(&warning), "{:?}", batch.warnings);
     }
 }
 

@@ -13,7 +13,7 @@
 - New source `kind = "linear"`: Linear issues, by default the ones assigned to you, in the In progress, To do and Backlog stacks. Stacks filter by `assignee`, `state_type`, `state`, `team` and `priority`. Cards show the issue reference as the title and mark overdue and urgent issues as critical. Set `LINEAR_API_KEY` (a personal API key) in the environment. See "Linear Source" in [docs/operations.md](docs/operations.md).
 - The GitLab, Jira and Linear sources were built from each provider's API documentation and are covered by tests against stand-in servers; they have not yet been run against live accounts. Please report anything that behaves differently.
 - Snooze a card from the web page or the TUI (`z`, and `Z` for the list): it leaves its stacks for an hour, until tomorrow, until next week or until it changes, and always comes back early when its item changes. A quiet "N snoozed" link opens the list to wake a card. Snoozes are kept by the daemon and nothing is written to the provider.
-- A small dot marks the cards that changed since you last looked, and the stacks holding them, on the web page and in the TUI. Coming back after 10 minutes away shows what changed in between; the dots clear on the next return. No counts, no notifications.
+- A small dot marks the cards that changed since you last looked, and the stacks holding them, on the web page and in the TUI. Coming back after 10 minutes away shows what changed in between, including what the dashboard only fetched after you left; the dots clear on the next return. Only deliberate actions (a click, a key, scrolling) count as looking. No counts, no notifications.
 
 ### Fixed
 

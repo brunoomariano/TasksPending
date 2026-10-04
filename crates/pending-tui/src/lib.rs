@@ -162,8 +162,12 @@ fn run_dashboard(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> 
                 key
             }
             Event::Mouse(mouse) => {
-                look(dashboard, &mut looks, Instant::now());
-                redraw = !matches!(mouse.kind, MouseEventKind::Moved);
+                // The pointer merely crossing the terminal is not looking.
+                let moved = matches!(mouse.kind, MouseEventKind::Moved);
+                if !moved {
+                    look(dashboard, &mut looks, Instant::now());
+                }
+                redraw = !moved;
                 app.handle_mouse(mouse);
                 continue;
             }
@@ -195,8 +199,8 @@ fn run_dashboard(dashboard: &dyn Dashboard, header: &str) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// Tells the running dashboard that the user is looking (a key press or a
-/// mouse event at `now`), unless it was told less than a minute ago.
+/// Tells the running dashboard that the user is looking (a key press, a
+/// click or the wheel at `now`), unless it was told less than a minute ago.
 fn look(dashboard: &dyn Dashboard, throttle: &mut LookThrottle, now: Instant) {
     if throttle.due(now) {
         dashboard.look();

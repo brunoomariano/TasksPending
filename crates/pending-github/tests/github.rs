@@ -915,11 +915,27 @@ async fn a_failed_review_lookup_keeps_the_cards_with_a_warning() {
     assert!(!batch.warnings[0].contains(TOKEN));
 }
 
+/// What GitHub answers for a pull request whose checks the token may not
+/// read: the field is `null` inside the last commit, with an error for it.
+fn pr_without_readable_checks(repo: &str, number: u64, decision: &str) -> Value {
+    let (_, mut state) = pr_state(repo, number, false, Some(decision));
+    state["commits"] = json!({ "nodes": [{ "commit": { "statusCheckRollup": null } }] });
+    state
+}
+
+fn checks_error(index: u64, kind: &str, message: &str) -> Value {
+    json!({
+        "type": kind,
+        "path": ["nodes", index, "commits", "nodes", 0, "commit", "statusCheckRollup"],
+        "message": message,
+    })
+}
+
 /// A token that may not read check status (a fine-grained token without
-/// that permission, or an organisation behind SSO) gets one error per pull
-/// request for that field only. The review state still loads, the checks
-/// are simply left out, and the source is not flagged: a permission the
-/// user never granted is not a problem to report on every refresh.
+/// that permission, or an organisation behind SSO) gets one FORBIDDEN error
+/// per pull request for that field only. The review state still loads, the
+/// checks are simply left out, and the source is not flagged: a permission
+/// the user never granted is not a problem to report on every refresh.
 #[tokio::test]
 async fn unreadable_checks_are_left_out_quietly() {
     let stub = stub_with(vec![(
@@ -929,20 +945,20 @@ async fn unreadable_checks_are_left_out_quietly() {
             item("o/api", 4, "Polish", true),
         ]),
     )]);
-    let denied = |index: u64| {
-        json!({
-            "type": "FORBIDDEN",
-            "path": ["nodes", index, "commits", "nodes", 0, "commit", "statusCheckRollup"],
-            "message": "Resource not accessible by personal access token",
-        })
+    let denied = |index| {
+        checks_error(
+            index,
+            "FORBIDDEN",
+            "Resource not accessible by personal access token",
+        )
     };
     *stub.graphql_reply.lock().unwrap() = Some(Reply {
         status: StatusCode::OK,
         headers: Vec::new(),
         body: json!({
             "data": { "nodes": [
-                { "id": "PR_o/api_3", "isDraft": false, "reviewDecision": "APPROVED" },
-                { "id": "PR_o/api_4", "isDraft": false, "reviewDecision": "CHANGES_REQUESTED" }
+                pr_without_readable_checks("o/api", 3, "APPROVED"),
+                pr_without_readable_checks("o/api", 4, "CHANGES_REQUESTED"),
             ] },
             "errors": [denied(0), denied(1)],
         }),
@@ -960,6 +976,89 @@ async fn unreadable_checks_are_left_out_quietly() {
         bodies.iter().all(|body| !body.contains("checks")),
         "{bodies:?}"
     );
+}
+
+/// Only a refusal is quiet. Any other error on the checks (GitHub timing
+/// out while computing them, an outage) is reported, also next to refusals
+/// in the same reply, and the review state that came back is still used.
+#[tokio::test]
+async fn other_errors_on_the_checks_are_reported() {
+    let stub = stub_with(vec![(
+        WAITING,
+        Reply::items(vec![
+            item("o/api", 3, "Rework", true),
+            item("o/api", 4, "Polish", true),
+        ]),
+    )]);
+    *stub.graphql_reply.lock().unwrap() = Some(Reply {
+        status: StatusCode::OK,
+        headers: Vec::new(),
+        body: json!({
+            "data": { "nodes": [
+                pr_without_readable_checks("o/api", 3, "APPROVED"),
+                pr_without_readable_checks("o/api", 4, "APPROVED"),
+            ] },
+            "errors": [
+                checks_error(0, "FORBIDDEN", "Resource not accessible by personal access token"),
+                checks_error(1, "SERVICE_UNAVAILABLE", "Timed out computing the rollup"),
+                { "path": ["nodes", 1, "commits", "nodes", 0, "commit", "statusCheckRollup"],
+                  "message": "No type on this one" },
+            ],
+        }),
+    });
+
+    let batch = refresh(stub).await.expect("cards load");
+
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    assert!(batch.warnings[0].contains("Timed out computing the rollup"));
+    assert!(batch.warnings[0].contains("No type on this one"));
+    assert!(!batch.warnings[0].contains("Resource not accessible"));
+    assert!(
+        batch.items.iter().all(|i| i.card.body.contains("approved")),
+        "{:?}",
+        batch.items
+    );
+}
+
+/// GraphQL writes `null` for a list it could not produce (the nodes, an
+/// error's path, a pull request's commits): the reply is still read.
+#[tokio::test]
+async fn null_lists_in_a_graphql_reply_are_read_as_empty() {
+    let stub = stub_with(vec![(
+        WAITING,
+        Reply::items(vec![item("o/api", 3, "Rework", true)]),
+    )]);
+    let (_, mut state) = pr_state("o/api", 3, false, Some("APPROVED"));
+    state["commits"] = json!({ "nodes": null });
+    *stub.graphql_reply.lock().unwrap() = Some(Reply {
+        status: StatusCode::OK,
+        headers: Vec::new(),
+        body: json!({
+            "data": { "nodes": [state] },
+            "errors": [{ "path": null, "message": "Something went wrong" }],
+        }),
+    });
+
+    let batch = refresh(stub).await.expect("cards load");
+
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    assert!(batch.warnings[0].contains("Something went wrong"));
+    assert!(batch.items[0].card.body.contains("approved"));
+
+    let stub = stub_with(vec![(
+        WAITING,
+        Reply::items(vec![item("o/api", 3, "Rework", true)]),
+    )]);
+    *stub.graphql_reply.lock().unwrap() = Some(Reply {
+        status: StatusCode::OK,
+        headers: Vec::new(),
+        body: json!({ "data": { "nodes": null }, "errors": [{ "message": "Nothing came back" }] }),
+    });
+
+    let batch = refresh(stub).await.expect("cards load");
+
+    assert_eq!(batch.items.len(), 1);
+    assert!(batch.warnings[0].contains("Nothing came back"));
 }
 
 /// The same error repeated for many pull requests is reported once.

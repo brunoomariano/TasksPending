@@ -288,14 +288,17 @@ impl GithubSource {
                 }
             };
             for error in reply.errors {
-                // A token that may not read check status gets one error per
-                // pull request for that field alone: the checks are left
-                // out, which is not worth a warning on every refresh.
-                let only_checks = matches!(
-                    error.path.last(),
-                    Some(PathSegment::Field(field)) if field == "statusCheckRollup"
-                );
-                if !only_checks && !problems.contains(&error.message) {
+                // A token that may not read check status gets one FORBIDDEN
+                // error per pull request for that field alone: the checks
+                // are left out, which is not worth a warning on every
+                // refresh. Any other error there (a timeout, an outage) is
+                // a problem to report.
+                let checks_denied = error.kind.as_deref() == Some(FORBIDDEN)
+                    && matches!(
+                        error.path.last(),
+                        Some(PathSegment::Field(field)) if field == "statusCheckRollup"
+                    );
+                if !checks_denied && !problems.contains(&error.message) {
                     problems.push(error.message);
                 }
             }
@@ -951,17 +954,33 @@ struct GraphqlReply {
 #[derive(Deserialize)]
 struct NodesData {
     /// `null` for ids that no longer resolve.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     nodes: Vec<Option<PullRequestState>>,
 }
+
+/// GraphQL error type for a field the token may not read.
+const FORBIDDEN: &str = "FORBIDDEN";
 
 #[derive(Deserialize)]
 struct GraphqlError {
     message: String,
+    /// GitHub's error class, such as `FORBIDDEN` or `NOT_FOUND`.
+    #[serde(default, rename = "type")]
+    kind: Option<String>,
     /// Where in the reply the error applies, e.g.
     /// `["nodes", 0, "commits", ..., "statusCheckRollup"]`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     path: Vec<PathSegment>,
+}
+
+/// GraphQL writes `null` where a list could not be produced; read it like
+/// an absent field instead of rejecting the whole reply.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Deserialize)]
@@ -1006,7 +1025,7 @@ impl PullRequestState {
 
 #[derive(Deserialize)]
 struct CommitList {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     nodes: Vec<Option<CommitNode>>,
 }
 

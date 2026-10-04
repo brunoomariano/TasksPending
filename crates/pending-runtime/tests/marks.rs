@@ -208,7 +208,8 @@ fn marks_survive_their_source_leaving_the_config() {
 }
 
 /// The file is the truth: deleting it clears the marks, and a file written
-/// by a newer version is left alone instead of being overwritten.
+/// by a newer version is left alone instead of being overwritten, which the
+/// caller is told (the mark was not saved).
 #[test]
 fn the_file_can_be_deleted_and_newer_files_are_left_alone() {
     let path = scratch("file-truth");
@@ -221,7 +222,7 @@ fn the_file_can_be_deleted_and_newer_files_are_left_alone() {
 
     let newer = r#"{"version":99,"marks":[]}"#;
     std::fs::write(&path, newer).unwrap();
-    marks.set(&board(), "b", true).unwrap();
+    assert_eq!(marks.set(&board(), "b", true), Err(MarkError::NotSaved));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
 }
 

@@ -122,6 +122,9 @@ pub struct App {
     notice: Option<Notice>,
     last_refresh: Option<Instant>,
     popup: Option<Popup>,
+    /// The card the details popup or the snooze menu was opened for: its
+    /// keys act on the selected card, which a refresh may move elsewhere.
+    popup_card: Option<String>,
     /// First popup line shown.
     popup_scroll: u16,
     /// The selected line of the snooze menu or of the snoozed list.
@@ -142,6 +145,7 @@ impl App {
             last_refresh: None,
             popup: None,
             popup_scroll: 0,
+            popup_card: None,
             popup_selected: 0,
             viewport: Viewport::default(),
         };
@@ -371,11 +375,15 @@ impl App {
         }
     }
 
-    /// Closes the popups about the selected card when there is none, and
-    /// keeps the snoozed list's selection inside the list.
+    /// Closes the popups about a card when the selection is no longer on
+    /// that card (a refresh took it away and the selection moved to a
+    /// neighbour, which the next key would otherwise act on), and keeps the
+    /// snoozed list's selection inside the list.
     fn close_card_popup_without_card(&mut self) {
         match self.popup {
-            Some(Popup::Card | Popup::Snooze) if self.selected_card().is_none() => {
+            Some(Popup::Card | Popup::Snooze)
+                if self.selected_card().map(|card| &card.id) != self.popup_card.as_ref() =>
+            {
                 self.popup = None;
             }
             Some(Popup::Snoozed) => self.move_popup_selection(0),
@@ -627,6 +635,10 @@ impl App {
     }
 
     fn open_popup(&mut self, popup: Popup) {
+        self.popup_card = match popup {
+            Popup::Card | Popup::Snooze => self.selected_card().map(|card| card.id.clone()),
+            Popup::Snoozed | Popup::Sources => None,
+        };
         self.popup = Some(popup);
         self.popup_scroll = 0;
         self.popup_selected = 0;
@@ -1127,6 +1139,27 @@ mod tests {
         app.handle_key(z);
         app.update(snapshot(Vec::new()));
         assert_eq!(app.popup(), None, "the card is gone");
+
+        // The card is gone but a neighbour takes the selection: the menu
+        // must not stay open, or the next choice would snooze the neighbour.
+        for open in [z, key(KeyCode::Char(' '))] {
+            let mut app = App::new(sample());
+            app.handle_key(open);
+            assert!(app.popup().is_some());
+            let mut without_p1 = sample();
+            for column in &mut without_p1.boards[0].groups[0].columns {
+                column.cards.retain(|card| card.id != "p1");
+            }
+            app.update(without_p1);
+            assert_eq!(selected(&app), Some("p2"), "the neighbour is selected");
+            assert_eq!(app.popup(), None, "the popup was about p1");
+        }
+
+        // A refresh that keeps the card keeps the menu.
+        let mut app = App::new(sample());
+        app.handle_key(z);
+        app.update(sample());
+        assert_eq!(app.popup(), Some(Popup::Snooze));
 
         let mut app = App::new(sample());
         app.handle_key(key(KeyCode::Char('c')));

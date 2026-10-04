@@ -26,6 +26,10 @@ enum OnDisk<T> {
     Newer,
 }
 
+/// A change that did not reach the file; the reason is in the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NotSaved;
+
 pub(crate) struct Store<T> {
     /// `None` keeps the entries in memory only.
     path: Option<PathBuf>,
@@ -58,12 +62,14 @@ impl<T: Clone + PartialEq + Serialize + DeserializeOwned> Store<T> {
 
     /// Applies `edit` to the entries and saves them when they changed. With
     /// a file, the whole read-modify-write runs under a lock file, so two
-    /// processes cannot overwrite each other's change.
-    pub(crate) fn change(&self, edit: impl FnOnce(&mut Vec<T>)) {
+    /// processes cannot overwrite each other's change. A change that could
+    /// not be written (or a file from a newer version, which is left
+    /// alone) is logged and reported, so the caller does not confirm it.
+    pub(crate) fn change(&self, edit: impl FnOnce(&mut Vec<T>)) -> Result<(), NotSaved> {
         let mut memory = self.memory();
         let Some(path) = &self.path else {
             edit(&mut memory);
-            return;
+            return Ok(());
         };
         let result = (|| -> std::io::Result<()> {
             if let Some(dir) = path.parent() {
@@ -76,8 +82,9 @@ impl<T: Clone + PartialEq + Serialize + DeserializeOwned> Store<T> {
                 .open(path.with_extension("lock"))?;
             lock.lock()?;
             let OnDisk::Entries(mut entries) = self.read(path) else {
-                warn!(file = %path.display(), "file is from a newer version; leaving it unchanged");
-                return Ok(());
+                return Err(std::io::Error::other(
+                    "the file is from a newer version; leaving it unchanged",
+                ));
             };
             let before = entries.clone();
             edit(&mut entries);
@@ -86,9 +93,10 @@ impl<T: Clone + PartialEq + Serialize + DeserializeOwned> Store<T> {
             }
             Ok(())
         })();
-        if let Err(error) = result {
+        result.map_err(|error| {
             warn!(%error, file = %path.display(), "not saved");
-        }
+            NotSaved
+        })
     }
 
     fn memory(&self) -> std::sync::MutexGuard<'_, Vec<T>> {

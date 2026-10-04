@@ -191,7 +191,14 @@ async fn cards_are_snoozed_through_the_running_dashboard() {
         Err(pending_runtime::snoozes::SnoozeError::UnknownCard)
     );
 
-    live.wake(&id);
+    // Snoozing it again, as a page that still shows it would, sets the
+    // new time instead of failing.
+    let later = chrono::Utc::now() + chrono::Duration::hours(2);
+    live.snooze(&id, Some(later)).expect("already snoozed");
+    assert_eq!(live.snapshot().snoozed.len(), 1);
+    assert_eq!(live.snapshot().snoozed[0].until, Some(later));
+
+    live.wake(&id).expect("saved");
     assert!(ids(&live).contains(&id));
     assert!(live.snapshot().snoozed.is_empty());
     assert_eq!(live.snapshot().marked, std::slice::from_ref(&id));

@@ -119,7 +119,7 @@ fn a_snoozed_card_is_hidden_and_listed_until_woken() {
     assert_eq!(shown.snoozed[0].source, "plane");
     assert_eq!(shown.snoozed[0].until, Some(until));
 
-    snoozes.wake("a");
+    snoozes.wake("a").expect("saved");
     let shown = applied(&snoozes, fresh(&cards));
     assert_eq!(visible(&shown), ["a", "b"]);
     assert!(shown.snoozed.is_empty());
@@ -199,4 +199,111 @@ fn snoozes_of_finished_cards_are_dropped() {
         fresh(&[("a", base()), ("b", base())]),
     );
     assert_eq!(visible(&reloaded), ["a", "b"]);
+}
+
+/// A snoozed card can be snoozed again, from a snapshot that already lists
+/// it as snoozed (what the page and the TUI hold): the new time replaces
+/// the old one, and the card is still listed once.
+#[test]
+fn snoozing_a_snoozed_card_replaces_its_time() {
+    let snoozes = Snoozes::load(Some(scratch("again")));
+    let cards = [("a", base()), ("b", base())];
+    let first = Utc::now() + Duration::hours(1);
+    let second = Utc::now() + Duration::days(2);
+    snoozes.snooze(&fresh(&cards), "a", Some(first)).unwrap();
+    let shown = applied(&snoozes, fresh(&cards));
+    assert_eq!(visible(&shown), ["b"]);
+
+    snoozes
+        .snooze(&shown, "a", Some(second))
+        .expect("a snoozed card is still a card of the dashboard");
+
+    let shown = applied(&snoozes, fresh(&cards));
+    assert_eq!(snoozed(&shown), ["a"]);
+    assert_eq!(shown.snoozed[0].until, Some(second));
+    assert_eq!(shown.snoozed[0].source, "plane");
+    // Still not a way to snooze something that is nowhere.
+    assert_eq!(
+        snoozes.snooze(&shown, "ghost", None),
+        Err(SnoozeError::UnknownCard)
+    );
+}
+
+/// A snoozed card that an `exclude` pattern now hides is still open at
+/// its source: the snooze is kept, although a clean refresh no longer
+/// shows the card, and applies again when the pattern goes away.
+#[test]
+fn a_snooze_on_a_card_hidden_by_exclude_is_kept() {
+    let snoozes = Snoozes::load(Some(scratch("excluded")));
+    let cards = [("a", base()), ("b", base())];
+    snoozes.snooze(&fresh(&cards), "a", None).unwrap();
+
+    let mut excluding = fresh(&[("b", base())]);
+    snoozes.apply_hiding(&mut excluding, &["a".to_owned()].into());
+    assert!(snoozed(&excluding).is_empty());
+    assert_eq!(visible(&excluding), ["b"]);
+
+    let shown = applied(&snoozes, fresh(&cards));
+    assert_eq!(snoozed(&shown), ["a"]);
+}
+
+/// A snooze whose source is not on the dashboard (switched off, or absent
+/// from the config in use) is kept for a month, then forgotten.
+#[test]
+fn snoozes_of_an_absent_source_are_kept_for_a_month() {
+    let path = scratch("absent");
+    let entry = |id: &str, days: i64| {
+        serde_json::json!({
+            "id": id,
+            "source": "switched-off",
+            "snoozed_at": Utc::now() - Duration::days(days),
+            "until": null,
+            "updated_at": base(),
+        })
+    };
+    let file = serde_json::json!({
+        "version": 1,
+        "snoozes": [entry("recent", 29), entry("old", 31)],
+    });
+    std::fs::write(&path, file.to_string()).unwrap();
+    let snoozes = Snoozes::load(Some(path.clone()));
+
+    applied(&snoozes, fresh(&[("b", base())]));
+
+    let kept: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let ids: Vec<&str> = kept["snoozes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|snooze| snooze["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["recent"]);
+}
+
+/// A snooze that cannot be written is an error, not a silent success: the
+/// card would stay on the board while the page said it was snoozed.
+#[test]
+fn a_snooze_that_cannot_be_saved_is_an_error() {
+    let cards = [("a", base())];
+    // The state directory cannot be created: a file is in its place.
+    let blocker = scratch("unsaved").with_file_name("blocker");
+    std::fs::write(&blocker, "not a directory").unwrap();
+    let snoozes = Snoozes::load(Some(blocker.join("snoozes.json")));
+    assert_eq!(
+        snoozes.snooze(&fresh(&cards), "a", None),
+        Err(SnoozeError::NotSaved)
+    );
+    assert_eq!(snoozes.wake("a"), Err(SnoozeError::NotSaved));
+
+    // A file from a newer version is left alone, and says so.
+    let path = scratch("newer");
+    let newer = r#"{"version":99,"snoozes":[]}"#;
+    std::fs::write(&path, newer).unwrap();
+    let snoozes = Snoozes::load(Some(path.clone()));
+    assert_eq!(
+        snoozes.snooze(&fresh(&cards), "a", None),
+        Err(SnoozeError::NotSaved)
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), newer);
+    assert_eq!(visible(&applied(&snoozes, fresh(&cards))), ["a"]);
 }

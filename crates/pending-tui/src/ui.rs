@@ -431,7 +431,11 @@ fn card_details<'a>(app: &App, card: &'a PendingCard) -> Vec<Line<'a>> {
     if let Some(due) = card.due_at {
         lines.push(field("Due", local(due)));
     }
-    lines.push(field("Updated", local(card.updated_at)));
+    // The epoch stands for "the source gave no update time" (calendar
+    // events without one): nothing worth showing.
+    if card.updated_at != DateTime::UNIX_EPOCH {
+        lines.push(field("Updated", local(card.updated_at)));
+    }
     if let Some(url) = &card.url {
         lines.push(field("Link", url.clone()));
     }
@@ -1542,6 +1546,25 @@ mod tests {
                 "missing {expected:?} in\n{screen}"
             );
         }
+    }
+
+    /// A card whose source gave no update time (kept as the epoch) shows
+    /// no "Updated" line instead of a date in 1970.
+    #[test]
+    fn card_details_leave_out_an_unknown_update_time() {
+        let details = |updated_at| {
+            let mut item = card("Mine", "API-7", "");
+            item.card.updated_at = updated_at;
+            let mut app = app(vec![fresh("plane", "Work", &["Mine"], vec![item])]);
+            app.handle_key(KeyEvent::from(KeyCode::Char(' ')));
+            screen(&app, 120, 40)
+        };
+
+        let known = details(Utc.with_ymd_and_hms(2026, 9, 28, 10, 0, 0).unwrap());
+        assert!(known.contains("Updated"), "{known}");
+        let unknown = details(DateTime::UNIX_EPOCH);
+        assert!(!unknown.contains("Updated"), "{unknown}");
+        assert!(!unknown.contains("1970"), "{unknown}");
     }
 
     /// The popup is centered and at most 110 × 30, however big the terminal.

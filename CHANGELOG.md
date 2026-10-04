@@ -17,6 +17,7 @@
 ### Fixed
 
 - Calendar events without a modification time no longer look changed on every refresh.
+- A mark that cannot be written to disk is now reported (HTTP 500, and a notice in the TUI) instead of looking saved.
 
 ## 0.4.0
 

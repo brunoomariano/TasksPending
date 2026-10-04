@@ -82,8 +82,7 @@ impl Dashboard for live::Live {
     }
 
     fn wake(&self, id: &str) -> Result<(), snoozes::SnoozeError> {
-        live::Live::wake(self, id);
-        Ok(())
+        live::Live::wake(self, id)
     }
 }
 

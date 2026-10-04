@@ -232,15 +232,10 @@ impl Aggregator {
         build_snapshot(Utc::now(), self.shared.reports())
     }
 
-    /// Ids of the cards that `exclude` patterns left in no stack: still
-    /// pending at their source, just not on the dashboard. Marks use it to
-    /// tell a hidden card from a finished one.
-    pub fn hidden_ids(&self) -> HashSet<String> {
-        self.snapshot_with_hidden().1
-    }
-
-    /// The snapshot together with the hidden ids of the very batches it
-    /// was built from (see [`Aggregator::hidden_ids`]). Reading the two
+    /// The snapshot together with the ids of the cards that `exclude`
+    /// patterns left in no stack: still pending at their source, just not
+    /// on the dashboard. Marks use them to tell a hidden card from a
+    /// finished one. Both come from the very same batches; reading them
     /// separately could pair a new batch with old hidden ids.
     pub fn snapshot_with_hidden(&self) -> (DashboardSnapshot, HashSet<String>) {
         let (reports, hidden) = {

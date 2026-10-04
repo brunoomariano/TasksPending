@@ -559,8 +559,63 @@ async fn excluded_cards_are_absent_from_their_stack_only() {
     assert_eq!(health.status, SourceStatus::Ready);
     assert_eq!(health.message, None);
     // Only the card left in no stack at all is reported as hidden.
-    assert_eq!(
-        aggregator.hidden_ids().into_iter().collect::<Vec<_>>(),
-        ["draft"]
+    assert_eq!(hidden(&aggregator), ["draft"]);
+}
+
+fn hidden(aggregator: &Aggregator) -> Vec<String> {
+    let mut ids: Vec<String> = aggregator.snapshot_with_hidden().1.into_iter().collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// A spec whose only stack leaves out every card with "wip" in its title.
+fn wip_excluding_spec(source: Arc<Scripted>) -> SourceSpec {
+    let config: pending_core::SourceConfig = toml::from_str(
+        "name = \"test\"\nkind = \"plane\"\n[[stacks]]\nname = \"Review\"\nexclude = [\"wip\"]",
+    )
+    .expect("valid toml");
+    SourceSpec {
+        excludes: Excludes::from_stacks(&config.stacks).expect("valid patterns"),
+        ..spec(source, 60)
+    }
+}
+
+/// The hidden cards are those of the batch on screen: a later batch
+/// replaces them, and a failed refresh, which keeps the previous batch,
+/// keeps its hidden cards too.
+#[tokio::test(start_paused = true)]
+async fn hidden_cards_follow_the_batch_on_screen() {
+    let (source, _) = Scripted::new(
+        "test",
+        vec![
+            Ok(batch("wip-first")),
+            Ok(batch("wip-second")),
+            Err(SourceError::new("503")),
+            Ok(batch("shown")),
+        ],
     );
+    let aggregator = Aggregator::start(vec![wip_excluding_spec(source)], TIMEOUT);
+
+    advance(1).await;
+    assert_eq!(hidden(&aggregator), ["wip-first"]);
+    assert!(card_ids(&aggregator.snapshot()).is_empty());
+
+    aggregator.refresh_now();
+    advance(1).await;
+    assert_eq!(hidden(&aggregator), ["wip-second"]);
+
+    aggregator.refresh_now();
+    advance(1).await;
+    assert_eq!(
+        health(&aggregator.snapshot(), "test").status,
+        SourceStatus::Degraded
+    );
+    assert_eq!(hidden(&aggregator), ["wip-second"]);
+
+    // The failure backs the source off; wait it out.
+    advance(3600).await;
+    aggregator.refresh_now();
+    advance(1).await;
+    assert_eq!(card_ids(&aggregator.snapshot()), ["shown"]);
+    assert!(hidden(&aggregator).is_empty());
 }

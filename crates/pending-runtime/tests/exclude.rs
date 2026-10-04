@@ -143,3 +143,22 @@ fn invalid_and_empty_patterns_are_rejected() {
     assert!(error.contains("stack `Blank`"), "{error}");
     assert!(error.contains("empty"), "{error}");
 }
+
+/// A pattern that matches the empty text would hide cards whatever they
+/// say (a trailing `|`, `.*`, a bare anchor): it is rejected like a typo.
+#[test]
+fn patterns_matching_the_empty_text_are_rejected() {
+    for pattern in ["bot|", ".*", "^$", "(wip)?", "^"] {
+        let error = excludes(&format!(
+            "[[stacks]]\nname = \"Review\"\nexclude = ['{pattern}']"
+        ))
+        .expect_err(pattern);
+        assert!(error.contains("stack `Review`"), "{error}");
+        assert!(error.contains(&format!("`{pattern}`")), "{error}");
+        assert!(error.contains("empty text"), "{error}");
+    }
+
+    // Patterns that need at least one character are fine.
+    excludes("[[stacks]]\nname = \"Review\"\nexclude = ['bot|wip', '.+', '^chore']")
+        .expect("valid patterns");
+}

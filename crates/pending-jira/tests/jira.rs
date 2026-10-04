@@ -278,9 +278,17 @@ fn local_midnight(year: i32, month: u32, day: u32) -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
+/// Fails without printing the text or the credential it found: a test log
+/// is no place for either, even made-up ones.
 fn assert_no_secret(text: &str) {
-    for secret in [API_TOKEN, PAT, EMAIL, "bWVAZXhhbXBsZS5jb20"] {
-        assert!(!text.contains(secret), "leaked {secret}: {text}");
+    let secrets = [
+        ("the API token", API_TOKEN),
+        ("the access token", PAT),
+        ("the e-mail", EMAIL),
+        ("the encoded e-mail", "bWVAZXhhbXBsZS5jb20"),
+    ];
+    for (name, secret) in secrets {
+        assert!(!text.contains(secret), "the message leaks {name}");
     }
 }
 

@@ -411,6 +411,99 @@ async fn pages_are_followed_with_the_end_cursor() {
     assert_eq!(stub.bodies.lock().unwrap().len(), 2);
 }
 
+/// A page that hands back the cursor it was asked with would be read
+/// forever: the stack stops there with what it has.
+#[tokio::test]
+async fn a_repeated_cursor_ends_the_stack() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = calls.clone();
+    let stub = Stub::new(move |_| {
+        let n = counter.fetch_add(1, Ordering::SeqCst) + 1;
+        page(vec![issue(&format!("ENG-{n}"), "Again")], Some("same"))
+    });
+
+    let batch = refresh_with(&stub, vec![column("Mine")])
+        .await
+        .expect("refresh succeeds");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(batch.items.len(), 2);
+}
+
+/// An issue in a finished or cancelled state keeps its due date in the
+/// details but is not overdue: a stack of completed work is not a wall of
+/// critical cards.
+#[tokio::test]
+async fn finished_issues_are_never_overdue() {
+    let stub = Stub::new(|body| {
+        assert!(
+            body["query"]
+                .as_str()
+                .unwrap()
+                .contains("state { name type }"),
+            "the state type is asked for"
+        );
+        let late = |identifier: &str, name: &str, kind: &str| {
+            let mut issue = issue(identifier, "Late");
+            issue["dueDate"] = json!("2020-01-02");
+            issue["state"] = json!({ "name": name, "type": kind });
+            issue
+        };
+        page(
+            vec![
+                late("ENG-1", "Done", "completed"),
+                late("ENG-2", "Won't do", "canceled"),
+                late("ENG-3", "In Progress", "started"),
+            ],
+            None,
+        )
+    });
+    let columns = vec![LinearColumn {
+        state_type: vec![
+            StateType::Started,
+            StateType::Completed,
+            StateType::Canceled,
+        ],
+        ..column("Recent")
+    }];
+
+    let batch = refresh_with(&stub, columns)
+        .await
+        .expect("refresh succeeds");
+
+    let cards: Vec<(&str, CardSeverity, &str)> = batch
+        .items
+        .iter()
+        .map(|item| {
+            (
+                item.card.id.as_str(),
+                item.card.severity,
+                item.card.body.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        cards,
+        [
+            (
+                "linear:ENG-1",
+                CardSeverity::Info,
+                "Late · Engineering · Done · due 2020-01-02"
+            ),
+            (
+                "linear:ENG-2",
+                CardSeverity::Info,
+                "Late · Engineering · Won't do · due 2020-01-02"
+            ),
+            (
+                "linear:ENG-3",
+                CardSeverity::Critical,
+                "Late · Engineering · In Progress · overdue since 2020-01-02"
+            ),
+        ]
+    );
+}
+
 /// A stack with more pages than the cap stops asking and warns that the
 /// list is cut, naming the stack.
 #[tokio::test]
@@ -544,6 +637,96 @@ async fn rate_limiting_reports_when_to_retry() {
     let message = error.to_string();
     assert!(message.contains("rate limit"), "{message}");
     assert!(message.contains("2999-01-01T12:00:00"), "{message}");
+}
+
+/// A reply can carry issues and errors at once (status 200): the issues may
+/// be incomplete, so the stack fails with the error instead of showing
+/// them, and the other stacks still show.
+#[tokio::test]
+async fn a_reply_with_both_issues_and_errors_fails_its_stack() {
+    let stub = Stub::new(|body| match state_types(body).join(",").as_str() {
+        "started" => reply(
+            StatusCode::OK,
+            json!({
+                "data": { "issues": {
+                    "nodes": [issue("ENG-1", "Partial")],
+                    "pageInfo": { "hasNextPage": false, "endCursor": null },
+                } },
+                "errors": [{ "message": "Could not resolve every field" }],
+            }),
+        ),
+        _ => page(vec![issue("ENG-2", "Fine")], None),
+    });
+    let columns = vec![
+        LinearColumn {
+            state_type: vec![StateType::Started],
+            ..column("Started")
+        },
+        LinearColumn {
+            state_type: vec![StateType::Backlog],
+            ..column("Backlog")
+        },
+    ];
+
+    let batch = refresh_with(&stub, columns).await.expect("partial refresh");
+
+    assert_eq!(
+        ids(&batch),
+        vec![("Backlog".to_owned(), "linear:ENG-2".to_owned())]
+    );
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    assert!(
+        batch.warnings[0].starts_with("Started: ")
+            && batch.warnings[0].contains("Could not resolve every field"),
+        "{:?}",
+        batch.warnings
+    );
+}
+
+/// A rate limit on one stack among working ones is that stack's warning,
+/// naming the reset time; the other stacks show, and the source is asked
+/// again at its usual interval.
+#[tokio::test]
+async fn a_rate_limit_on_one_stack_is_a_warning() {
+    let reset = Utc.with_ymd_and_hms(2999, 1, 1, 12, 0, 0).unwrap();
+    let stub = Stub::new(move |body| match state_types(body).join(",").as_str() {
+        "started" => {
+            let mut reply = graphql_error(
+                StatusCode::BAD_REQUEST,
+                "Rate limit exceeded",
+                "RATELIMITED",
+            );
+            reply.headers = vec![
+                ("x-ratelimit-requests-remaining", "0".to_owned()),
+                (
+                    "x-ratelimit-requests-reset",
+                    reset.timestamp_millis().to_string(),
+                ),
+            ];
+            reply
+        }
+        _ => page(vec![issue("ENG-2", "Fine")], None),
+    });
+    let columns = vec![
+        LinearColumn {
+            state_type: vec![StateType::Started],
+            ..column("Started")
+        },
+        LinearColumn {
+            state_type: vec![StateType::Backlog],
+            ..column("Backlog")
+        },
+    ];
+
+    let batch = refresh_with(&stub, columns).await.expect("partial refresh");
+
+    assert_eq!(batch.items.len(), 1);
+    assert_eq!(batch.warnings.len(), 1, "{:?}", batch.warnings);
+    assert!(
+        batch.warnings[0].starts_with("Started: Linear rate limit exceeded; resets at 2999-01-01"),
+        "{:?}",
+        batch.warnings
+    );
 }
 
 /// The complexity limit has its own reset header; the exhausted limit is the

@@ -131,6 +131,7 @@ enabled = true
 # Jira: every stack is a JQL query (the syntax of Jira's issue search).
 # Needs JIRA_BASE_URL, plus JIRA_EMAIL and JIRA_API_TOKEN (Jira Cloud) or
 # JIRA_TOKEN alone (Jira Data Center personal access token).
+# JIRA_EMAIL together with JIRA_TOKEN is refused: unset one of them.
 # [[sources]]
 # name = "jira"
 # kind = "jira"

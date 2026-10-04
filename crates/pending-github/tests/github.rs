@@ -242,7 +242,7 @@ fn sections(batch: &SourceBatch) -> Vec<(String, String)> {
 
 /// Without configured stacks, pending work is split by the next action:
 /// reviews requested from me, my pull requests returned with changes
-/// requested, approved, still waiting on reviewers and drafts, then issues
+/// requested, approved, not approved yet and drafts, then issues
 /// assigned to me. Each card carries link, repository and number. What blocks
 /// someone else or needs my rework (a review request, a returned pull
 /// request) is a warning; the rest is info.

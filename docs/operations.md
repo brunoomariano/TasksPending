@@ -47,7 +47,7 @@ Matching rules:
 - Patterns are regular expressions in the [`regex` crate syntax](https://docs.rs/regex/latest/regex/#syntax), compared without case. In a TOML basic string a backslash is written twice (`"\\["`); a literal string in single quotes takes it once (`'\['`).
 - A pattern matches anywhere in the text unless anchored. The title and the body are tested separately, each as one text: `^` and `$` mean the start and end of the title or of the whole body, not of each body line (start a pattern with `(?m)` for that).
 - The text is what the card shows: the title, and the body as written in the card (for GitHub searches, `owner/repo#12 · @author` plus draft, review and comment notes). Fields a card does not show, such as labels, cannot be matched.
-- An invalid or empty pattern fails when the config loads, naming the file, the source, the stack and the pattern, also in a stack with `enabled = false`. The `sample` source has fixed stacks and takes none of these keys.
+- An invalid or empty pattern, or one that matches the empty text (`"bot|"`, `".*"`, `"^$"`: it would hide cards whatever they say), fails when the config loads, naming the file, the source, the stack and the pattern, also in a stack with `enabled = false`. The `sample` source has fixed stacks and takes none of these keys.
 - Patterns apply when cards arrive (and to cached cards at startup), so a changed list takes effect when the config is reloaded and the source refreshes. The cache holds the cards already filtered.
 
 A marked card (see "Now" below) that `exclude` hides from every stack is off the dashboard but keeps its mark, since the item is still open at its source; the mark shows again when the pattern goes away, and is dropped as usual once the source no longer lists the item.

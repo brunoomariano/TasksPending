@@ -6,8 +6,10 @@ use std::time::Duration;
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use futures_util::future::join_all;
 use pending_core::{
-    BoxFuture, CardSeverity, PendingCard, PendingSource, SourceBatch, SourceError, SourceItem,
+    BoxFuture, CardSeverity, DueDay, PendingCard, PendingSource, SourceBatch, SourceError,
+    SourceItem,
 };
+use pending_http::{Budget, DEFAULT_REFRESH_BUDGET};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::redirect::Policy;
 use reqwest::{Client, StatusCode};
@@ -24,10 +26,9 @@ pub const BASE_URL_ENV: &str = "GITLAB_BASE_URL";
 /// Per-request limit, below the aggregator's default refresh timeout (60s)
 /// so a hanging request becomes a warning instead of failing the refresh.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-/// What one stack may take for all its pages together. The default stacks
-/// run in at most two rounds of [`MAX_CONCURRENT_STACKS`], so two rounds fit
-/// the aggregator's default source timeout (60s) and a slow stack becomes a
-/// warning instead of failing the whole source.
+/// What one stack may take for all its pages together, so a slow stack
+/// becomes a warning instead of failing the whole source. All the stacks
+/// together have [`DEFAULT_REFRESH_BUDGET`], whatever their number.
 const DEFAULT_STACK_BUDGET: Duration = Duration::from_secs(25);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Maximum page size of the GitLab API.
@@ -209,12 +210,16 @@ impl GitlabColumn {
 }
 
 /// A group or project path (or numeric id): non-empty parts separated by
-/// `/`, without spaces.
+/// `/`, without spaces. `.` and `..` are not names GitLab allows, and a
+/// server or proxy that decodes the path would walk out of the API route
+/// with them.
 fn is_path(path: &str) -> bool {
     !path.is_empty()
-        && path
-            .split('/')
-            .all(|part| !part.is_empty() && !part.chars().any(char::is_whitespace))
+        && path.split('/').all(|part| {
+            !part.is_empty()
+                && !matches!(part, "." | "..")
+                && !part.chars().any(char::is_whitespace)
+        })
 }
 
 /// One URL path segment: everything but unreserved characters is
@@ -264,6 +269,7 @@ pub struct GitlabSource {
     token: Result<String, String>,
     request_timeout: Duration,
     stack_budget: Duration,
+    refresh_budget: Duration,
     columns: Vec<GitlabColumn>,
     today: fn() -> NaiveDate,
 }
@@ -292,6 +298,7 @@ impl GitlabSource {
             token,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             stack_budget: DEFAULT_STACK_BUDGET,
+            refresh_budget: DEFAULT_REFRESH_BUDGET,
             columns: default_columns(),
             today: local_today,
         }
@@ -341,6 +348,13 @@ impl GitlabSource {
         self
     }
 
+    /// Replaces [`DEFAULT_REFRESH_BUDGET`], the time all stacks of one
+    /// refresh have together.
+    pub fn with_refresh_budget(mut self, budget: Duration) -> Self {
+        self.refresh_budget = budget;
+        self
+    }
+
     /// The date "overdue" is measured against (the local date by default).
     pub fn with_today(mut self, today: fn() -> NaiveDate) -> Self {
         self.today = today;
@@ -356,6 +370,7 @@ impl GitlabSource {
         header.set_sensitive(true);
         let auth = Auth { token, header };
 
+        let budget = Budget::start(self.stack_budget, self.refresh_budget);
         // A few at a time, so an instance never gets a burst. Results keep
         // stack order.
         let mut results = Vec::with_capacity(self.columns.len());
@@ -364,7 +379,7 @@ impl GitlabSource {
                 join_all(
                     chunk
                         .iter()
-                        .map(|column| self.within_budget(self.column_cards(&auth, column))),
+                        .map(|column| budget.run(self.column_cards(&auth, column))),
                 )
                 .await,
             );
@@ -406,19 +421,6 @@ impl GitlabSource {
         }
         batch.warnings.extend(failures);
         Ok(batch)
-    }
-
-    /// Runs one stack within the stack budget. A stack that runs out of time
-    /// fails like any other failing stack; the pages it had already read are
-    /// dropped, because the stack would be incomplete.
-    async fn within_budget<T>(
-        &self,
-        stack: impl Future<Output = Result<T, Failure>>,
-    ) -> Result<T, Failure> {
-        match tokio::time::timeout(self.stack_budget, stack).await {
-            Ok(result) => result,
-            Err(_) => Err(format!("timed out after {:?}", self.stack_budget).into()),
-        }
     }
 
     /// The cards of one stack; `true` when pages were left unread.
@@ -753,12 +755,10 @@ impl Issue {
     fn into_card(self, severity: Option<CardSeverity>, today: NaiveDate) -> PendingCard {
         let mut body = reference_and_author(self.references, format!("#{}", self.iid), self.author);
         push_comments(&mut body, self.user_notes_count);
-        let overdue = self.due_date.is_some_and(|due| due < today);
-        if let Some(due) = self.due_date {
-            body.push_str(&format!(
-                " · {} {due}",
-                if overdue { "overdue since" } else { "due" }
-            ));
+        let due = self.due_date.map(|day| DueDay::new(day, today));
+        let overdue = due.is_some_and(DueDay::is_overdue);
+        if let Some(due) = due {
+            body.push_str(&format!(" · {}", due.label()));
         }
         PendingCard {
             id: format!("gitlab:issue:{}:{}", self.project_id, self.iid),
@@ -766,12 +766,7 @@ impl Issue {
             body,
             source: "gitlab".to_owned(),
             url: Some(self.web_url),
-            // Local midnight, matching how "overdue" is decided.
-            due_at: self
-                .due_date
-                .and_then(|due| due.and_hms_opt(0, 0, 0))
-                .and_then(|due| due.and_local_timezone(Local).earliest())
-                .map(|due| due.with_timezone(&Utc)),
+            due_at: due.and_then(DueDay::at),
             severity: severity.unwrap_or(if overdue {
                 CardSeverity::Critical
             } else {

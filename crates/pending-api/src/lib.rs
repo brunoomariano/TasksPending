@@ -210,7 +210,7 @@ impl Dashboard for SandboxDashboard {
     }
 
     fn look(&self) {
-        self.looks.look();
+        self.looks.look(&self.snapshot());
     }
 }
 

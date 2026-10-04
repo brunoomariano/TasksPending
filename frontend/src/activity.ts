@@ -1,10 +1,13 @@
-/** Events that count as the user looking at the page. */
+/**
+ * Events that count as the user looking at the page: things done on
+ * purpose. The pointer merely crossing the window (or the window taking
+ * focus because the pointer is over it) is not one: it would start a new
+ * sitting, and clear what changed, without anyone having looked.
+ */
 export const ACTIVITY_EVENTS = [
-  "pointermove",
   "pointerdown",
   "keydown",
-  "focus",
-  // Reading by scrolling moves no pointer.
+  // Reading by scrolling presses nothing.
   "wheel",
   "scroll",
   "touchstart",

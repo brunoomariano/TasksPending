@@ -14,8 +14,8 @@ function fakeTarget() {
 
 describe("startActivity", () => {
   /**
-   * Looking at the page is any activity on it; it is reported right away and
-   * then at most once a minute, however much the mouse moves.
+   * Looking at the page is doing something on it; it is reported right away
+   * and then at most once a minute, however many events arrive.
    */
   test("reports activity at once and then at most once a minute", () => {
     const target = fakeTarget();
@@ -27,8 +27,8 @@ describe("startActivity", () => {
       [...ACTIVITY_EVENTS].sort(),
     );
 
-    target.listeners.get("pointermove")!();
-    target.listeners.get("pointermove")!();
+    target.listeners.get("pointerdown")!();
+    target.listeners.get("pointerdown")!();
     target.listeners.get("keydown")!();
     expect(report).toHaveBeenCalledTimes(1);
 
@@ -37,8 +37,23 @@ describe("startActivity", () => {
     expect(report).toHaveBeenCalledTimes(1);
 
     now += 1_000;
-    target.listeners.get("focus")!();
+    target.listeners.get("keydown")!();
     expect(report).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * The pointer crossing the window, or the window taking focus under it,
+   * is not looking: nothing listens to those, so they cannot start a new
+   * sitting and clear the changed dots unseen.
+   */
+  test("pointer movement and focus alone are not activity", () => {
+    const target = fakeTarget();
+
+    startActivity(() => {}, { target, now: () => 0 });
+
+    for (const type of ["pointermove", "mousemove", "focus", "pointerenter"]) {
+      expect(target.listeners.has(type), type).toBe(false);
+    }
   });
 
   /**

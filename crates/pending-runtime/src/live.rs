@@ -112,7 +112,10 @@ impl Live {
 
     /// Records that the user is looking at the dashboard now.
     pub fn look(&self) {
-        self.inner.looks.look();
+        // What the sources show now; marks and snoozes do not change when
+        // their cards were fetched.
+        let aggregator = self.state().aggregator.clone();
+        self.inner.looks.look(&aggregator.snapshot());
     }
 
     /// Hides a card until `until`, or until the item changes when `None`;
@@ -324,5 +327,32 @@ mod tests {
         let mut bare = excluding.snapshot();
         marks.apply(&mut bare);
         assert!(bare.marked.is_empty());
+    }
+
+    /// Only cards on the boards are flagged as changed: a snoozed card
+    /// that changed is in the snoozed list, not among the flags, and a
+    /// look records the refresh its source was showing.
+    #[tokio::test(start_paused = true)]
+    async fn a_snoozed_card_is_not_flagged_as_changed() {
+        let (marks, snoozes, looks) = (Marks::load(None), Snoozes::load(None), Looks::load(None));
+        // The first look was an hour ago; the card was updated since.
+        looks.look_at(Utc::now() - chrono::Duration::hours(1));
+        let shown = aggregator("");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let snapshot = assemble(&shown, &marks, &snoozes, &looks);
+        assert_eq!(snapshot.changed, ["parser"]);
+
+        snoozes
+            .snooze(
+                &snapshot,
+                "parser",
+                Some(Utc::now() + chrono::Duration::hours(1)),
+            )
+            .expect("the card is on the dashboard");
+        let snapshot = assemble(&shown, &marks, &snoozes, &looks);
+
+        assert_eq!(snapshot.snoozed.len(), 1);
+        assert!(snapshot.changed.is_empty());
     }
 }

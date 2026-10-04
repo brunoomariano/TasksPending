@@ -108,8 +108,8 @@ impl Live {
     }
 
     /// Brings a snoozed card back now.
-    pub fn wake(&self, id: &str) {
-        self.inner.snoozes.wake(id);
+    pub fn wake(&self, id: &str) -> Result<(), SnoozeError> {
+        self.inner.snoozes.wake(id)
     }
 
     /// Marks or unmarks a card as in progress; only a card on the dashboard

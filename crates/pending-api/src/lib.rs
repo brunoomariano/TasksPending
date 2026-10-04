@@ -202,8 +202,7 @@ impl Dashboard for SandboxDashboard {
     }
 
     fn wake(&self, id: &str) -> Result<(), SnoozeError> {
-        self.snoozes.wake(id);
-        Ok(())
+        self.snoozes.wake(id)
     }
 }
 
@@ -357,6 +356,7 @@ async fn set_mark(
         Ok(()) => StatusCode::NO_CONTENT,
         Err(MarkError::UnknownCard) => StatusCode::NOT_FOUND,
         Err(MarkError::Unsupported) => StatusCode::NOT_IMPLEMENTED,
+        Err(MarkError::NotSaved) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -391,6 +391,7 @@ async fn set_snooze(
         Err(SnoozeError::UnknownCard) => StatusCode::NOT_FOUND,
         Err(SnoozeError::PastTime) => StatusCode::BAD_REQUEST,
         Err(SnoozeError::Unsupported) => StatusCode::NOT_IMPLEMENTED,
+        Err(SnoozeError::NotSaved) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -721,6 +722,11 @@ mod tests {
         let status = post_json(app.clone(), "/api/v1/snooze", &snooze, true).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         assert_eq!(board_state(app.clone(), &id).await, (false, 1));
+
+        // A page that still shows the card (or wants another time) may
+        // snooze it again: the time is replaced, not refused.
+        let status = post_json(app.clone(), "/api/v1/snooze", &snooze, true).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
 
         let wake = format!(r#"{{"id":{id:?},"snoozed":false}}"#);
         let status = post_json(app.clone(), "/api/v1/snooze", &wake, true).await;

@@ -32,6 +32,8 @@ pub enum SnoozeError {
     PastTime,
     #[error("this dashboard cannot snooze cards")]
     Unsupported,
+    #[error("the snooze could not be saved (see the log)")]
+    NotSaved,
 }
 
 pub struct Snoozes {
@@ -49,7 +51,8 @@ impl Snoozes {
 
     /// Hides the card `id` until `until`, or until the item changes when
     /// `None` (it also comes back early if the item changes). Only a card
-    /// on `snapshot` can be snoozed. Snoozing again replaces the time.
+    /// on `snapshot` can be snoozed: on its boards, or already among its
+    /// snoozed cards, in which case the new time replaces the old one.
     pub fn snooze(
         &self,
         snapshot: &DashboardSnapshot,
@@ -60,28 +63,40 @@ impl Snoozes {
         if until.is_some_and(|until| until <= now) {
             return Err(SnoozeError::PastTime);
         }
-        let source = source_of(snapshot, id).ok_or(SnoozeError::UnknownCard)?;
-        let updated_at = cards(snapshot)
+        // A snapshot that went through `apply` no longer has a snoozed
+        // card on its boards, only in its snoozed list.
+        let on_board = cards(snapshot)
             .find(|card| card.id == id)
-            .map(|card| card.updated_at)
+            .and_then(|card| Some((source_of(snapshot, id)?, card.updated_at)));
+        let already_snoozed = || {
+            snapshot
+                .snoozed
+                .iter()
+                .find(|entry| entry.card.id == id)
+                .map(|entry| (entry.source.clone(), entry.card.updated_at))
+        };
+        let (source, updated_at) = on_board
+            .or_else(already_snoozed)
             .ok_or(SnoozeError::UnknownCard)?;
-        self.store.change(|snoozes| {
-            snoozes.retain(|snooze| snooze.id != id);
-            snoozes.push(Snooze {
-                id: id.to_owned(),
-                source,
-                snoozed_at: now,
-                until,
-                updated_at,
-            });
-        });
-        Ok(())
+        self.store
+            .change(|snoozes| {
+                snoozes.retain(|snooze| snooze.id != id);
+                snoozes.push(Snooze {
+                    id: id.to_owned(),
+                    source,
+                    snoozed_at: now,
+                    until,
+                    updated_at,
+                });
+            })
+            .map_err(|_| SnoozeError::NotSaved)
     }
 
     /// Brings the card `id` back now; does nothing if it is not snoozed.
-    pub fn wake(&self, id: &str) {
+    pub fn wake(&self, id: &str) -> Result<(), SnoozeError> {
         self.store
-            .change(|snoozes| snoozes.retain(|snooze| snooze.id != id));
+            .change(|snoozes| snoozes.retain(|snooze| snooze.id != id))
+            .map_err(|_| SnoozeError::NotSaved)
     }
 
     /// Takes the snoozed cards out of the boards and lists them in
@@ -118,7 +133,8 @@ impl Snoozes {
         let mut snoozes = self.store.current();
         if !snoozes.iter().all(keep) {
             // Decided again under the lock, on what the file holds then.
-            self.store.change(|snoozes| snoozes.retain(keep));
+            // A failed write is logged; they are forgotten again next time.
+            let _ = self.store.change(|snoozes| snoozes.retain(keep));
             snoozes = self.store.current();
         }
 

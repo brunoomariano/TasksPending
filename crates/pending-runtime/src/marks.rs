@@ -27,6 +27,8 @@ pub enum MarkError {
     UnknownCard,
     #[error("this dashboard cannot mark cards")]
     Unsupported,
+    #[error("the mark could not be saved (see the log)")]
+    NotSaved,
 }
 
 /// The marked cards, in marking order.
@@ -55,16 +57,17 @@ impl Marks {
             true => Some(source_of(snapshot, id).ok_or(MarkError::UnknownCard)?),
             false => None,
         };
-        self.store.change(|marks| match source {
-            Some(source) if !marks.iter().any(|mark| mark.id == id) => marks.push(Mark {
-                id: id.to_owned(),
-                source,
-                marked_at: Utc::now(),
-            }),
-            Some(_) => {}
-            None => marks.retain(|mark| mark.id != id),
-        });
-        Ok(())
+        self.store
+            .change(|marks| match source {
+                Some(source) if !marks.iter().any(|mark| mark.id == id) => marks.push(Mark {
+                    id: id.to_owned(),
+                    source,
+                    marked_at: Utc::now(),
+                }),
+                Some(_) => {}
+                None => marks.retain(|mark| mark.id != id),
+            })
+            .map_err(|_| MarkError::NotSaved)
     }
 
     /// Lists the marked cards in `snapshot.marked`, first dropping the marks
@@ -96,7 +99,8 @@ impl Marks {
         let mut marks = self.store.current();
         if !marks.iter().all(keep) {
             // Decided again under the lock, on what the file holds then.
-            self.store.change(|marks| marks.retain(keep));
+            // A failed write is logged; the marks are pruned again next time.
+            let _ = self.store.change(|marks| marks.retain(keep));
             marks = self.store.current();
         }
         snapshot.marked = marks.into_iter().map(|mark| mark.id).collect();

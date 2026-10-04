@@ -299,3 +299,37 @@ fn caches_from_the_previous_format_still_load() {
 
     assert_eq!(entries["github"].1.items[0].column, "Review requested");
 }
+
+/// Cached cards go through the current `exclude` patterns at startup (the
+/// cache may predate them), and the ones left out are known as hidden
+/// before the first refresh answers.
+#[tokio::test(start_paused = true)]
+async fn cached_cards_are_filtered_by_the_current_patterns() {
+    let path = cache_file("excluded");
+    Cache::new(path.clone())
+        .save(&[("github".to_owned(), Utc::now(), batch("wip-cached"))])
+        .unwrap();
+    let config: pending_core::SourceConfig = toml::from_str(
+        "name = \"github\"\nkind = \"plane\"\n[[stacks]]\nname = \"Review\"\nexclude = [\"wip\"]",
+    )
+    .expect("valid toml");
+
+    let aggregator = Aggregator::start_with_cache(
+        vec![SourceSpec {
+            excludes: pending_runtime::exclude::Excludes::from_stacks(&config.stacks)
+                .expect("valid patterns"),
+            ..spec(Err(SourceError::new("503")), 10)
+        }],
+        Duration::from_secs(30),
+        Some(Cache::new(path)),
+    );
+
+    let (snapshot, hidden) = aggregator.snapshot_with_hidden();
+    assert!(snapshot.boards.iter().all(|board| {
+        board
+            .groups
+            .iter()
+            .all(|group| group.columns.iter().all(|column| column.cards.is_empty()))
+    }));
+    assert_eq!(hidden.into_iter().collect::<Vec<_>>(), ["wip-cached"]);
+}

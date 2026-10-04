@@ -89,9 +89,8 @@ impl Live {
             let state = self.state();
             (state.aggregator.clone(), state.error.clone())
         };
-        let (mut snapshot, hidden) = aggregator.snapshot_with_hidden();
+        let mut snapshot = assemble(&aggregator, &self.inner.marks);
         snapshot.config_error = error;
-        self.inner.marks.apply_hiding(&mut snapshot, &hidden);
         snapshot
     }
 
@@ -177,8 +176,109 @@ impl Drop for Watch {
     }
 }
 
+/// The sources' snapshot with the user's state applied to it. The cards
+/// hidden by `exclude` come from the same batches as the snapshot, so a
+/// hidden card is never taken for a finished one.
+fn assemble(aggregator: &Aggregator, marks: &Marks) -> DashboardSnapshot {
+    let (mut snapshot, hidden) = aggregator.snapshot_with_hidden();
+    marks.apply_hiding(&mut snapshot, &hidden);
+    snapshot
+}
+
 /// The config file's current text, if it exists and is readable.
 fn read_config(cli: &Option<PathBuf>, env: &Env) -> Option<String> {
     let location = locate(cli.clone(), &**env)?;
     std::fs::read_to_string(location.path).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use chrono::Utc;
+    use pending_core::{
+        BoxFuture, CardSeverity, PendingCard, PendingSource, SourceBatch, SourceConfig,
+        SourceError, SourceItem,
+    };
+
+    use super::*;
+    use crate::SourceSpec;
+    use crate::exclude::Excludes;
+
+    /// One stack with one card, "wip parser".
+    struct OneCard;
+
+    impl PendingSource for OneCard {
+        fn columns(&self) -> Vec<String> {
+            vec!["Review".to_owned()]
+        }
+
+        fn refresh(&self) -> BoxFuture<'_, Result<SourceBatch, SourceError>> {
+            let batch = SourceBatch {
+                items: vec![SourceItem {
+                    column: "Review".to_owned(),
+                    card: PendingCard {
+                        id: "parser".to_owned(),
+                        title: "wip parser".to_owned(),
+                        body: String::new(),
+                        source: "test".to_owned(),
+                        url: None,
+                        severity: CardSeverity::Info,
+                        due_at: None,
+                        updated_at: Utc::now(),
+                    },
+                }],
+                warnings: Vec::new(),
+            };
+            Box::pin(async move { Ok(batch) })
+        }
+    }
+
+    fn aggregator(exclude: &str) -> Aggregator {
+        let config: SourceConfig = toml::from_str(&format!(
+            "name = \"test\"\nkind = \"plane\"\n[[stacks]]\nname = \"Review\"\nexclude = [{exclude}]"
+        ))
+        .expect("valid toml");
+        Aggregator::start(
+            vec![SourceSpec {
+                name: "test".to_owned(),
+                source: Arc::new(OneCard),
+                board: "Work".to_owned(),
+                interval: Duration::from_secs(60),
+                timeout: None,
+                icon: None,
+                sorts: Default::default(),
+                excludes: Excludes::from_stacks(&config.stacks).expect("valid patterns"),
+            }],
+            Duration::from_secs(30),
+        )
+    }
+
+    /// A marked card that a new `exclude` pattern hides keeps its mark on
+    /// the running dashboard, although a clean refresh after the mark no
+    /// longer shows the card: its source still lists it.
+    #[tokio::test(start_paused = true)]
+    async fn a_mark_survives_its_card_being_excluded() {
+        let marks = Marks::load(None);
+        let shown = aggregator("");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        marks
+            .set(&assemble(&shown, &marks), "parser", true)
+            .expect("the card is on the dashboard");
+
+        // Real time, so that the next refresh is after the mark.
+        std::thread::sleep(Duration::from_millis(5));
+        let excluding = aggregator("\"wip\"");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let snapshot = assemble(&excluding, &marks);
+
+        assert!(snapshot.boards[0].groups[0].columns[0].cards.is_empty());
+        assert_eq!(snapshot.marked, ["parser"]);
+        // Passing the hidden ids is what keeps it: without them the mark
+        // of a card gone after a clean refresh is dropped.
+        let mut bare = excluding.snapshot();
+        marks.apply(&mut bare);
+        assert!(bare.marked.is_empty());
+    }
 }

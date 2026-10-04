@@ -78,7 +78,7 @@ fn compile(pattern: &str) -> Result<Regex, String> {
     if pattern.trim().is_empty() {
         return Err("an `exclude` pattern is empty".to_owned());
     }
-    RegexBuilder::new(pattern)
+    let regex = RegexBuilder::new(pattern)
         .case_insensitive(true)
         .build()
         .map_err(|error| {
@@ -88,5 +88,13 @@ fn compile(pattern: &str) -> Result<Regex, String> {
             let reason = error.lines().last().unwrap_or_default().trim();
             let reason = reason.strip_prefix("error: ").unwrap_or(reason);
             format!("invalid `exclude` pattern `{pattern}`: {reason}")
-        })
+        })?;
+    // `bot|` or `.*` match the empty text, and with it every card (or every
+    // card without a body): a slip that would silently empty the stack.
+    if regex.is_match("") {
+        return Err(format!(
+            "`exclude` pattern `{pattern}` matches the empty text, so it would hide cards whatever they say"
+        ));
+    }
+    Ok(regex)
 }

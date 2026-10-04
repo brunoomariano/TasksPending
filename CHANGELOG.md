@@ -6,7 +6,7 @@
 
 - Every provider shows its Dashboard Icons logo by default: iCal sources now have one too, like GitHub, Google Calendar, Plane and Todoist. `icon` still overrides it.
 - Any stack can leave cards out with `exclude = ["pattern", ...]` in the config: a card whose title or body matches one of the patterns (regular expressions, compared without case) is absent from that stack only, for example to hide bot pull requests with `"dependabot\\[bot\\]"`. An invalid pattern, or one that matches the empty text (such as `"bot|"`), fails when the config loads, naming the source and the stack.
-- A GitHub source without `[[sources.stacks]]` now splits your pull requests by what to do next: "Returned to you" (changes requested, a warning), "Ready to merge" (approved), "Waiting on reviewers" and "Drafts", between "Review requested" and "Assigned issues". This replaces the single "My pull requests" stack, so the default GitHub group looks different and runs six searches per refresh instead of three. Sources with their own stacks are unchanged. See "GitHub Source" in [docs/operations.md](docs/operations.md).
+- A GitHub source without `[[sources.stacks]]` now splits your pull requests by what to do next: "Returned to you" (changes requested, a warning), "Ready to merge" (approved), "Not approved yet" (neither of the two) and "Drafts", between "Review requested" and "Assigned issues". This replaces the single "My pull requests" stack, so the default GitHub group looks different and runs six searches per refresh instead of three. Sources with their own stacks are unchanged. See "GitHub Source" in [docs/operations.md](docs/operations.md).
 
 ## 0.4.0
 

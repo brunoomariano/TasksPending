@@ -391,33 +391,51 @@ mod tests {
         }
     }
 
+    /// Where the default logos come from (the Dashboard Icons collection).
+    const DASHBOARD_ICONS: &str = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/";
+
+    /// The kind after `kind` in declaration order. The match has no wildcard,
+    /// so a new kind does not compile until it is placed in the walk, and
+    /// the test below then covers it.
+    fn kind_after(kind: SourceKind) -> Option<SourceKind> {
+        match kind {
+            SourceKind::Github => Some(SourceKind::Google),
+            SourceKind::Google => Some(SourceKind::Ical),
+            SourceKind::Ical => Some(SourceKind::Plane),
+            SourceKind::Plane => Some(SourceKind::Sample),
+            SourceKind::Sample => Some(SourceKind::Todoist),
+            SourceKind::Todoist => None,
+        }
+    }
+
     /// Every provider has a logo from Dashboard Icons by default, so a group
     /// is recognisable without configuring `icon`; only the built-in sample
     /// source, which is no provider, has none.
     #[test]
     fn every_provider_has_a_default_icon() {
-        for kind in [
-            SourceKind::Github,
-            SourceKind::Google,
-            SourceKind::Ical,
-            SourceKind::Plane,
-            SourceKind::Todoist,
-        ] {
+        let mut next = Some(SourceKind::Github);
+        let mut seen = 0;
+        while let Some(kind) = next {
+            next = kind_after(kind);
+            seen += 1;
+            if kind == SourceKind::Sample {
+                assert_eq!(kind.default_icon(), None);
+                continue;
+            }
             let icon = kind
                 .default_icon()
                 .unwrap_or_else(|| panic!("{kind:?} has a default icon"));
             assert!(
-                icon.url
-                    .starts_with("https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/"),
+                icon.url.starts_with(DASHBOARD_ICONS),
                 "{kind:?}: {}",
                 icon.url
             );
         }
+        assert_eq!(seen, 6, "the walk visits every kind");
         assert_eq!(
             SourceKind::Ical.default_icon().map(|icon| icon.url),
             Some(ICAL_ICON.to_owned())
         );
-        assert_eq!(SourceKind::Sample.default_icon(), None);
     }
 
     #[test]

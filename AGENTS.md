@@ -22,7 +22,7 @@ Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Board` (a fil
 - `make up`: run the daemon on `127.0.0.1:61000`.
 - `make app`: open the window (over the daemon when it runs, else over the sources).
 - `make sandbox`: open the window over deterministic simulated cards, without reading config, credentials, cache, or external sources.
-- `make screenshots`: regenerate `docs/assets/tasks-pending-sandbox.png` from the sandbox window (`tasks-pending sandbox --screenshot`); run it after a change that alters how the window looks. It needs a display that is drawing frames.
+- `make screenshots`: regenerate `docs/assets/tasks-pending-sandbox.png` from the sandbox window (`tasks-pending sandbox --screenshot`); run it after a change that alters how the window looks. It needs a display that is drawing frames (not one on DPMS off). Without one, GTK's Broadway backend works headless at 1024×768: `gtk4-broadwayd :5 &` then `GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 make screenshots`.
 - `make changelog-check`: check `CHANGELOG.md`'s sections.
 - `make install-test` / `make release-installer-test` / `make release-assets-test`: validate the source installer, the public release installer and its stable download aliases without network access or changes to the machine.
 - `make release-local` / `make release-smoke`: build the release bundle under `dist/`, and smoke test it.

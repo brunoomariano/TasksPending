@@ -8,14 +8,14 @@ Search existing issues and pull requests before opening a new one. For a bug, in
 
 ## Local checks
 
-Install the repository dependencies and run the read-only verification gate:
+Install the repository dependencies (Rust and the gtk4 and libadwaita development files; `make doctor` checks them) and run the read-only verification gate:
 
 ```sh
 make bootstrap
 make ci-check
 ```
 
-`make ci` also formats Rust and frontend files. Add focused tests for behavioral changes. When changing a `pending-core` model with TypeScript bindings, run `make contract` and include the regenerated frontend contract.
+`make ci` also formats the Rust code. Add focused tests for behavioral changes; the window's page model is tested without widgets, so changes to what the window shows start there.
 
 Keep code, comments, tests and documentation in English. Source-specific API behavior belongs in its source crate; shared contracts belong in `pending-core`. See [docs/architecture.md](docs/architecture.md) for the repository layout and [docs/operations.md](docs/operations.md) for user-facing behavior.
 

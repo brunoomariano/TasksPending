@@ -17,7 +17,7 @@ gh api --method PUT \
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["ci", "bundle", "macos", "scripts"]
+    "contexts": ["ci", "bundle", "scripts"]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": null,

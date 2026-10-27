@@ -7,7 +7,7 @@ refresh_seconds = 300
 # A refresh slower than this counts as a failure; sources may override it.
 timeout_seconds = 60
 
-# The page follows this file's order:
+# The window follows this file's order:
 #   - each [[sources]] is a group; groups run left to right in the order
 #     below, whatever their board;
 #   - each [[sources.stacks]] is a stack of cards inside its group; stacks
@@ -24,7 +24,7 @@ timeout_seconds = 60
 [[sources]]
 name = "sample"      # shown in source health; must be unique
 kind = "sample"      # built-in fixed cards
-board = "Inbox"      # area used by the web filter and TUI tabs (default "Inbox")
+board = "Inbox"      # area used by the board filter in Settings (default "Inbox")
 enabled = true
 # refresh_seconds = 60   # overrides the default above
 # timeout_seconds = 120  # overrides the default timeout above

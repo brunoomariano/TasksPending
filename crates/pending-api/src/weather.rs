@@ -1,6 +1,6 @@
-//! Weather for the web dashboard, as Omarchy reports it.
+//! Weather for the dashboard, as Omarchy reports it.
 //!
-//! A browser cannot run commands, so the API runs Omarchy's
+//! The daemon runs Omarchy's
 //! `omarchy-weather-status` and `omarchy-weather-icon` and serves the result
 //! at `GET /api/v1/weather`. Anywhere they are missing or fail (not on
 //! Omarchy, no location, offline) the answer is `{"available": false}`.
@@ -13,7 +13,9 @@ use std::time::Duration;
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
-use serde::Serialize;
+use pending_core::{
+    WeatherAnswer as Weather, WeatherCondition as Condition, WeatherReport as Report,
+};
 use tokio::time::Instant;
 use tracing::debug;
 
@@ -34,57 +36,6 @@ const FAILURE_TTL: Duration = Duration::from_secs(60);
 pub type CommandOutput = Pin<Box<dyn Future<Output = Option<String>> + Send>>;
 /// Runs one of the weather commands, named by its program, with no arguments.
 pub type CommandRunner = Arc<dyn Fn(&'static str) -> CommandOutput + Send + Sync>;
-
-/// The body of `GET /api/v1/weather`: `{"available": false}`, or
-/// `{"available": true}` with the fields of [`Report`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Weather {
-    available: bool,
-    #[serde(flatten)]
-    report: Option<Report>,
-}
-
-impl Weather {
-    const UNAVAILABLE: Self = Self {
-        available: false,
-        report: None,
-    };
-
-    fn available(report: Report) -> Self {
-        Self {
-            available: true,
-            report: Some(report),
-        }
-    }
-}
-
-/// The texts are shown as Omarchy formats them, e.g. `29°C` and `←15km/h`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-struct Report {
-    place: String,
-    temperature: String,
-    wind: String,
-    condition: Condition,
-}
-
-/// The conditions `omarchy-weather-icon` tells apart, as stable keywords for
-/// the page to pick an icon from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-enum Condition {
-    ClearDay,
-    ClearNight,
-    PartlyCloudyDay,
-    PartlyCloudyNight,
-    Cloudy,
-    Fog,
-    Rain,
-    Sleet,
-    Snow,
-    Thunder,
-    /// The icon command failed or printed a glyph this version doesn't know.
-    Unknown,
-}
 
 /// The condition behind a glyph printed by `omarchy-weather-icon` (Nerd Font
 /// weather icons). Omarchy draws showers and light snow differently by day
@@ -316,7 +267,6 @@ mod tests {
     fn api(service: WeatherService) -> Router {
         crate::app_with_weather(
             Aggregator::start(Vec::new(), Duration::from_secs(30)),
-            None,
             service,
         )
     }

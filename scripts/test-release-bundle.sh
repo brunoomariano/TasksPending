@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Checks the Linux tarball that users download: its layout, CLI, embedded page,
-# and JavaScript asset. Run after scripts/release-local.sh for a native target.
+# Checks the Linux tarball that users download: its layout, the CLI and the
+# daemon's API. Run after scripts/release-local.sh for a native target.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,15 +29,20 @@ BUNDLE="$WORK/$NAME"
 test -x "$BUNDLE/bin/tasks-pending"
 # One executable, nothing else.
 test "$(find "$BUNDLE/bin" -mindepth 1 | wc -l)" -eq 1
-test ! -e "$BUNDLE/frontend"
 for path in CHANGELOG.md LICENSE README.md config.example.toml docs/install.md docs/operations.md \
-  packaging/systemd/tasks-pending.service scripts/install.sh; do
+  packaging/systemd/tasks-pending.service \
+  packaging/applications/io.github.brunoomariano.TasksPending.desktop \
+  packaging/icons/tasks-pending.svg packaging/icons/tasks-pending.png scripts/install.sh; do
   test -e "$BUNDLE/$path"
 done
 
 "$BUNDLE/bin/tasks-pending" --help >/dev/null
+"$BUNDLE/bin/tasks-pending" app --help >/dev/null
 "$BUNDLE/bin/tasks-pending" serve --help >/dev/null
-"$BUNDLE/bin/tasks-pending" tui --help >/dev/null
+"$BUNDLE/bin/tasks-pending" sandbox --help >/dev/null
+"$BUNDLE/bin/tasks-pending" setup --help >/dev/null
+"$BUNDLE/bin/tasks-pending" upgrade --help >/dev/null
+"$BUNDLE/bin/tasks-pending" --version | grep -Fq "$VERSION"
 "$BUNDLE/bin/tasks-pending" serve --listen "127.0.0.1:$PORT" >"$LOG" 2>&1 &
 pid=$!
 
@@ -59,9 +64,7 @@ if (( !ready )); then
   exit 1
 fi
 
-page="$(curl -fsS "http://127.0.0.1:$PORT/")"
+curl -fsS "http://127.0.0.1:$PORT/healthz" | grep -Fq "\"version\":\"$VERSION\""
+curl -fsS "http://127.0.0.1:$PORT/api/v1/snapshot" | grep -Fq '"boards"'
+curl -fsS "http://127.0.0.1:$PORT/" | grep -Fq 'TasksPending'
 kill -0 "$pid" 2>/dev/null
-[[ $page == *'id="app"'* ]]
-asset="$(printf '%s' "$page" | sed -n 's/.*src="\([^"]*\.js\)".*/\1/p')"
-test -n "$asset"
-curl -fsSI "http://127.0.0.1:$PORT$asset" | grep -Fqi 'content-type: application/javascript; charset=utf-8'

@@ -1,0 +1,19 @@
+[package]
+name = "pending-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+chrono.workspace = true
+pending-core = { path = "../pending-core" }
+reqwest.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+pending-api = { path = "../pending-api" }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }

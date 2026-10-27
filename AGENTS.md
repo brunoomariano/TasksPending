@@ -46,7 +46,7 @@ Do not treat `make ci` as read-only; it runs formatters. Use `make ci-check` whe
 
 GTK4 and libadwaita, through `gtk4-rs` and `libadwaita-rs` without a component framework. The oldest supported versions are GTK 4.14 and libadwaita 1.5 (Ubuntu 24.04, where CI builds); do not use newer API without raising the crate features and the documented minimum.
 
-Visual style: simple and quiet. Colours come from the app's own palette in `crates/pending-app/src/theme.rs` (dark by default, light when the system asks), filled into `crates/pending-app/src/style.css`; no Omarchy or GTK theme colours. Icons are the system's symbolic icons (names present in Adwaita and Yaru); source logos are fetched from their configured URL. Cards carry no severity colour or label. Thin 1px borders over shadows, one accent, 6/12/18 px rhythm.
+Visual style: simple and quiet, described in `crates/pending-app/DESIGN.md` (read it before changing how the window looks). Colours come from the app's own palette in `crates/pending-app/src/theme.rs` (dark by default, light when the system asks), filled into `crates/pending-app/src/style.css`; no Omarchy or GTK theme colours. Icons are the system's symbolic icons (names present in Adwaita and Yaru); source logos are fetched from their configured URL. Cards carry no severity colour or label. Thin 1px borders over shadows, one accent, 6/12/18 px rhythm.
 
 ## Changes That Travel Together
 

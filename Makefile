@@ -44,8 +44,15 @@ app: ## Open the window (over the daemon when it runs, else over the sources)
 sandbox: ## Open the window over simulated cards, without config, credentials or network
 	cargo run -p tasks-pending -- sandbox
 
-screenshots: ## Regenerate the README picture from the sandbox window
-	cargo run -p tasks-pending -- sandbox --screenshot docs/assets/tasks-pending-sandbox.png
+# Needs a display that draws frames; headless: `gtk4-broadwayd :5 &` then
+# `GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 make screenshots` (1024x768).
+screenshots: ## Regenerate the README pictures from the sandbox window
+	cargo build -p tasks-pending
+	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-sandbox.png
+	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-sandbox-light.png --scene light
+	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-sources.png --scene sources
+	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-settings.png --scene settings
+	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-snoozed.png --scene snoozed
 
 changelog-check: ## Check CHANGELOG.md: one section per version, the current one first
 	./scripts/check-changelog.sh

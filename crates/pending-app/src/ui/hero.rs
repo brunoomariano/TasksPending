@@ -100,6 +100,11 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
     // The clock, scaling with the window up to a width.
     let date = label("", &["clock-date"]);
     date.set_halign(gtk::Align::Center);
+    let attributes = gtk::pango::AttrList::new();
+    attributes.insert(gtk::pango::AttrInt::new_letter_spacing(
+        super::board::TRACKING / 2,
+    ));
+    date.set_attributes(Some(&attributes));
     let digits = gtk::DrawingArea::builder().hexpand(true).build();
     digits.add_css_class("clock-digits");
     let frame = gtk::AspectFrame::builder()
@@ -141,6 +146,7 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
     actions.append(&settings_button);
 
     let updated = label("", &[]);
+    updated.set_single_line_mode(true);
     let version = label("", &[]);
     let snoozed_button = gtk::Button::builder().visible(false).build();
     snoozed_button.add_css_class("quiet-link");
@@ -164,10 +170,15 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
     let note = label("", &["updated"]);
     note.set_halign(gtk::Align::Center);
     note.set_visible(false);
-    let source_line = label(&ctx.model.borrow().source_line, &["updated"]);
+    // Where the dashboard comes from, kept short so the clock keeps its
+    // room; the whole line is in the tooltip.
+    let source_text = ctx.model.borrow().source_line.clone();
+    let source_line = label(&source_text, &["updated"]);
     source_line.set_halign(gtk::Align::Center);
-    source_line.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    source_line.set_max_width_chars(48);
+    source_line.set_single_line_mode(true);
+    source_line.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    source_line.set_max_width_chars(34);
+    source_line.set_tooltip_text(Some(&source_text));
 
     let controls = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)

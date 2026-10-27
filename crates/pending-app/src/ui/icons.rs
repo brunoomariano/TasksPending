@@ -15,10 +15,12 @@ use super::Ctx;
 const MAX_ICON_BYTES: usize = 1024 * 1024;
 
 /// Logos by URL: the bytes once fetched, `None` while they are being
-/// fetched or when the fetch failed.
+/// fetched or when the fetch failed, and the pictures waiting for them
+/// (the page may be rebuilt while a fetch is in flight).
 #[derive(Default)]
 pub struct Cache {
     bytes: HashMap<String, Option<gtk::glib::Bytes>>,
+    waiting: HashMap<String, Vec<gtk::Image>>,
     http: Option<reqwest::Client>,
 }
 
@@ -64,7 +66,9 @@ fn is_http_url(value: &str) -> bool {
 
 /// The source's logo at `size` pixels, or a generic icon without one. The
 /// logo appears once fetched; until then (and on failure) the widget is an
-/// empty box of the same size, so the layout does not move.
+/// empty image of the same size, so the layout does not move. An image
+/// with a pixel size measures exactly that, whatever the logo's own size;
+/// a picture would ask for the logo's intrinsic size and widen its group.
 pub fn source_icon(ctx: &Rc<Ctx>, icon: Option<&Icon>, size: i32) -> gtk::Widget {
     let url = icon.and_then(|icon| {
         let dark = adw::StyleManager::default().is_dark();
@@ -78,40 +82,53 @@ pub fn source_icon(ctx: &Rc<Ctx>, icon: Option<&Icon>, size: i32) -> gtk::Widget
         let image = symbolic("view-list-symbolic", size);
         return image.upcast();
     };
-    let picture = gtk::Picture::builder()
-        .content_fit(gtk::ContentFit::Contain)
-        .can_shrink(true)
-        .width_request(size)
-        .height_request(size)
-        .build();
+    let picture = gtk::Image::new();
+    picture.set_pixel_size(size);
     let cached = ctx.model.borrow().icons.bytes.get(&url).cloned();
     match cached {
         Some(Some(bytes)) => show(&picture, &bytes),
-        Some(None) => {}
+        // Being fetched: this picture gets the logo with the others.
+        Some(None) => ctx
+            .model
+            .borrow_mut()
+            .icons
+            .waiting
+            .entry(url)
+            .or_default()
+            .push(picture.clone()),
         None => fetch(ctx, url, picture.clone()),
     }
     picture.upcast()
 }
 
-fn show(picture: &gtk::Picture, bytes: &gtk::glib::Bytes) {
+fn show(image: &gtk::Image, bytes: &gtk::glib::Bytes) {
     if let Ok(texture) = gtk::gdk::Texture::from_bytes(bytes) {
-        picture.set_paintable(Some(&texture));
+        image.set_paintable(Some(&texture));
     }
 }
 
-/// Fetches the logo on the runtime and shows it on the GTK thread.
-fn fetch(ctx: &Rc<Ctx>, url: String, picture: gtk::Picture) {
+/// Fetches the logo on the runtime and shows it on the GTK thread, on
+/// this picture and on every one that asked for it meanwhile.
+fn fetch(ctx: &Rc<Ctx>, url: String, picture: gtk::Image) {
     let client = {
         let mut model = ctx.model.borrow_mut();
         model.icons.bytes.insert(url.clone(), None);
+        model.icons.waiting.insert(url.clone(), vec![picture]);
         model.icons.client()
     };
     let (sender, receiver) = tokio::sync::oneshot::channel::<Option<Vec<u8>>>();
     let request_url = url.clone();
     ctx.runtime_handle.spawn(async move {
         let bytes = async {
-            let response = client.get(&request_url).send().await.ok()?;
+            let response = match client.get(&request_url).send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    tracing::debug!(url = request_url, %error, "logo not fetched");
+                    return None;
+                }
+            };
             if !response.status().is_success() {
+                tracing::debug!(url = request_url, status = %response.status(), "logo not served");
                 return None;
             }
             let bytes = response.bytes().await.ok()?;
@@ -123,14 +140,23 @@ fn fetch(ctx: &Rc<Ctx>, url: String, picture: gtk::Picture) {
     let ctx = ctx.clone();
     gtk::glib::spawn_future_local(async move {
         let Ok(Some(bytes)) = receiver.await else {
+            ctx.model.borrow_mut().icons.waiting.remove(&url);
             return;
         };
         let bytes = gtk::glib::Bytes::from_owned(bytes);
         // Only an image the texture loader accepts is kept.
-        if gtk::gdk::Texture::from_bytes(&bytes).is_err() {
+        if let Err(error) = gtk::gdk::Texture::from_bytes(&bytes) {
+            tracing::debug!(url, %error, "logo not decoded");
+            ctx.model.borrow_mut().icons.waiting.remove(&url);
             return;
         }
-        show(&picture, &bytes);
-        ctx.model.borrow_mut().icons.bytes.insert(url, Some(bytes));
+        let waiting = {
+            let mut model = ctx.model.borrow_mut();
+            model.icons.bytes.insert(url.clone(), Some(bytes.clone()));
+            model.icons.waiting.remove(&url).unwrap_or_default()
+        };
+        for picture in waiting {
+            show(&picture, &bytes);
+        }
     });
 }

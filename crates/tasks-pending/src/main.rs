@@ -5,9 +5,9 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use pending_api::{ServeOptions, serve};
-use pending_app::AppOptions;
+use pending_app::{AppOptions, Scene};
 
 const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:61000";
 
@@ -58,6 +58,36 @@ struct SandboxCommand {
     /// Picture the window into this PNG file once drawn, then close it.
     #[arg(long)]
     screenshot: Option<PathBuf>,
+    /// What the picture shows.
+    #[arg(long, default_value = "board", requires = "screenshot")]
+    scene: SceneArg,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum SceneArg {
+    /// The board, with two cards marked as in progress.
+    #[default]
+    Board,
+    /// The same in the light scheme.
+    Light,
+    /// The Sources dialog.
+    Sources,
+    /// The Settings dialog.
+    Settings,
+    /// The Snoozed dialog, with one card snoozed.
+    Snoozed,
+}
+
+impl From<SceneArg> for Scene {
+    fn from(scene: SceneArg) -> Self {
+        match scene {
+            SceneArg::Board => Self::Board,
+            SceneArg::Light => Self::Light,
+            SceneArg::Sources => Self::Sources,
+            SceneArg::Settings => Self::Settings,
+            SceneArg::Snoozed => Self::Snoozed,
+        }
+    }
 }
 
 #[derive(Debug, Args, Default)]
@@ -96,6 +126,7 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Sandbox(command)) => pending_app::run(AppOptions {
             sandbox: true,
             screenshot: command.screenshot,
+            scene: command.scene.into(),
             ..AppOptions::default()
         }),
         Some(Command::Setup(command)) => setup::run(setup::Options {
@@ -115,6 +146,7 @@ fn run_app(command: AppCommand) -> anyhow::Result<()> {
         no_daemon: command.no_daemon,
         sandbox: false,
         screenshot: None,
+        scene: Scene::Board,
     })
 }
 
@@ -156,6 +188,24 @@ mod tests {
             Cli::command()
                 .try_get_matches_from(["tasks-pending", "sandbox", "--screenshot", "x.png"])
                 .is_ok()
+        );
+        assert!(
+            Cli::command()
+                .try_get_matches_from([
+                    "tasks-pending",
+                    "sandbox",
+                    "--screenshot",
+                    "x.png",
+                    "--scene",
+                    "snoozed"
+                ])
+                .is_ok()
+        );
+        assert!(
+            Cli::command()
+                .try_get_matches_from(["tasks-pending", "sandbox", "--scene", "light"])
+                .is_err(),
+            "a scene needs a screenshot"
         );
         assert!(
             Cli::command()

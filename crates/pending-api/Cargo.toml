@@ -13,8 +13,9 @@ axum.workspace = true
 chrono.workspace = true
 pending-core = { path = "../pending-core" }
 pending-runtime = { path = "../pending-runtime" }
+reqwest.workspace = true
 serde.workspace = true
-tokio = { workspace = true, features = ["process", "sync", "time"] }
+tokio = { workspace = true, features = ["net", "process", "sync", "time"] }
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

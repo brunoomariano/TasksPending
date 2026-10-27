@@ -1,7 +1,8 @@
 name: Release
 
-# Every master push verifies release artifacts. A tag `v<version>` matching
-# Cargo.toml publishes those bundles, the Arch package, and checksums.
+# Every master push verifies the release artifacts. A tag `v<version>`
+# matching Cargo.toml publishes the Linux bundle, the Arch package, the
+# installer and checksums.
 on:
   push:
     branches: ["master"]
@@ -25,8 +26,8 @@ env:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -52,96 +53,54 @@ jobs:
             echo "::error::CHANGELOG.md has no '## $version' section"
             exit 1
           }
+          # The package version follows the workspace.
+          grep -q "^pkgver=$version\$" packaging/arch/PKGBUILD || {
+            echo "::error::packaging/arch/PKGBUILD pkgver is not $version"
+            exit 1
+          }
 
+      - name: Install the GTK development files
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev
       # Keep in sync with .mise.toml.
       - uses: dtolnay/rust-toolchain@46817827a5bfabe028bf34e1cce71fd40e2ff697 # 1.95.0
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: "26.10.0"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm --prefix frontend ci
       - run: make ci-check
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: frontend-dist
-          path: frontend/dist
 
   build:
     needs: quality
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Linux binaries need the glibc of the runner or newer (2.39).
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          - target: x86_64-apple-darwin
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
+    # The Linux binary needs the glibc of the runner or newer (2.39), and
+    # the GTK of Ubuntu 24.04 or newer (4.14, libadwaita 1.5).
+    runs-on: ubuntu-24.04
+    env:
+      TARGET: x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: dtolnay/rust-toolchain@46817827a5bfabe028bf34e1cce71fd40e2ff697 # 1.95.0
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          key: ${{ matrix.target }}
-      # Cross-compiled with the distribution's compiler (the TLS library
-      # builds C code).
-      - name: Install the aarch64 compiler
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Install the GTK development files
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-          {
-            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
-            echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc"
-            echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++"
-          } >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev
+      - uses: dtolnay/rust-toolchain@46817827a5bfabe028bf34e1cce71fd40e2ff697 # 1.95.0
         with:
-          name: frontend-dist
-          path: frontend/dist
+          targets: ${{ env.TARGET }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ env.TARGET }}
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p tasks-pending
+        run: cargo build --release --locked --target "$TARGET" -p tasks-pending
       - name: Package
         env:
-          TARGET: ${{ matrix.target }}
           SKIP_BUILD: "1"
         run: ./scripts/release-local.sh
       - name: Smoke test
-        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin'
-        run: |
-          dir="$(find dist -maxdepth 1 -type d -name 'tasks-pending-*' | head -1)"
-          "$dir/bin/tasks-pending" --help >/dev/null
-          "$dir/bin/tasks-pending" serve --help >/dev/null
-          "$dir/bin/tasks-pending" tui --help >/dev/null
-          "$dir/bin/tasks-pending" serve --listen 127.0.0.1:18080 >/dev/null 2>&1 &
-          pid=$!
-          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
-          for _ in $(seq 1 50); do
-            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then
-              break
-            fi
-            sleep 0.1
-          done
-          page="$(curl -fsS http://127.0.0.1:18080/)"
-          [[ "$page" == *'id="app"'* ]]
-          asset="$(printf '%s' "$page" | sed -n 's/.*src="\([^"]*\.js\)".*/\1/p')"
-          test -n "$asset"
-          curl -fsSI "http://127.0.0.1:18080$asset" | grep -Fi 'content-type: application/javascript; charset=utf-8'
+        run: ./scripts/test-release-bundle.sh
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: bundle-${{ matrix.target }}
+          name: bundle-${{ env.TARGET }}
           path: |
             dist/*.tar.gz
             dist/*.tar.gz.sha256
@@ -157,10 +116,6 @@ jobs:
         with:
           name: bundle-x86_64-unknown-linux-gnu
           path: pkg
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
-        with:
-          name: bundle-aarch64-unknown-linux-gnu
-          path: sums
       - name: Build the package
         env:
           VERSION: ${{ needs.quality.outputs.version }}
@@ -168,23 +123,23 @@ jobs:
           cp packaging/arch/PKGBUILD pkg/
           cd pkg
           sum="$(cut -d' ' -f1 "tasks-pending-$VERSION-x86_64-unknown-linux-gnu.tar.gz.sha256")"
-          arm="$(cut -d' ' -f1 "../sums/tasks-pending-$VERSION-aarch64-unknown-linux-gnu.tar.gz.sha256")"
           sed -i -e "s/^pkgver=.*/pkgver=$VERSION/" \
-                 -e "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('$sum')/" \
-                 -e "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('$arm')/" PKGBUILD
+                 -e "s/^sha256sums=.*/sha256sums=('$sum')/" PKGBUILD
           useradd -m builder
           chown -R builder: .
           # The bundle is already next to PKGBUILD, so makepkg does not download it.
           su builder -c "makepkg --noconfirm --nodeps -f"
           ls -l ./*.pkg.tar.zst
-          # The package installs and its binaries run.
+          # The package installs with its dependencies and its executable runs.
+          pacman -Syu --noconfirm
           pacman -U --noconfirm ./*.pkg.tar.zst
           tasks-pending --help >/dev/null
           tasks-pending serve --help >/dev/null
-          tasks-pending tui --help >/dev/null
+          tasks-pending app --help >/dev/null
           test "$(pacman -Qlq tasks-pending-bin | grep -c '^/usr/bin/.')" -eq 1
-          test ! -e /usr/share/tasks-pending/frontend
           test -f /usr/lib/systemd/user/tasks-pending.service
+          test -f /usr/share/applications/io.github.brunoomariano.TasksPending.desktop
+          test -f /usr/share/icons/hicolor/scalable/apps/io.github.brunoomariano.TasksPending.svg
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: arch-package
@@ -218,13 +173,14 @@ jobs:
             echo
             echo "## Install"
             echo
-            echo "- Install or update in one command:"
+            echo "- Install or update in one command (Linux x86_64; on Arch it installs the package):"
             echo
             echo '  ```sh'
             echo "  curl --proto '=https' --tlsv1.2 -fsSL https://github.com/$GITHUB_REPOSITORY/releases/latest/download/tasks-pending-install.sh | sh"
             echo '  ```'
             echo
-            echo "- The installer selects the platform artifact, validates its checksum and starts or restarts the user service."
+            echo "- The installer checks every download against its published checksum, then runs \`tasks-pending setup\`: the desktop entry, the user service and the daemon."
+            echo "- Already installed? \`tasks-pending upgrade\` fetches this release the same way."
             echo "- Then follow [docs/install.md](https://github.com/$GITHUB_REPOSITORY/blob/v$VERSION/docs/install.md) to configure sources and tokens."
             echo
             echo "## Checksums"
@@ -241,7 +197,8 @@ jobs:
           gh release create "v$VERSION" \
             artifacts/*.tar.gz artifacts/*.tar.gz.sha256 \
             artifacts/*.pkg.tar.zst artifacts/*.pkg.tar.zst.sha256 \
-            artifacts/PKGBUILD artifacts/SHA256SUMS artifacts/tasks-pending-install.sh \
+            artifacts/PKGBUILD artifacts/SHA256SUMS \
+            artifacts/tasks-pending-install.sh artifacts/tasks-pending-install.sh.sha256 \
             --repo "$GITHUB_REPOSITORY" \
             --title "TasksPending $VERSION" \
             --notes-file notes.md \

@@ -2,11 +2,6 @@
 /target/
 **/*.rs.bk
 
-# Frontend
-/frontend/node_modules/
-/frontend/dist/
-*.tsbuildinfo
-
 # Release artifacts
 /dist/
 

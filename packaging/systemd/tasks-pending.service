@@ -1,10 +1,11 @@
-# TasksPending API as a systemd user service (the dashboard at
-# http://127.0.0.1:61000). @BINDIR@ is replaced at install time.
+# The TasksPending daemon as a systemd user service: the sources and their
+# local API at http://127.0.0.1:61000, which the window reads. @BINDIR@ is
+# replaced at install time.
 #
 #   systemctl --user enable --now tasks-pending
 #   journalctl --user -u tasks-pending -f
 [Unit]
-Description=TasksPending dashboard API
+Description=TasksPending daemon (sources and local API)
 Documentation=https://github.com/brunoomariano/TasksPending/blob/master/docs/install.md
 After=network-online.target graphical-session.target
 Wants=network-online.target

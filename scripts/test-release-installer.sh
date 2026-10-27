@@ -1,54 +1,66 @@
 #!/usr/bin/env bash
-# Exercises the public release bootstrap against local download fixtures.
+# Exercises the public release installer against local download fixtures:
+# no network, no changes outside a temporary directory.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 FIXTURES="$WORK/fixtures"
 FAKE_BIN="$WORK/fake-bin"
-trap 'rm -rf "$WORK"' EXIT
+VERSION=0.6.0
+TARGET=x86_64-unknown-linux-gnu
+trap 'rm -rf "${WORK:?}"' EXIT
 
-assert_contains() {
-  local text=$1 expected=$2
-  [[ $text == *"$expected"* ]] || {
-    printf 'expected installer output to contain: %s\n' "$expected" >&2
-    exit 1
-  }
-}
-
-assert_not_contains() {
-  local text=$1 unexpected=$2
-  [[ $text != *"$unexpected"* ]] || {
-    printf 'installer output must not contain: %s\n' "$unexpected" >&2
-    exit 1
-  }
+fail() {
+  printf '%s\n' "$*" >&2
+  exit 1
 }
 
 mkdir -p "$FIXTURES" "$FAKE_BIN"
 
+# A release bundle whose executable and installer record how they are run.
 make_bundle() {
-  local target=$1
-  local asset="tasks-pending-$target.tar.gz"
-  local bundle="$WORK/tasks-pending-0.5.0-$target"
+  local bundle="$WORK/build/tasks-pending-$VERSION-$TARGET"
+  local asset="tasks-pending-$TARGET.tar.gz"
 
-  mkdir -p "$bundle/scripts"
-  cat >"$bundle/scripts/install.sh" <<'EOF'
+  mkdir -p "$bundle/bin" "$bundle/scripts"
+  cat >"$bundle/bin/tasks-pending" <<'EOF2'
 #!/bin/sh
-printf '%s\n' "$*" >"$INSTALL_LOG"
-EOF
-  chmod +x "$bundle/scripts/install.sh"
-  tar -C "$WORK" -czf "$FIXTURES/$asset" "${bundle##*/}"
+printf '%s\n' "$*" >>"$BINARY_LOG"
+[ "$1" = --version ] && echo "tasks-pending 0.6.0"
+exit 0
+EOF2
+  # Like the real installer, it links PREFIX/bin to the bundle's executable.
+  cat >"$bundle/scripts/install.sh" <<'EOF2'
+#!/bin/sh
+printf 'install.sh %s PREFIX=%s INSTALL_LINK=%s RELEASE_BIN=%s\n' "$*" "$PREFIX" "$INSTALL_LINK" "$RELEASE_BIN" >>"$BINARY_LOG"
+mkdir -p "$PREFIX/bin"
+ln -sfn "$RELEASE_BIN/tasks-pending" "$PREFIX/bin/tasks-pending"
+EOF2
+  chmod +x "$bundle/bin/tasks-pending" "$bundle/scripts/install.sh"
+  tar -C "$WORK/build" -czf "$FIXTURES/$asset" "${bundle##*/}"
   (
     cd "$FIXTURES"
     sha256sum "$asset" >"$asset.sha256"
   )
-  rm -rf "$bundle"
 }
+make_bundle
 
-make_bundle x86_64-unknown-linux-gnu
-make_bundle aarch64-unknown-linux-gnu
-make_bundle aarch64-apple-darwin
-make_bundle x86_64-apple-darwin
+# An archive with a member that would escape the install directory.
+make_bad_bundle() {
+  local bundle="$WORK/bad/tasks-pending-$VERSION-$TARGET"
+  mkdir -p "$bundle/bin" "$WORK/bad/outside"
+  : >"$bundle/bin/tasks-pending"
+  : >"$WORK/bad/outside/file"
+  # GNU tar strips a leading ../ unless told otherwise, so the member is
+  # written with -P to keep it.
+  tar -C "$WORK/bad/$(basename "$bundle")" -P -czf "$FIXTURES/escaping.tar.gz" bin "../outside/file"
+  (
+    cd "$FIXTURES"
+    sha256sum escaping.tar.gz >escaping.tar.gz.sha256
+  )
+}
+make_bad_bundle
 
 touch "$FIXTURES/tasks-pending-bin-x86_64.pkg.tar.zst"
 (
@@ -56,15 +68,16 @@ touch "$FIXTURES/tasks-pending-bin-x86_64.pkg.tar.zst"
   sha256sum tasks-pending-bin-x86_64.pkg.tar.zst >tasks-pending-bin-x86_64.pkg.tar.zst.sha256
 )
 
-cat >"$FAKE_BIN/uname" <<'EOF'
+cat >"$FAKE_BIN/uname" <<'EOF2'
 #!/bin/sh
 case $1 in
 -s) printf '%s\n' "$MOCK_UNAME_S" ;;
 -m) printf '%s\n' "$MOCK_UNAME_M" ;;
 *) exit 2 ;;
 esac
-EOF
-cat >"$FAKE_BIN/curl" <<'EOF'
+EOF2
+# curl copies the fixture named by the URL's last part and logs the URL.
+cat >"$FAKE_BIN/curl" <<'EOF2'
 #!/bin/sh
 output=""
 url=""
@@ -74,155 +87,132 @@ while [ "$#" -gt 0 ]; do
     output=$2
     shift 2
     ;;
+  --retry|--retry-delay|--proto)
+    shift 2
+    ;;
+  --tlsv1.2|--fail|--location|--silent|--show-error)
+    shift
+    ;;
   *)
     url=$1
     shift
     ;;
   esac
 done
+printf '%s\n' "$url" >>"$CURL_LOG"
 asset=${url##*/}
 if [ "${CORRUPT_ASSET:-}" = "$asset" ]; then
   printf 'corrupt' >"$output"
+elif [ "${ESCAPING_ASSET:-}" = "$asset" ]; then
+  cp "$FIXTURES/escaping.tar.gz" "$output"
+elif [ "${ESCAPING_ASSET:-}.sha256" = "$asset" ]; then
+  sed "s/escaping.tar.gz/${ESCAPING_ASSET}/" "$FIXTURES/escaping.tar.gz.sha256" >"$output"
 else
-  cp "$FIXTURES/$asset" "$output"
+  cp "$FIXTURES/$asset" "$output" 2>/dev/null || exit 22
 fi
-EOF
-cat >"$FAKE_BIN/systemctl" <<'EOF'
-#!/bin/sh
-printf '%s\n' "$*" >>"$SYSTEMCTL_LOG"
-if [ "$*" = "--user is-active --quiet tasks-pending" ]; then
-  exit "${SYSTEMCTL_ACTIVE:-1}"
-fi
-EOF
-cat >"$FAKE_BIN/sudo" <<'EOF'
+EOF2
+cat >"$FAKE_BIN/sudo" <<'EOF2'
 #!/bin/sh
 printf '%s\n' "$*" >>"$PACMAN_LOG"
-EOF
-cat >"$FAKE_BIN/pacman" <<'EOF'
+EOF2
+cat >"$FAKE_BIN/pacman" <<'EOF2'
 #!/bin/sh
 exit 0
-EOF
-cat >"$FAKE_BIN/shasum" <<'EOF'
+EOF2
+cat >"$FAKE_BIN/tasks-pending" <<'EOF2'
 #!/bin/sh
-[ "$1" = "-a" ] && shift 2
-exec sha256sum "$@"
-EOF
+printf 'path %s\n' "$*" >>"$BINARY_LOG"
+EOF2
 chmod +x "$FAKE_BIN"/*
 
-run_bundle_case() {
-  local os=$1 machine=$2 target=$3 os_release=${4:-"$WORK/non-arch-os-release"}
-  local install_log="$WORK/$target.install.log"
-  local output
-
-  output="$(
-    MOCK_UNAME_S="$os" \
-      MOCK_UNAME_M="$machine" \
-      PATH="$FAKE_BIN:$PATH" \
-      FIXTURES="$FIXTURES" \
-      INSTALL_LOG="$install_log" \
-      TASKS_PENDING_DOWNLOAD_BASE="https://example.test/download" \
-      TASKS_PENDING_OS_RELEASE="$os_release" \
-      sh "$ROOT/scripts/install-release.sh"
-  )"
-
-  grep -Fqx -- '--start' "$install_log"
-  [[ $output == *"TasksPending is running at http://127.0.0.1:61000"* ]]
-}
-
-run_bundle_case Linux x86_64 x86_64-unknown-linux-gnu
-run_bundle_case Linux aarch64 aarch64-unknown-linux-gnu
-run_bundle_case Darwin arm64 aarch64-apple-darwin
-run_bundle_case Darwin x86_64 x86_64-apple-darwin
-
-malicious_os_release="$WORK/malicious-os-release"
-marker="$WORK/os-release-executed"
-printf 'ID=arch; touch %s\n' "$marker" >"$malicious_os_release"
-run_bundle_case Linux x86_64 x86_64-unknown-linux-gnu "$malicious_os_release"
-test ! -e "$marker" || {
-  echo "the release bootstrap executed os-release contents" >&2
-  exit 1
-}
-
-printf 'ID="arch"\n' >"$WORK/arch-os-release"
-for state in 1 0; do
-  systemctl_log="$WORK/arch-$state.systemctl.log"
-  pacman_log="$WORK/arch-$state.pacman.log"
-  MOCK_UNAME_S=Linux \
-    MOCK_UNAME_M=x86_64 \
+run_installer() {
+  local home=$1
+  shift
+  mkdir -p "$home"
+  HOME="$home" \
     PATH="$FAKE_BIN:$PATH" \
     FIXTURES="$FIXTURES" \
-    SYSTEMCTL_ACTIVE="$state" \
-    SYSTEMCTL_LOG="$systemctl_log" \
-    PACMAN_LOG="$pacman_log" \
-    TASKS_PENDING_DOWNLOAD_BASE="https://example.test/download" \
-    TASKS_PENDING_OS_RELEASE="$WORK/arch-os-release" \
+    BINARY_LOG="$home/binary.log" \
+    CURL_LOG="$home/curl.log" \
+    PACMAN_LOG="$home/pacman.log" \
+    TASKS_PENDING_RELEASE_BASE_URL="https://example.test/releases" \
+    TASKS_PENDING_OS_RELEASE="${OS_RELEASE:-$WORK/non-arch-os-release}" \
+    MOCK_UNAME_S="${MOCK_UNAME_S:-Linux}" \
+    MOCK_UNAME_M="${MOCK_UNAME_M:-x86_64}" \
+    "$@" \
     sh "$ROOT/scripts/install-release.sh"
-  grep -Fq 'pacman -U ' "$pacman_log"
-  if [[ $state == 1 ]]; then
-    grep -Fqx -- '--user enable --now tasks-pending' "$systemctl_log"
-  else
-    grep -Fqx -- '--user restart tasks-pending' "$systemctl_log"
+}
+
+# A plain Linux install unpacks the release, links it and runs the bundle's
+# installer with --start, which hands over to `tasks-pending setup`.
+home="$WORK/linux"
+output="$(run_installer "$home" env)"
+lib="$home/.local/lib/tasks-pending"
+test -x "$lib/bin/tasks-pending"
+test -x "$lib/scripts/install.sh"
+test ! -e "$lib.staged"
+test ! -e "$lib.previous"
+grep -Fq "install.sh --start PREFIX=$home/.local INSTALL_LINK=1 RELEASE_BIN=$lib/bin" "$home/binary.log"
+grep -Fq "https://example.test/releases/latest/download/tasks-pending-$TARGET.tar.gz" "$home/curl.log"
+grep -Fq "https://example.test/releases/latest/download/tasks-pending-$TARGET.tar.gz.sha256" "$home/curl.log"
+[[ $output == *"installed tasks-pending 0.6.0 to $lib"* ]] || fail "unexpected output: $output"
+
+# Running it again replaces the release and leaves no staging directories.
+: >"$lib/marker"
+run_installer "$home" env >/dev/null
+test ! -e "$lib/marker"
+test ! -e "$lib.staged"
+test ! -e "$lib.previous"
+
+# A pinned version downloads from that release's directory.
+home="$WORK/pinned"
+run_installer "$home" env TASKS_PENDING_VERSION=0.6.0 >/dev/null
+grep -Fq "https://example.test/releases/download/v0.6.0/tasks-pending-$TARGET.tar.gz" "$home/curl.log"
+run_installer "$home" env TASKS_PENDING_VERSION=v0.6.0 >/dev/null
+grep -Fq "https://example.test/releases/download/v0.6.0/tasks-pending-$TARGET.tar.gz.sha256" "$home/curl.log"
+
+# Custom directories are honoured.
+home="$WORK/dirs"
+run_installer "$home" env TASKS_PENDING_LIB_DIR="$home/opt/tp" TASKS_PENDING_BIN_DIR="$home/bin" >/dev/null
+test -x "$home/opt/tp/bin/tasks-pending"
+grep -Fq "PREFIX=$home INSTALL_LINK=1 RELEASE_BIN=$home/opt/tp/bin" "$home/binary.log"
+
+# A corrupt archive is refused before anything is unpacked.
+home="$WORK/corrupt"
+if run_installer "$home" env CORRUPT_ASSET="tasks-pending-$TARGET.tar.gz" >/dev/null 2>&1; then
+  fail "the installer accepted a corrupt archive"
+fi
+test ! -e "$home/.local/lib/tasks-pending"
+test ! -e "$home/binary.log"
+
+# An archive with a member that escapes the directory is refused.
+home="$WORK/escaping"
+if run_installer "$home" env ESCAPING_ASSET="tasks-pending-$TARGET.tar.gz" >/dev/null 2>&1; then
+  fail "the installer accepted an archive with an escaping member"
+fi
+test ! -e "$home/.local/lib/tasks-pending"
+
+# Other platforms are refused.
+for platform in "Linux aarch64" "Darwin arm64" "Linux s390x"; do
+  read -r os machine <<<"$platform"
+  home="$WORK/platform-$machine"
+  if MOCK_UNAME_S="$os" MOCK_UNAME_M="$machine" run_installer "$home" env >/dev/null 2>&1; then
+    fail "the installer accepted $platform"
   fi
 done
 
-missing_env_home="$WORK/arch-missing-env-home"
-arch_output="$(
-  HOME="$missing_env_home" \
-    MOCK_UNAME_S=Linux \
-    MOCK_UNAME_M=x86_64 \
-    PATH="$FAKE_BIN:$PATH" \
-    FIXTURES="$FIXTURES" \
-    SYSTEMCTL_ACTIVE=0 \
-    SYSTEMCTL_LOG="$WORK/arch-missing-env.systemctl.log" \
-    PACMAN_LOG="$WORK/arch-missing-env.pacman.log" \
-    TASKS_PENDING_DOWNLOAD_BASE="https://example.test/download" \
-    TASKS_PENDING_OS_RELEASE="$WORK/arch-os-release" \
-    sh "$ROOT/scripts/install-release.sh"
-)"
-assert_contains "$arch_output" "Warning: token file is missing; authenticated sources will be unavailable."
+# os-release is read, never executed.
+malicious_os_release="$WORK/malicious-os-release"
+marker="$WORK/os-release-executed"
+printf 'ID=arch; touch %s\n' "$marker" >"$malicious_os_release"
+home="$WORK/os-release"
+OS_RELEASE="$malicious_os_release" run_installer "$home" env >/dev/null
+test ! -e "$marker" || fail "the installer executed os-release contents"
 
-existing_env_home="$WORK/arch-existing-env-home"
-install -Dm 0600 /dev/stdin "$existing_env_home/.config/tasks-pending/env" <<'EOF'
-TODOIST_API_TOKEN=preserve-this-token
-EOF
-arch_output="$(
-  HOME="$existing_env_home" \
-    MOCK_UNAME_S=Linux \
-    MOCK_UNAME_M=x86_64 \
-    PATH="$FAKE_BIN:$PATH" \
-    FIXTURES="$FIXTURES" \
-    SYSTEMCTL_ACTIVE=0 \
-    SYSTEMCTL_LOG="$WORK/arch-existing-env.systemctl.log" \
-    PACMAN_LOG="$WORK/arch-existing-env.pacman.log" \
-    TASKS_PENDING_DOWNLOAD_BASE="https://example.test/download" \
-    TASKS_PENDING_OS_RELEASE="$WORK/arch-os-release" \
-    sh "$ROOT/scripts/install-release.sh"
-)"
-assert_not_contains "$arch_output" "Warning: token file is missing; authenticated sources will be unavailable."
-grep -Fqx 'TODOIST_API_TOKEN=preserve-this-token' "$existing_env_home/.config/tasks-pending/env"
-test "$(stat -c %a "$existing_env_home/.config/tasks-pending/env")" = 600
-
-if MOCK_UNAME_S=Linux \
-  MOCK_UNAME_M=x86_64 \
-  PATH="$FAKE_BIN:$PATH" \
-  FIXTURES="$FIXTURES" \
-  INSTALL_LOG="$WORK/corrupt.install.log" \
-  CORRUPT_ASSET=tasks-pending-x86_64-unknown-linux-gnu.tar.gz \
-  TASKS_PENDING_DOWNLOAD_BASE="https://example.test/download" \
-  TASKS_PENDING_OS_RELEASE="$WORK/non-arch-os-release" \
-  sh "$ROOT/scripts/install-release.sh" >/dev/null 2>&1; then
-  echo "the release bootstrap accepted a corrupt archive" >&2
-  exit 1
-fi
-test ! -e "$WORK/corrupt.install.log"
-
-if MOCK_UNAME_S=Linux \
-  MOCK_UNAME_M=s390x \
-  PATH="$FAKE_BIN:$PATH" \
-  FIXTURES="$FIXTURES" \
-  TASKS_PENDING_DOWNLOAD_BASE="https://example.test/download" \
-  TASKS_PENDING_OS_RELEASE="$WORK/non-arch-os-release" \
-  sh "$ROOT/scripts/install-release.sh" >/dev/null 2>&1; then
-  echo "the release bootstrap accepted an unsupported platform" >&2
-  exit 1
-fi
+# On Arch Linux the package is installed with pacman and set up.
+printf 'ID="arch"\n' >"$WORK/arch-os-release"
+home="$WORK/arch"
+OS_RELEASE="$WORK/arch-os-release" run_installer "$home" env >/dev/null
+grep -Fq 'pacman -U --noconfirm ' "$home/pacman.log"
+grep -Fqx 'path setup' "$home/binary.log"
+test ! -e "$home/.local/lib/tasks-pending"

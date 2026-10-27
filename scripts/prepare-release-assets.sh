@@ -7,9 +7,6 @@ VERSION=${1:?usage: prepare-release-assets.sh VERSION ARTIFACTS_DIR}
 ARTIFACTS=${2:?usage: prepare-release-assets.sh VERSION ARTIFACTS_DIR}
 TARGETS=(
   x86_64-unknown-linux-gnu
-  aarch64-unknown-linux-gnu
-  aarch64-apple-darwin
-  x86_64-apple-darwin
 )
 
 test -d "$ARTIFACTS"
@@ -36,5 +33,8 @@ cp "$versioned_package" "$stable_package"
 install -m 0755 "$ROOT/scripts/install-release.sh" "$ARTIFACTS/tasks-pending-install.sh"
 (
   cd "$ARTIFACTS"
+  # The installer has its own checksum, like every other asset, so a
+  # download of it can be checked before it runs.
+  sha256sum tasks-pending-install.sh >tasks-pending-install.sh.sha256
   sha256sum ./*.tar.gz ./*.pkg.tar.zst tasks-pending-install.sh | sed 's| \./| |' >SHA256SUMS
 )

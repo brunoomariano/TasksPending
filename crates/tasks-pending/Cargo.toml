@@ -15,5 +15,12 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 pending-api = { path = "../pending-api" }
-pending-tui = { path = "../pending-tui" }
+pending-app = { path = "../pending-app" }
+pending-client = { path = "../pending-client" }
+pending-core = { path = "../pending-core" }
+reqwest.workspace = true
+sha2.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

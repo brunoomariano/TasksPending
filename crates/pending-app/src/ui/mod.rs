@@ -153,19 +153,24 @@ impl Ctx {
     }
 }
 
-/// How long after opening the window its picture is taken: the first
-/// snapshot and the logos have arrived by then.
-const SCREENSHOT_AFTER: Duration = Duration::from_millis(4500);
+/// When a screenshot's scene is set up (cards marked or snoozed): the
+/// first snapshot has arrived by then.
+const SCENE_AFTER: Duration = Duration::from_millis(2500);
+/// When a screenshot's dialog opens: the scene's changes are back from
+/// the dashboard by then.
+const DIALOG_AFTER: Duration = Duration::from_millis(4200);
+/// When the picture is taken: the logos have arrived by then.
+const SCREENSHOT_AFTER: Duration = Duration::from_millis(6000);
 
 /// Runs the GTK application over `backend` and returns its exit status.
-/// With `screenshot`, the window is pictured into that file and closed.
-/// A `unique` application hands over to an instance already running
-/// (opening the app twice focuses the window); the sandbox and a
-/// screenshot always open their own window.
+/// With `screenshot`, the window shows that scene, is pictured into that
+/// file and closed. A `unique` application hands over to an instance
+/// already running (opening the app twice focuses the window); the
+/// sandbox and a screenshot always open their own window.
 pub fn run(
     runtime: &Runtime,
     backend: Backend,
-    screenshot: Option<std::path::PathBuf>,
+    screenshot: Option<(std::path::PathBuf, crate::Scene)>,
     unique: bool,
 ) -> i32 {
     let (commands, events) = spawn_worker(runtime, backend.client.clone());
@@ -205,6 +210,9 @@ pub fn run(
             window.present();
             return;
         }
+        if let Some((_, crate::Scene::Light)) = &screenshot {
+            adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
+        }
         load_stylesheet();
         build_window(app, &ctx);
         if let Some(events) = events.borrow_mut().take() {
@@ -212,7 +220,8 @@ pub fn run(
         }
         schedule_polling(&ctx);
         schedule_auto_refresh(&ctx);
-        if let Some(path) = screenshot.clone() {
+        if let Some((path, scene)) = screenshot.clone() {
+            stage_scene(&ctx, scene);
             let app = app.clone();
             let ctx = ctx.clone();
             gtk::glib::timeout_add_local_once(SCREENSHOT_AFTER, move || {
@@ -474,19 +483,67 @@ fn is_hidden(ctx: &Ctx) -> bool {
     ctx.window().is_some_and(|window| window.is_suspended())
 }
 
+/// Sets a screenshot's scene up once the first snapshot is in: two cards
+/// marked for the board, one snoozed for the snoozed list, and the dialog
+/// opened a moment later.
+fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
+    use crate::Scene;
+    let ctx = ctx.clone();
+    gtk::glib::timeout_add_local_once(SCENE_AFTER, move || {
+        let ids: Vec<String> = ctx
+            .model
+            .borrow()
+            .state
+            .snapshot()
+            .map(|snapshot| {
+                snapshot
+                    .boards
+                    .iter()
+                    .flat_map(|board| &board.groups)
+                    .flat_map(|group| &group.columns)
+                    .filter_map(|column| column.cards.first())
+                    .map(|card| card.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        match scene {
+            Scene::Board | Scene::Light | Scene::Settings | Scene::Sources => {
+                for id in ids.into_iter().take(2) {
+                    ctx.send(Command::SetMark { id, marked: true });
+                }
+            }
+            Scene::Snoozed => {
+                if let Some(id) = ids.into_iter().next() {
+                    ctx.send(Command::Snooze { id, until: None });
+                }
+            }
+        }
+        let ctx = ctx.clone();
+        gtk::glib::timeout_add_local_once(DIALOG_AFTER - SCENE_AFTER, move || match scene {
+            Scene::Sources => dialogs::show_sources(&ctx),
+            Scene::Settings => dialogs::show_settings(&ctx),
+            Scene::Snoozed => dialogs::show_snoozed(&ctx),
+            Scene::Board | Scene::Light => {}
+        });
+    });
+}
+
 /// Renders the window as it is drawn into a PNG file: its background,
-/// then its content, snapshotted through its parent the way GTK draws it
-/// (a toplevel itself paints nothing into a snapshot, and a widget
-/// paintable only has a picture a frame after it is made).
+/// then everything in it (content and dialogs), snapshotted through the
+/// window the way GTK draws it (a toplevel itself paints nothing into a
+/// snapshot, and a widget paintable only has a picture a frame after it
+/// is made).
 fn capture(window: &adw::ApplicationWindow, path: &std::path::Path) -> anyhow::Result<()> {
     let content = window
-        .content()
+        .first_child()
         .ok_or_else(|| anyhow::anyhow!("the window has no content"))?;
-    let parent = content
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("the content has no parent"))?;
+    let parent = window.clone().upcast::<gtk::Widget>();
     let width = f64::from(content.width());
     let height = f64::from(content.height());
+    // Headless (Broadway without a client) the frame clock does not lay
+    // widgets out between frames, so a dialog opened after the first
+    // layout has no allocation yet: lay the whole tree out now.
+    content.allocate(content.width(), content.height(), -1, None);
     let palette = if adw::StyleManager::default().is_dark() {
         &theme::DARK
     } else {

@@ -37,10 +37,12 @@ fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) -> adw::Dialog {
     let view = adw::ToolbarView::new();
     view.add_top_bar(&adw::HeaderBar::new());
     view.set_content(Some(&scroller));
+    // A fixed width and the content's natural height, up to the window: a
+    // short list is a short dialog, and the settings scroll. (Following
+    // the content size would shrink wrapped labels to a word a line.)
     let dialog = adw::Dialog::builder()
         .title(title)
         .content_width(600)
-        .content_height(640)
         .child(&view)
         .build();
     dialog.add_css_class("tasks-pending");

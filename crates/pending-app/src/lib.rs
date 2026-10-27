@@ -21,6 +21,18 @@ pub use backend::Options as BackendOptions;
 /// its desktop entry.
 pub const APP_ID: &str = "io.github.brunoomariano.TasksPending";
 
+/// What a screenshot shows: the board with two cards marked, the same in
+/// the light scheme, or one of the dialogs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Scene {
+    #[default]
+    Board,
+    Light,
+    Sources,
+    Settings,
+    Snoozed,
+}
+
 #[derive(Debug, Default)]
 pub struct AppOptions {
     /// Config file for the sources when no daemon runs.
@@ -34,6 +46,8 @@ pub struct AppOptions {
     /// Write a picture of the window to this file once it is drawn, then
     /// close it. For the README.
     pub screenshot: Option<PathBuf>,
+    /// What the picture shows.
+    pub scene: Scene,
 }
 
 /// Opens the window and runs until it closes.
@@ -53,7 +67,12 @@ pub fn run(options: AppOptions) -> anyhow::Result<()> {
         },
     )?;
     let unique = !options.sandbox && options.screenshot.is_none();
-    let status = ui::run(&runtime, backend, options.screenshot, unique);
+    let status = ui::run(
+        &runtime,
+        backend,
+        options.screenshot.map(|path| (path, options.scene)),
+        unique,
+    );
     // Quit right away: an in-flight request must not keep the process
     // alive after the window closed.
     runtime.shutdown_background();

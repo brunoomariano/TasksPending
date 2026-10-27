@@ -1,5 +1,6 @@
-/* TasksPending: quiet surfaces, thin borders, one accent. Tokens are filled
-   in by theme.rs. */
+/* TasksPending: a quiet board. Three surfaces in a ladder, 1px borders for
+   structure, one accent for meaning. Tokens are filled in by theme.rs; the
+   system is described in DESIGN.md. */
 
 @define-color accent_bg_color {{accent}};
 @define-color accent_color {{accent}};
@@ -15,6 +16,16 @@
 @define-color headerbar_bg_color {{surface}};
 @define-color headerbar_fg_color {{text}};
 
+@keyframes dot-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 0.7;
+  }
+}
+
 window.tasks-pending {
   background-color: {{bg}};
   color: {{text}};
@@ -23,6 +34,11 @@ window.tasks-pending {
 .tasks-pending button {
   box-shadow: none;
   text-shadow: none;
+}
+
+.tasks-pending button:focus-visible {
+  outline: 2px solid alpha({{accent}}, 0.6);
+  outline-offset: 2px;
 }
 
 .tasks-pending .dimmed {
@@ -63,6 +79,10 @@ window.tasks-pending {
   background: {{surface-2}};
 }
 
+.controls button.control:active {
+  background: {{card-hover}};
+}
+
 .controls button.control.primary {
   border-color: transparent;
   background: {{accent}};
@@ -96,6 +116,7 @@ window.tasks-pending {
 .updated {
   color: {{text-3}};
   font-size: 0.85em;
+  font-feature-settings: "tnum";
 }
 
 .updated button.quiet-link {
@@ -195,8 +216,18 @@ flowbox.board > flowboxchild {
   color: {{accent}};
 }
 
+.source-tile {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px;
+  border: 1px solid {{border}};
+  border-radius: 7px;
+  background: {{surface-2}};
+}
+
 .badge {
   padding: 1px 8px;
+  border: 1px solid {{border}};
   border-radius: 999px;
   background: {{surface-2}};
   color: {{text-3}};
@@ -212,10 +243,12 @@ button.empty-toggle {
   background: transparent;
   color: {{text-3}};
   font-size: 0.78em;
+  transition: color 120ms ease-out, border-color 120ms ease-out;
 }
 
 button.empty-toggle:hover {
   color: {{text}};
+  border-color: {{border-strong}};
   background: transparent;
 }
 
@@ -236,6 +269,7 @@ button.stack-header {
   font-size: 0.78em;
   font-weight: 600;
   letter-spacing: 0.04em;
+  transition: color 120ms ease-out;
 }
 
 button.stack-header:hover {
@@ -258,11 +292,18 @@ button.stack-header.collapsed image {
   color: {{text-2}};
   font-size: 0.78em;
   font-weight: 500;
+  font-feature-settings: "tnum";
 }
 
 .empty {
   color: {{text-3}};
   font-size: 0.85em;
+}
+
+.empty-state {
+  padding: 12px 14px;
+  border: 1px dashed {{border-strong}};
+  border-radius: 8px;
 }
 
 button.link-button {
@@ -283,16 +324,19 @@ button.link-button:hover {
 /* Cards. */
 .card {
   padding: 10px 12px;
-  border-radius: 8px;
+  border: 1px solid {{border}};
+  border-radius: 10px;
   background: {{surface-2}};
-  transition: background 120ms ease-out;
+  transition: background 120ms ease-out, border-color 120ms ease-out;
 }
 
 .card:hover {
+  border-color: {{border-strong}};
   background: {{card-hover}};
 }
 
 .card.marked {
+  border-color: alpha({{accent}}, 0.35);
   background: {{accent-soft}};
   box-shadow: inset 2px 0 0 {{accent}};
 }
@@ -361,6 +405,7 @@ button.mark:checked {
   border-radius: 50%;
   background: {{accent}};
   opacity: 0.7;
+  animation: dot-in 400ms ease-out;
 }
 
 /* The snooze menu. */
@@ -380,6 +425,7 @@ popover.snooze-menu button {
   background: {{surface}};
   color: {{text-2}};
   font-size: 0.85em;
+  transition: color 120ms ease-out, border-color 120ms ease-out, background 120ms ease-out;
 }
 
 popover.snooze-menu button:hover {
@@ -393,6 +439,13 @@ dialog.tasks-pending,
 dialog.tasks-pending .dialog-page {
   background: {{surface}};
   color: {{text}};
+}
+
+dialog.tasks-pending headerbar {
+  background: {{surface}};
+  color: {{text}};
+  box-shadow: none;
+  border-bottom: 1px solid {{border}};
 }
 
 .dialog-page {
@@ -411,6 +464,7 @@ dialog.tasks-pending .dialog-page {
   padding: 10px 12px;
   border: 1px solid {{border}};
   border-radius: 8px;
+  background: {{surface}};
 }
 
 .row-card .row-body {
@@ -424,24 +478,35 @@ dialog.tasks-pending .dialog-page {
 }
 
 .status {
-  font-size: 0.85em;
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.8em;
   font-weight: 500;
 }
 
 .status.ready {
   color: {{ok}};
+  background: alpha({{ok}}, 0.10);
+  border-color: alpha({{ok}}, 0.25);
 }
 
 .status.refreshing {
   color: {{accent}};
+  background: alpha({{accent}}, 0.10);
+  border-color: alpha({{accent}}, 0.25);
 }
 
 .status.degraded {
   color: {{warn}};
+  background: alpha({{warn}}, 0.10);
+  border-color: alpha({{warn}}, 0.25);
 }
 
 .status.failed {
   color: {{danger}};
+  background: alpha({{danger}}, 0.10);
+  border-color: alpha({{danger}}, 0.25);
 }
 
 button.filter {
@@ -452,10 +517,12 @@ button.filter {
   background: transparent;
   color: {{text-2}};
   font-size: 0.85em;
+  transition: color 120ms ease-out, border-color 120ms ease-out, background 120ms ease-out;
 }
 
 button.filter:hover {
   color: {{text}};
+  border-color: {{border-strong}};
   background: transparent;
 }
 

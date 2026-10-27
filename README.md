@@ -6,7 +6,7 @@ TasksPending is a local-first dashboard of your pending work: pull requests, iss
 
 ![TasksPending with simulated cards: a clock and weather, the cards in progress in a Now row, and one group of stacks per source](docs/assets/tasks-pending-sandbox.png)
 
-The picture comes from `tasks-pending sandbox`, which shows simulated cards without any configuration or credentials; `make screenshots` regenerates it.
+Every picture here comes from `tasks-pending sandbox`, which shows simulated cards without any configuration or credentials; `make screenshots` regenerates them.
 
 ## What it shows
 
@@ -16,6 +16,16 @@ The picture comes from `tasks-pending sandbox`, which shows simulated cards with
 - **Snooze.** Hide a card for an hour, until tomorrow, until next week, or until it changes. It always comes back when the item changes, and nothing is written to the provider.
 - **What changed.** A small dot marks the cards that changed since you last looked.
 - **Local only.** The daemon listens on this machine, reads tokens from the environment, and keeps your marks and snoozes in a state folder. The window talks to it over loopback and never to the providers.
+
+<p align="center">
+  <img src="docs/assets/tasks-pending-sources.png" alt="The Sources dialog: each source with its board, status and last fetch" width="49%">
+  <img src="docs/assets/tasks-pending-settings.png" alt="The Settings dialog: board filter, auto-refresh and show or hide switches" width="49%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/tasks-pending-snoozed.png" alt="The Snoozed dialog: a snoozed card with a Wake button" width="49%">
+  <img src="docs/assets/tasks-pending-sandbox-light.png" alt="The same board in the light scheme" width="49%">
+</p>
 
 The window follows the system's dark or light scheme with its own palette.
 

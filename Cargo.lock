@@ -1524,7 +1524,7 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "pending-api"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1543,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "pending-app"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "pending-client"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "pending-api",
@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "pending-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1587,7 +1587,7 @@ dependencies = [
 
 [[package]]
 name = "pending-github"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1602,7 +1602,7 @@ dependencies = [
 
 [[package]]
 name = "pending-gitlab"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1618,7 +1618,7 @@ dependencies = [
 
 [[package]]
 name = "pending-google"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1636,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "pending-http"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "reqwest",
  "tokio",
@@ -1644,7 +1644,7 @@ dependencies = [
 
 [[package]]
 name = "pending-ical"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1660,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "pending-jira"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1675,7 +1675,7 @@ dependencies = [
 
 [[package]]
 name = "pending-linear"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1690,7 +1690,7 @@ dependencies = [
 
 [[package]]
 name = "pending-plane"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "chrono",
@@ -1704,7 +1704,7 @@ dependencies = [
 
 [[package]]
 name = "pending-runtime"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "pending-core",
@@ -1727,7 +1727,7 @@ dependencies = [
 
 [[package]]
 name = "pending-todoist"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "chrono",
@@ -2447,7 +2447,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "tasks-pending"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",

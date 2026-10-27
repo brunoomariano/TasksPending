@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.0
+
+TasksPending is now a native Linux window. The web page and the terminal dashboard are gone, and so are the macOS and aarch64 builds: the release is Linux x86_64, GTK4 and libadwaita.
+
+### Features
+
+- `tasks-pending` opens the dashboard as a GTK4 window: the big clock and the weather beside it, the controls, the groups of stacks with their cards, the Now row, the snooze menu, the pin, and the Sources, Settings and Snoozed dialogs, with the same palette as the page had, dark or light as the system asks. Clicks, keys and scrolling count as looking, at most once a minute. The window reads the daemon at `http://127.0.0.1:61000` (`--daemon` for another address) and, when none answers, runs the sources itself on a private loopback port and says so; `--no-daemon` does that on purpose. Its choices (board filter, collapsed stacks, hidden items, auto-refresh) are kept in `$XDG_STATE_HOME/tasks-pending/app-view.json`.
+- `tasks-pending sandbox` opens the window over simulated cards; `--screenshot <file>` pictures it and closes, which is how the README picture is made.
+- `tasks-pending setup` creates `config.toml` and `env` from the examples when missing, refreshes the launcher caches and starts or restarts the user service, waiting until the daemon answers. The installers end with it.
+- `tasks-pending upgrade` reads the latest release, downloads its bundle and checksum, verifies it, swaps it under `~/.local/lib/tasks-pending` and restarts the daemon; `--check` only reports, `--version` pins one. Once a day the daemon looks at the latest release (`GET /api/v1/version`; `TASKS_PENDING_NO_VERSION_CHECK` turns it off) and the window shows `vX.Y.Z available` next to its version.
+- The public installer unpacks the release under `~/.local/lib/tasks-pending` and links `~/.local/bin/tasks-pending`, so upgrades swap the directory; it refuses archives with members that would write outside it. On Arch it still installs the package. Every release asset, the installer included, has a `.sha256`.
+- The package and the installers ship a desktop entry (`io.github.brunoomariano.TasksPending`) and the icon, so TasksPending is in the app launcher and `omarchy-launch-or-focus TasksPending` focuses it.
+- `make deploy` builds a release, installs it under `~/.local`, restarts the daemon and checks that it answers.
+
+### Changed
+
+- The daemon no longer serves a page: `GET /` is one line naming the app. The Omarchy web app launcher (`make webapp`) and `--static-dir` are gone.
+- The Arch package depends on `gtk4` and `libadwaita`.
+- `make ci-check` also checks `CHANGELOG.md` (one section per version, the current one first).
+
+### Removed
+
+- The web page (Vite and TypeScript), the TUI (`tasks-pending tui`), the macOS and aarch64 Linux bundles, and the launchd service. On macOS, 0.5.0 remains the last version.
+
 ## 0.5.0
 
 ### Features

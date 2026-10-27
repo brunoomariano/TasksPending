@@ -2,11 +2,11 @@
 
 ![TasksPending dashboard banner](docs/assets/tasks-pending-banner.svg)
 
-TasksPending is a local-first pending-work dashboard. It collects auto-refreshing sources and shows the same model through a Rust TUI, a Rust HTTP API, and a lightweight TypeScript frontend.
+TasksPending is a local-first dashboard of your pending work: pull requests, issues, tasks and events from the tools you use, in one native Linux window. A small daemon refreshes the sources in the background; the window reads it.
 
-![TasksPending dashboard with simulated cards: a clock and weather, the cards in progress in a Now row, and one group of stacks per source](docs/assets/tasks-pending-sandbox.png)
+![TasksPending with simulated cards: a clock and weather, the cards in progress in a Now row, and one group of stacks per source](docs/assets/tasks-pending-sandbox.png)
 
-Every picture here comes from `tasks-pending sandbox`, which shows simulated cards without any configuration or credentials; `make screenshots` regenerates them.
+The picture comes from `tasks-pending sandbox`, which shows simulated cards without any configuration or credentials; `make screenshots` regenerates it.
 
 ## What it shows
 
@@ -15,99 +15,66 @@ Every picture here comes from `tasks-pending sandbox`, which shows simulated car
 - **Now.** Pin the cards you are working on: they are highlighted in place and repeated in a row at the top.
 - **Snooze.** Hide a card for an hour, until tomorrow, until next week, or until it changes. It always comes back when the item changes, and nothing is written to the provider.
 - **What changed.** A small dot marks the cards that changed since you last looked.
-- **Local only.** The daemon listens on this machine, reads tokens from the environment, and keeps your marks and snoozes in a state folder shared by the web page and the TUI.
+- **Local only.** The daemon listens on this machine, reads tokens from the environment, and keeps your marks and snoozes in a state folder. The window talks to it over loopback and never to the providers.
 
-<p align="center">
-  <img src="docs/assets/tasks-pending-snooze.png" alt="A card with its snooze menu open: 1 hour, Tomorrow, Next week, Until it changes" width="49%">
-  <img src="docs/assets/tasks-pending-snoozed.png" alt="The list of snoozed cards, each with a Wake button" width="49%">
-</p>
-
-<p align="center">
-  <img src="docs/assets/tasks-pending-sources.png" alt="The source health dialog" width="49%">
-  <img src="docs/assets/tasks-pending-settings.png" alt="The settings dialog: board filter, auto-refresh and show or hide switches" width="49%">
-</p>
-
-The page follows the system theme:
-
-![The same dashboard in the light theme](docs/assets/tasks-pending-sandbox-light.png)
+The window follows the system's dark or light scheme with its own palette.
 
 ## Install
 
-Install the latest release and start the dashboard:
+Install the latest release and start everything:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh
 ```
 
-The installer selects the matching artifact, checks its SHA-256 and starts the user service at <http://127.0.0.1:61000>. Run the same command to update; configuration, tokens and service overrides stay in place. [docs/install.md](docs/install.md) covers source configuration, manual installs and the Omarchy web app.
+On Arch Linux it installs the release's package; elsewhere on Linux x86_64 it unpacks the release under `~/.local/lib/tasks-pending` and links `~/.local/bin/tasks-pending`. Every download is checked against its published checksum. It ends with `tasks-pending setup`, which creates the config files if they are missing, installs the launcher entry and starts the user service. Later, `tasks-pending upgrade` fetches the next release the same way. [docs/install.md](docs/install.md) covers sources, tokens, the Omarchy shortcut and manual installs.
 
-## Platform Focus
+Then open **TasksPending** from the launcher, or run `tasks-pending`.
 
-Arch Linux is the supported operational target right now. Release automation also builds generic Linux and macOS bundles to catch portability regressions, but Arch receives the package and installation validation.
+## Platform
 
-## Quick Start (development)
+Linux x86_64, with Arch Linux and Omarchy as the operational target. The window is GTK4 and libadwaita (4.14 and 1.5 or newer).
+
+## Quick start (development)
 
 ```sh
+make doctor           # Rust, pkg-config, gtk4 and libadwaita development files
 make bootstrap
 make ci-check
-make tui
+make sandbox          # the window over simulated cards
 ```
 
-Run the API:
+Run the daemon and the window over it:
 
 ```sh
-make up
+make up               # the daemon on 127.0.0.1:61000
+make app              # the window; without a daemon it runs the sources itself
 curl http://127.0.0.1:61000/healthz
-curl http://127.0.0.1:61000/api/v1/snapshot
 ```
 
-Configure sources by copying `config.example.toml` to `~/.config/tasks-pending/config.toml`; without it the API serves a built-in sample source. See [docs/operations.md](docs/operations.md).
+Configure sources by copying `config.example.toml` to `~/.config/tasks-pending/config.toml`; without it the daemon serves a built-in sample source. See [docs/operations.md](docs/operations.md).
 
-Run the API and the built web dashboard together, then open http://127.0.0.1:61000:
+`make deploy` builds a release, installs it under `~/.local` and restarts the daemon on this machine.
 
-```sh
-make serve
-```
+## Repository shape
 
-Run a credential-free dashboard with deterministic simulated cards at http://127.0.0.1:61001:
-
-```sh
-make sandbox
-```
-
-The sandbox ignores your config, environment, cache, and external sources. It is intended for trying the dashboard and capturing documentation screenshots.
-
-Or run the frontend dev server (proxies `/api` to `make up`):
-
-```sh
-make frontend-dev
-```
-
-## Repository Shape
-
-- `crates/pending-core`: shared domain model, config types, and source contracts.
-- `crates/pending-runtime`: refresh scheduling and in-memory source state.
-- `crates/pending-github`: GitHub source adapter.
-- `crates/pending-gitlab`: GitLab source adapter.
-- `crates/pending-plane`: Plane source adapter.
-- `crates/pending-jira`: Jira source adapter (Cloud and Data Center).
-- `crates/pending-linear`: Linear source adapter.
-- `crates/pending-google`: Google Calendar source adapter (GNOME Online Accounts).
-- `crates/pending-ical`: calendar (iCal) source adapter.
-- `crates/pending-todoist`: Todoist source adapter.
-- `crates/pending-api`: HTTP API and embedded frontend delivery.
-- `crates/pending-tui`: terminal dashboard.
-- `crates/tasks-pending`: released CLI with `serve` and `tui` subcommands.
-- `frontend`: vanilla TypeScript UI built with Vite.
+- `crates/pending-core`: shared domain model, config types, source contracts and release helpers.
+- `crates/pending-runtime`: refresh scheduling, the in-memory source state, marks, snoozes and looks.
+- `crates/pending-http`: HTTP helpers shared by the source adapters.
+- `crates/pending-github`, `pending-gitlab`, `pending-jira`, `pending-linear`, `pending-plane`, `pending-google`, `pending-ical`, `pending-todoist`: source adapters.
+- `crates/pending-api`: the daemon's local API, the weather beside the clock and the daily release check.
+- `crates/pending-client`: the window's side of that API.
+- `crates/pending-app`: the GTK4 window.
+- `crates/tasks-pending`: the executable: `app`, `serve`, `sandbox`, `setup` and `upgrade`.
+- `packaging`: desktop entry, icons, systemd unit and the Arch `PKGBUILD`.
 - `docs`: architecture and operation notes.
 
-## Current State
+## Current state
 
-The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The API loads sources from the config file and refreshes them through `pending-runtime`. Each source is a group of stacks, and each stack is a filter declared in the config; groups and stacks follow the file order, and boards (Work, Personal, …) filter the page and are the TUI's tabs. Sources available: `github` (search queries), `gitlab` (merge requests, issues and to-dos), `jira` (JQL queries), `linear` (issue filters), `plane` (work item filters), `google` (Google Calendar via GNOME Online Accounts), `ical` (any iCal feed), `todoist` (Todoist filters) and the built-in `sample`. The TUI runs the same runtime in-process (no API needed). Release builds embed the web dashboard in `tasks-pending`; `--static-dir` remains a development override.
+The source contract (`PendingSource`) and the snapshot rules live in `pending-core`; see [docs/architecture.md](docs/architecture.md). The daemon loads sources from the config file and refreshes them through `pending-runtime`. Each source is a group of stacks, and each stack is a filter declared in the config; groups and stacks follow the file order, and boards (Work, Personal, …) filter the window. Sources available: `github` (search queries), `gitlab` (merge requests, issues and to-dos), `jira` (JQL queries), `linear` (issue filters), `plane` (work item filters), `google` (Google Calendar via GNOME Online Accounts), `ical` (any iCal feed), `todoist` (Todoist filters) and the built-in `sample`. When no daemon is running, the window starts the same runtime inside itself.
 
 ## Inspiration
 
-The first source target is inspired by:
-
 - [`akitaonrails/ghpending`](https://github.com/akitaonrails/ghpending): GitHub pending issues, pull requests, alerts, token fallback, and terminal digest.
-- [`akitaonrails/clock-tui`](https://github.com/akitaonrails/clock-tui): Ratatui interface, independent refresh widgets, config-first operation, and release packaging.
+- [`akitaonrails/clock-tui`](https://github.com/akitaonrails/clock-tui): the block clock, independent refresh widgets, config-first operation, and release packaging.
+- [`akitaonrails/ai-memory`](https://github.com/akitaonrails/ai-memory): the install and upgrade flow (checksummed release bundles, a versioned install directory, `setup` and `upgrade`).

@@ -66,6 +66,25 @@ fn empty_line(message: &str) -> gtk::Box {
     line
 }
 
+/// "Nothing pending." for a whole group: a dashed box, so the quiet is
+/// visibly on purpose.
+fn empty_state(message: &str) -> gtk::Box {
+    let state = empty_line(message);
+    state.add_css_class("empty-state");
+    state
+}
+
+/// The source's logo in a small tile, for group headers.
+fn source_tile(ctx: &Rc<Ctx>, icon: Option<&pending_core::Icon>) -> gtk::Box {
+    let tile = gtk::Box::builder()
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .build();
+    tile.add_css_class("source-tile");
+    tile.append(&source_icon(ctx, icon, 18));
+    tile
+}
+
 /// Draws `state` into `page_box`.
 pub fn render(
     ctx: &Rc<Ctx>,
@@ -173,7 +192,7 @@ fn group_widget(ctx: &Rc<Ctx>, group: &GroupView, view: &View) -> gtk::Box {
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     let title = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     title.add_css_class("group-title");
-    title.append(&source_icon(ctx, group.icon.as_ref(), 18));
+    title.append(&source_tile(ctx, group.icon.as_ref()));
     title.append(&text(&group.source, &[]));
     header.append(&title);
     let board = gtk::Label::new(Some(&group.board));
@@ -210,7 +229,7 @@ fn group_widget(ctx: &Rc<Ctx>, group: &GroupView, view: &View) -> gtk::Box {
     widget.append(&header);
 
     if group.stacks.is_empty() {
-        widget.append(&empty_line("Nothing pending."));
+        widget.append(&empty_state("Nothing pending."));
         return widget;
     }
     let stacks = gtk::Box::new(gtk::Orientation::Vertical, 14);

@@ -195,7 +195,7 @@ fn fill_settings(ctx: &Rc<Ctx>, content: &gtk::Box) {
 }
 
 fn heading(label: &str) -> gtk::Label {
-    text(&label.to_uppercase(), &["dialog-heading"])
+    super::board::tracked(label, &["dialog-heading"])
 }
 
 fn pill(label: &str, active: bool) -> gtk::ToggleButton {

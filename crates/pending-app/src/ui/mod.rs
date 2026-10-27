@@ -115,6 +115,21 @@ impl Ctx {
         }
     }
 
+    /// Updates the controls for the current model without rebuilding the
+    /// page: for changes that only the hero shows.
+    pub fn refresh_controls(self: &Rc<Self>) {
+        let widgets = self.widgets.borrow();
+        let Some(widgets) = widgets.as_ref() else {
+            return;
+        };
+        let (state, view) = {
+            let model = self.model.borrow();
+            (model.state.clone(), model.view.clone())
+        };
+        let page_view = state.snapshot().map(|snapshot| page(snapshot, &view));
+        hero::update_controls(self, widgets, page_view.as_ref(), &view);
+    }
+
     /// The page for the current model, if there is a snapshot.
     pub fn current_page(&self) -> Option<Page> {
         let model = self.model.borrow();
@@ -140,11 +155,19 @@ impl Ctx {
 
 /// How long after opening the window its picture is taken: the first
 /// snapshot and the logos have arrived by then.
-const SCREENSHOT_AFTER: Duration = Duration::from_millis(3000);
+const SCREENSHOT_AFTER: Duration = Duration::from_millis(4500);
 
 /// Runs the GTK application over `backend` and returns its exit status.
 /// With `screenshot`, the window is pictured into that file and closed.
-pub fn run(runtime: &Runtime, backend: Backend, screenshot: Option<std::path::PathBuf>) -> i32 {
+/// A `unique` application hands over to an instance already running
+/// (opening the app twice focuses the window); the sandbox and a
+/// screenshot always open their own window.
+pub fn run(
+    runtime: &Runtime,
+    backend: Backend,
+    screenshot: Option<std::path::PathBuf>,
+    unique: bool,
+) -> i32 {
     let (commands, events) = spawn_worker(runtime, backend.client.clone());
     let view_path = view_path(&state_dir());
     let ctx = Rc::new(Ctx {
@@ -167,8 +190,14 @@ pub fn run(runtime: &Runtime, backend: Backend, screenshot: Option<std::path::Pa
     // The backend (and its config watch) lives as long as the window.
     let _backend = backend;
 
+    let flags = if unique {
+        gtk::gio::ApplicationFlags::FLAGS_NONE
+    } else {
+        gtk::gio::ApplicationFlags::NON_UNIQUE
+    };
     let app = adw::Application::builder()
         .application_id(crate::APP_ID)
+        .flags(flags)
         .build();
     let events = RefCell::new(Some(events));
     app.connect_activate(move |app| {
@@ -364,11 +393,11 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
                     };
                     ctx.model.borrow_mut().refresh_hold =
                         Some((Instant::now() + REFRESH_COOLDOWN, label));
-                    ctx.redraw(true);
+                    ctx.refresh_controls();
                     let ctx = ctx.clone();
                     gtk::glib::timeout_add_local_once(REFRESH_COOLDOWN, move || {
                         ctx.model.borrow_mut().refresh_hold = None;
-                        ctx.redraw(true);
+                        ctx.refresh_controls();
                     });
                 }
                 Event::Acted(Err(error)) => {
@@ -379,7 +408,7 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
                 Event::Acted(Ok(())) => {}
                 Event::Update(version) => {
                     ctx.model.borrow_mut().update = version;
-                    ctx.redraw(true);
+                    ctx.refresh_controls();
                 }
             }
         }
@@ -446,12 +475,16 @@ fn is_hidden(ctx: &Ctx) -> bool {
 }
 
 /// Renders the window as it is drawn into a PNG file: its background,
-/// then its content (a toplevel itself paints nothing into a snapshot).
+/// then its content, snapshotted through its parent the way GTK draws it
+/// (a toplevel itself paints nothing into a snapshot, and a widget
+/// paintable only has a picture a frame after it is made).
 fn capture(window: &adw::ApplicationWindow, path: &std::path::Path) -> anyhow::Result<()> {
-    use gtk::gdk::prelude::PaintableExt;
     let content = window
         .content()
         .ok_or_else(|| anyhow::anyhow!("the window has no content"))?;
+    let parent = content
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("the content has no parent"))?;
     let width = f64::from(content.width());
     let height = f64::from(content.height());
     let palette = if adw::StyleManager::default().is_dark() {
@@ -466,8 +499,7 @@ fn capture(window: &adw::ApplicationWindow, path: &std::path::Path) -> anyhow::R
         &background,
         &gtk::graphene::Rect::new(0.0, 0.0, width as f32, height as f32),
     );
-    let paintable = gtk::WidgetPaintable::new(Some(&content));
-    paintable.snapshot(&snapshot, width, height);
+    parent.snapshot_child(&content, &snapshot);
     let node = snapshot
         .to_node()
         .ok_or_else(|| anyhow::anyhow!("the window drew nothing"))?;

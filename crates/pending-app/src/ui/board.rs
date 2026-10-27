@@ -17,6 +17,10 @@ use crate::view::{View, flip};
 
 /// Narrowest a group gets; the board wraps groups onto more rows instead.
 const GROUP_MIN_WIDTH: i32 = 290;
+/// Widest a card's text asks to be, in characters: wrapped labels would
+/// otherwise ask for their whole text on one line and make every group as
+/// wide as the window.
+const CARD_TEXT_CHARS: i32 = 40;
 
 fn clear(container: &gtk::Box) {
     while let Some(child) = container.first_child() {
@@ -24,12 +28,50 @@ fn clear(container: &gtk::Box) {
     }
 }
 
+/// A label that wraps onto more lines, asking for at most
+/// [`CARD_TEXT_CHARS`] of width.
 fn text(label: &str, classes: &[&str]) -> gtk::Label {
     let widget = gtk::Label::builder()
         .label(label)
         .xalign(0.0)
         .wrap(true)
         .wrap_mode(gtk::pango::WrapMode::WordChar)
+        .max_width_chars(CARD_TEXT_CHARS)
+        .build();
+    for class in classes {
+        widget.add_css_class(class);
+    }
+    widget
+}
+
+/// Tracking for small upper-case labels, in Pango units (1024 per point):
+/// about 0.04em. Set as a text attribute rather than in CSS, because GTK
+/// measures a label without its CSS letter spacing and would cut it.
+pub const TRACKING: i32 = 400;
+
+/// A one-line upper-case label with tracking, at its natural width.
+pub fn tracked(label: &str, classes: &[&str]) -> gtk::Label {
+    let widget = gtk::Label::builder()
+        .label(label.to_uppercase())
+        .xalign(0.0)
+        .single_line_mode(true)
+        .build();
+    let attributes = gtk::pango::AttrList::new();
+    attributes.insert(gtk::pango::AttrInt::new_letter_spacing(TRACKING));
+    widget.set_attributes(Some(&attributes));
+    for class in classes {
+        widget.add_css_class(class);
+    }
+    widget
+}
+
+/// A label that stays on one line and is cut with an ellipsis instead.
+fn line(label: &str, classes: &[&str]) -> gtk::Label {
+    let widget = gtk::Label::builder()
+        .label(label)
+        .xalign(0.0)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
         .build();
     for class in classes {
         widget.add_css_class(class);
@@ -150,7 +192,7 @@ fn now_section(ctx: &Rc<Ctx>, items: &[NowItem]) -> gtk::Box {
     let title = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     title.add_css_class("now-title");
     title.append(&symbolic("view-pin-symbolic", 14));
-    title.append(&text("NOW", &[]));
+    title.append(&tracked("Now", &[]));
     let count = gtk::Label::new(Some(&items.len().to_string()));
     count.add_css_class("count");
     title.append(&count);
@@ -168,7 +210,7 @@ fn now_section(ctx: &Rc<Ctx>, items: &[NowItem]) -> gtk::Box {
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         footer.add_css_class("card-source");
         footer.append(&source_icon(ctx, item.icon.as_ref(), 13));
-        footer.append(&text(&item.source, &[]));
+        footer.append(&line(&item.source, &[]));
         card.append(&footer);
         let child = gtk::FlowBoxChild::builder()
             .child(&card)
@@ -182,10 +224,13 @@ fn now_section(ctx: &Rc<Ctx>, items: &[NowItem]) -> gtk::Box {
 }
 
 fn group_widget(ctx: &Rc<Ctx>, group: &GroupView, view: &View) -> gtk::Box {
+    // Set explicitly, so the expanding labels inside do not make the group
+    // claim a whole row of the board.
     let widget = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
         .width_request(GROUP_MIN_WIDTH)
+        .hexpand(false)
         .build();
     widget.add_css_class("group");
 
@@ -193,7 +238,7 @@ fn group_widget(ctx: &Rc<Ctx>, group: &GroupView, view: &View) -> gtk::Box {
     let title = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     title.add_css_class("group-title");
     title.append(&source_tile(ctx, group.icon.as_ref()));
-    title.append(&text(&group.source, &[]));
+    title.append(&line(&group.source, &[]));
     header.append(&title);
     let board = gtk::Label::new(Some(&group.board));
     board.add_css_class("badge");
@@ -250,26 +295,18 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool, _view: &View) -> 
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     content.append(&symbolic("pan-down-symbolic", 14));
-    content.append(&text(&stack.name.to_uppercase(), &[]));
+    content.append(&tracked(&stack.name, &[]));
     let count = gtk::Label::new(Some(&stack.count.to_string()));
     count.add_css_class("count");
     content.append(&count);
     if stack.changed {
         content.append(&dot());
     }
-    let header = gtk::Button::builder().child(&content).build();
+    let header = gtk::Button::builder()
+        .child(&content)
+        .halign(gtk::Align::Fill)
+        .build();
     header.add_css_class("stack-header");
-    if stack.collapsed {
-        header.add_css_class("collapsed");
-    }
-    {
-        let ctx = ctx.clone();
-        let key = stack.key.clone();
-        header.connect_clicked(move |_| {
-            let key = key.clone();
-            ctx.change_view(|view| flip(&mut view.collapsed, &key));
-        });
-    }
     widget.append(&header);
     if stack.collapsed {
         return widget;
@@ -308,7 +345,11 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool, _view: &View) -> 
 /// A card: its title (a link when it has one), the snooze and pin buttons,
 /// and two lines of its body with the whole text as a tooltip.
 fn card_widget(ctx: &Rc<Ctx>, card: &CardView, in_now: bool) -> gtk::Box {
-    let widget = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let widget = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .hexpand(false)
+        .build();
     widget.add_css_class("card");
     if card.marked {
         widget.add_css_class("marked");
@@ -322,6 +363,7 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, in_now: bool) -> gtk::Box {
         .xalign(0.0)
         .wrap(true)
         .wrap_mode(gtk::pango::WrapMode::WordChar)
+        .max_width_chars(CARD_TEXT_CHARS)
         .hexpand(true)
         .valign(gtk::Align::Start)
         .build();

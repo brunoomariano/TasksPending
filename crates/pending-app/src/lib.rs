@@ -52,7 +52,8 @@ pub fn run(options: AppOptions) -> anyhow::Result<()> {
             sandbox: options.sandbox,
         },
     )?;
-    let status = ui::run(&runtime, backend, options.screenshot);
+    let unique = !options.sandbox && options.screenshot.is_none();
+    let status = ui::run(&runtime, backend, options.screenshot, unique);
     // Quit right away: an in-flight request must not keep the process
     // alive after the window closed.
     runtime.shutdown_background();

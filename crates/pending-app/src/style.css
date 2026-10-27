@@ -56,7 +56,6 @@ window.tasks-pending {
   color: {{text-2}};
   font-size: 1.05em;
   font-weight: 500;
-  letter-spacing: 0.02em;
 }
 
 .clock-digits {
@@ -187,7 +186,6 @@ window.tasks-pending {
   color: {{accent}};
   font-size: 0.78em;
   font-weight: 600;
-  letter-spacing: 0.04em;
 }
 
 /* Groups, one per source. */
@@ -268,7 +266,6 @@ button.stack-header {
   color: {{text-2}};
   font-size: 0.78em;
   font-weight: 600;
-  letter-spacing: 0.04em;
   transition: color 120ms ease-out;
 }
 
@@ -457,7 +454,6 @@ dialog.tasks-pending headerbar {
   color: {{text-2}};
   font-size: 0.78em;
   font-weight: 600;
-  letter-spacing: 0.04em;
 }
 
 .row-card {

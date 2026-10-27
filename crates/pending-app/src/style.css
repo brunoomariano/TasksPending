@@ -1,0 +1,499 @@
+/* TasksPending: quiet surfaces, thin borders, one accent. Tokens are filled
+   in by theme.rs. */
+
+@define-color accent_bg_color {{accent}};
+@define-color accent_color {{accent}};
+@define-color window_bg_color {{bg}};
+@define-color window_fg_color {{text}};
+@define-color view_bg_color {{bg}};
+@define-color view_fg_color {{text}};
+@define-color dialog_bg_color {{surface}};
+@define-color dialog_fg_color {{text}};
+@define-color popover_bg_color {{surface}};
+@define-color popover_fg_color {{text}};
+@define-color card_bg_color {{surface-2}};
+@define-color headerbar_bg_color {{surface}};
+@define-color headerbar_fg_color {{text}};
+
+window.tasks-pending {
+  background-color: {{bg}};
+  color: {{text}};
+}
+
+.tasks-pending button {
+  box-shadow: none;
+  text-shadow: none;
+}
+
+.tasks-pending .dimmed {
+  color: {{text-3}};
+}
+
+/* Hero: the clock, with the weather on one side and the controls on the
+   other. */
+.hero {
+  padding: 24px 28px 20px;
+  border-bottom: 1px solid {{border}};
+}
+
+.clock-date {
+  color: {{text-2}};
+  font-size: 1.05em;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.clock-digits {
+  color: {{accent}};
+}
+
+.controls button.control {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid {{border}};
+  border-radius: 8px;
+  background: {{surface}};
+  color: {{text}};
+  font-weight: 500;
+  transition: background 120ms ease-out, border-color 120ms ease-out;
+}
+
+.controls button.control:hover {
+  border-color: {{border-strong}};
+  background: {{surface-2}};
+}
+
+.controls button.control.primary {
+  border-color: transparent;
+  background: {{accent}};
+  color: #ffffff;
+}
+
+.controls button.control.primary:hover {
+  background: {{accent-hover}};
+}
+
+.controls button.control:disabled {
+  opacity: 0.6;
+}
+
+.controls button.control.icon-only {
+  min-width: 34px;
+  padding: 0;
+}
+
+.controls .attention {
+  color: {{warn}};
+}
+
+.filter-dot {
+  min-width: 7px;
+  min-height: 7px;
+  border-radius: 50%;
+  background: {{accent}};
+}
+
+.updated {
+  color: {{text-3}};
+  font-size: 0.85em;
+}
+
+.updated button.quiet-link {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: {{text-3}};
+  font-size: 1em;
+}
+
+.updated button.quiet-link:hover {
+  color: {{text}};
+  background: transparent;
+}
+
+/* Weather beside the clock. */
+.weather {
+  color: {{text-2}};
+}
+
+.weather .weather-temperature {
+  font-size: 1.5em;
+  font-weight: 600;
+  color: {{text}};
+}
+
+.weather .weather-details {
+  color: {{text-3}};
+  font-size: 0.85em;
+}
+
+/* Notices above the board. */
+.notice {
+  padding: 12px 16px;
+  border: 1px solid {{border}};
+  border-radius: 8px;
+  color: {{text}};
+}
+
+.notice.stale {
+  border-color: alpha({{warn}}, 0.45);
+  background: mix({{surface}}, {{warn}}, 0.08);
+}
+
+.notice.unavailable {
+  border-color: alpha({{danger}}, 0.45);
+  background: mix({{surface}}, {{danger}}, 0.08);
+}
+
+.notice .notice-title {
+  font-weight: 600;
+}
+
+.notice .notice-body {
+  color: {{text-2}};
+}
+
+/* The marked cards, above the groups. */
+.now {
+  padding: 12px;
+  border: 1px solid mix({{border}}, {{accent}}, 0.45);
+  border-radius: 12px;
+  background: {{surface}};
+}
+
+.now-title {
+  color: {{accent}};
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* Groups, one per source. */
+flowbox.board {
+  background: transparent;
+}
+
+flowbox.board > flowboxchild {
+  padding: 0;
+  background: transparent;
+}
+
+.group {
+  padding: 12px;
+  border: 1px solid {{border}};
+  border-radius: 12px;
+  background: {{surface}};
+}
+
+.group-title {
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
+.group-title image {
+  color: {{accent}};
+}
+
+.badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: {{surface-2}};
+  color: {{text-3}};
+  font-size: 0.75em;
+  font-weight: 500;
+}
+
+button.empty-toggle {
+  min-height: 0;
+  padding: 2px 10px;
+  border: 1px solid {{border}};
+  border-radius: 999px;
+  background: transparent;
+  color: {{text-3}};
+  font-size: 0.78em;
+}
+
+button.empty-toggle:hover {
+  color: {{text}};
+  background: transparent;
+}
+
+/* Stacks inside a group. */
+.stack.after {
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid {{border}};
+}
+
+button.stack-header {
+  min-height: 0;
+  padding: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: {{text-2}};
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+button.stack-header:hover {
+  color: {{text}};
+  background: transparent;
+}
+
+button.stack-header image {
+  transition: -gtk-icon-transform 120ms ease-out;
+}
+
+button.stack-header.collapsed image {
+  -gtk-icon-transform: rotate(-90deg);
+}
+
+.count {
+  padding: 0 7px;
+  border-radius: 999px;
+  background: {{border}};
+  color: {{text-2}};
+  font-size: 0.78em;
+  font-weight: 500;
+}
+
+.empty {
+  color: {{text-3}};
+  font-size: 0.85em;
+}
+
+button.link-button {
+  min-height: 0;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: {{text-3}};
+  font-size: 0.8em;
+}
+
+button.link-button:hover {
+  background: {{surface-2}};
+  color: {{text}};
+}
+
+/* Cards. */
+.card {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: {{surface-2}};
+  transition: background 120ms ease-out;
+}
+
+.card:hover {
+  background: {{card-hover}};
+}
+
+.card.marked {
+  background: {{accent-soft}};
+  box-shadow: inset 2px 0 0 {{accent}};
+}
+
+.card-title {
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.card-title link {
+  color: {{text}};
+}
+
+.card-title link:hover {
+  color: {{accent}};
+}
+
+.card-body {
+  color: {{text-2}};
+  font-size: 0.85em;
+}
+
+.card-source {
+  color: {{text-3}};
+  font-size: 0.78em;
+}
+
+/* The pin and the snooze buttons: visible when the pointer is on the card,
+   when pressed, or when the menu is open. */
+button.mark,
+menubutton.mark > button {
+  min-width: 0;
+  min-height: 0;
+  padding: 3px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: {{text-3}};
+  opacity: 0;
+  transition: opacity 120ms ease-out, color 120ms ease-out;
+}
+
+.card:hover button.mark,
+.card:hover menubutton.mark > button,
+button.mark:checked,
+button.mark:focus-visible,
+menubutton.mark > button:checked,
+menubutton.mark > button:focus-visible {
+  opacity: 1;
+}
+
+button.mark:hover,
+menubutton.mark > button:hover {
+  color: {{text}};
+  background: transparent;
+}
+
+button.mark:checked {
+  color: {{accent}};
+  background: transparent;
+}
+
+.changed-dot {
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 50%;
+  background: {{accent}};
+  opacity: 0.7;
+}
+
+/* The snooze menu. */
+popover.snooze-menu > contents {
+  padding: 6px;
+  border: 1px solid {{border}};
+  border-radius: 10px;
+  background: {{surface}};
+  box-shadow: 0 8px 24px {{shadow}};
+}
+
+popover.snooze-menu button {
+  min-height: 0;
+  padding: 4px 10px;
+  border: 1px solid {{border}};
+  border-radius: 999px;
+  background: {{surface}};
+  color: {{text-2}};
+  font-size: 0.85em;
+}
+
+popover.snooze-menu button:hover {
+  border-color: {{border-strong}};
+  color: {{text}};
+  background: {{surface-2}};
+}
+
+/* Dialogs: sources, settings and snoozed. */
+dialog.tasks-pending,
+dialog.tasks-pending .dialog-page {
+  background: {{surface}};
+  color: {{text}};
+}
+
+.dialog-page {
+  padding: 6px 20px 20px;
+}
+
+.dialog-heading {
+  margin-top: 12px;
+  color: {{text-2}};
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.row-card {
+  padding: 10px 12px;
+  border: 1px solid {{border}};
+  border-radius: 8px;
+}
+
+.row-card .row-body {
+  color: {{text-2}};
+  font-size: 0.85em;
+}
+
+.row-card .row-time {
+  color: {{text-3}};
+  font-size: 0.8em;
+}
+
+.status {
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.status.ready {
+  color: {{ok}};
+}
+
+.status.refreshing {
+  color: {{accent}};
+}
+
+.status.degraded {
+  color: {{warn}};
+}
+
+.status.failed {
+  color: {{danger}};
+}
+
+button.filter {
+  min-height: 0;
+  padding: 4px 12px;
+  border: 1px solid {{border}};
+  border-radius: 999px;
+  background: transparent;
+  color: {{text-2}};
+  font-size: 0.85em;
+}
+
+button.filter:hover {
+  color: {{text}};
+  background: transparent;
+}
+
+button.filter:checked {
+  border-color: {{accent}};
+  background: {{accent-soft}};
+  color: {{accent}};
+  font-weight: 600;
+}
+
+.switch-row {
+  padding: 5px 0;
+}
+
+.switch-row.inherited {
+  opacity: 0.45;
+}
+
+.switch-row.board-row {
+  font-weight: 600;
+}
+
+.visibility-board.after {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid {{border}};
+}
+
+.tasks-pending button.control.wake {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid {{border}};
+  border-radius: 8px;
+  background: {{surface}};
+  color: {{text}};
+}
+
+.tasks-pending button.control.wake:hover {
+  border-color: {{border-strong}};
+  background: {{surface-2}};
+}

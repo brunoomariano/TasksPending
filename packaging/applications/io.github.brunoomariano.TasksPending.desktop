@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TasksPending
+GenericName=Pending work
+Comment=Your pull requests, issues, tasks and events, in one window
+Exec=@BINDIR@/tasks-pending
+Icon=io.github.brunoomariano.TasksPending
+Terminal=false
+Categories=Office;ProjectManagement;
+Keywords=tasks;pending;pull requests;issues;calendar;dashboard;
+StartupNotify=true

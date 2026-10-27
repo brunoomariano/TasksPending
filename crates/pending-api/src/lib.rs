@@ -4,23 +4,29 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::Context;
+use axum::Json;
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header::CONTENT_TYPE};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use axum::{Json, Router};
 use pending_core::{DashboardSnapshot, sandbox_snapshot};
 use pending_runtime::Dashboard;
 use pending_runtime::config::{Origin, cache_path};
-use pending_runtime::live::{Live, process_env};
+use pending_runtime::live::{Live, Watch, process_env};
 use pending_runtime::looks::Looks;
 use pending_runtime::marks::{MarkError, Marks};
 use pending_runtime::snoozes::{SnoozeError, Snoozes};
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpListener;
 use tokio::time::Instant;
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
+
+pub mod update;
+pub mod weather;
+
+/// The router type, for callers that serve the API themselves.
+pub use axum::Router;
 
 #[derive(Debug)]
 pub struct ServeOptions {
@@ -29,43 +35,6 @@ pub struct ServeOptions {
     /// $XDG_CONFIG_HOME/tasks-pending/config.toml, then
     /// ~/.config/tasks-pending/config.toml.
     pub config: Option<PathBuf>,
-    pub static_dir: Option<PathBuf>,
-}
-
-#[derive(Debug)]
-pub struct SandboxOptions {
-    pub listen: SocketAddr,
-    pub static_dir: Option<PathBuf>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct EmbeddedFile {
-    pub path: &'static str,
-    pub bytes: &'static [u8],
-}
-
-#[derive(Clone, Debug)]
-pub enum Frontend {
-    Directory(PathBuf),
-    Embedded(&'static [EmbeddedFile]),
-}
-
-impl Frontend {
-    pub fn directory(path: impl Into<PathBuf>) -> Self {
-        Self::Directory(path.into())
-    }
-
-    pub const fn embedded(files: &'static [EmbeddedFile]) -> Self {
-        Self::Embedded(files)
-    }
-}
-
-pub mod weather;
-
-mod embedded_frontend {
-    use super::EmbeddedFile;
-
-    include!(concat!(env!("OUT_DIR"), "/embedded_frontend.rs"));
 }
 
 #[derive(Debug, Serialize)]
@@ -74,17 +43,28 @@ struct Health {
     version: &'static str,
 }
 
-pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
-    validate_listen_addr(options.listen)?;
-    init_tracing();
+/// The live dashboard behind the API: the routes, where the config came
+/// from, and the watch that reloads the config file while it runs.
+pub struct LiveServer {
+    pub router: Router,
+    pub origin: Origin,
+    /// Keep it while the router serves: dropping it stops the config
+    /// reloads.
+    pub watch: Watch,
+}
 
+/// Starts the live dashboard (the sources, their cache and the config
+/// watch) and returns its API routes, to serve on a listener of the
+/// caller's choosing: the daemon's port, or one the app picks for itself
+/// when no daemon is running.
+pub fn start_live(config: Option<PathBuf>) -> anyhow::Result<LiveServer> {
     let env = process_env();
     let cache = cache_path(&*env);
     match &cache {
         Some(path) => info!(cache = %path.display(), "source cache enabled"),
         None => warn!("no XDG_STATE_HOME or HOME; the source cache is disabled"),
     }
-    let (live, origin) = Live::start(options.config, env, cache)?;
+    let (live, origin) = Live::start(config, env, cache)?;
     let sources = live.snapshot().sources.len();
     match &origin {
         Origin::File(path) if sources == 0 => warn!(
@@ -98,43 +78,42 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
         ),
     }
     // Saving the config file is enough; no restart needed.
-    let _watch = live.watch(CONFIG_WATCH_INTERVAL);
-
-    let frontend = resolve_frontend(options.static_dir)?;
-    match &frontend {
-        Some(Frontend::Directory(dir)) => info!(dir = %dir.display(), "serving frontend directory"),
-        Some(Frontend::Embedded(files)) => info!(files = files.len(), "serving embedded frontend"),
-        None => info!("no embedded frontend; serving the API only"),
-    }
-
-    let listener = tokio::net::TcpListener::bind(options.listen)
-        .await
-        .with_context(|| format!("binding {}", options.listen))?;
-    info!(addr = %options.listen, "tasks-pending listening");
-
-    axum::serve(listener, app(live, frontend))
-        .await
-        .context("serving API")?;
-    Ok(())
+    let watch = live.watch(CONFIG_WATCH_INTERVAL);
+    Ok(LiveServer {
+        router: app(live),
+        origin,
+        watch,
+    })
 }
 
-/// Serves deterministic simulated cards without loading user configuration,
-/// credentials, cache, or provider integrations.
-pub async fn serve_sandbox(options: SandboxOptions) -> anyhow::Result<()> {
+/// The API over deterministic simulated cards, without loading user
+/// configuration, credentials, cache, or provider integrations; the weather
+/// is a fixed sample.
+pub fn sandbox_app() -> Router {
+    app_with(
+        SandboxDashboard::default(),
+        weather::WeatherService::sample(),
+        update::UpdateCheck::off(),
+    )
+}
+
+/// Runs the daemon: the live dashboard served on `options.listen` until the
+/// process ends.
+pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
     validate_listen_addr(options.listen)?;
     init_tracing();
 
-    let frontend = resolve_frontend(options.static_dir)?;
-    let listener = tokio::net::TcpListener::bind(options.listen)
+    let server = start_live(options.config)?;
+    let listener = TcpListener::bind(options.listen)
         .await
         .with_context(|| format!("binding {}", options.listen))?;
-    info!(addr = %options.listen, "TasksPending sandbox listening");
+    info!(addr = %options.listen, "tasks-pending listening");
+    serve_router(listener, server.router).await
+}
 
-    let weather = weather::WeatherService::sample();
-    let app = app_with_weather(SandboxDashboard::default(), frontend, weather);
-    axum::serve(listener, app)
-        .await
-        .context("serving sandbox API")?;
+/// Serves `router` on `listener` until the process ends.
+pub async fn serve_router(listener: TcpListener, router: Router) -> anyhow::Result<()> {
+    axum::serve(listener, router).await.context("serving API")?;
     Ok(())
 }
 
@@ -154,9 +133,9 @@ const CONFIG_WATCH_INTERVAL: Duration = Duration::from_secs(2);
 /// source, and provider APIs rate-limit.
 const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
 
-/// Header the dashboard sends with state-changing requests. Another site open
-/// in the browser cannot add it without a CORS preflight, which is refused.
-const DASHBOARD_HEADER: (&str, &str) = ("x-requested-with", "tasks-pending");
+/// Header the app sends with state-changing requests. A web page open in a
+/// browser cannot add it without a CORS preflight, which is refused.
+pub const DASHBOARD_HEADER: (&str, &str) = ("x-requested-with", "tasks-pending");
 
 #[derive(Clone)]
 struct AppState {
@@ -164,9 +143,10 @@ struct AppState {
     last_refresh: Arc<Mutex<Option<Instant>>>,
 }
 
-/// Simulated cards; marks are kept in memory while the sandbox runs.
+/// Simulated cards; marks, snoozes and looks are kept in memory while the
+/// sandbox runs.
 #[derive(Clone)]
-struct SandboxDashboard {
+pub struct SandboxDashboard {
     marks: Arc<Marks>,
     snoozes: Arc<Snoozes>,
     looks: Arc<Looks>,
@@ -220,37 +200,45 @@ impl Dashboard for SandboxDashboard {
     fn look(&self) {}
 }
 
-/// API routes, plus the configured frontend for any other path.
-pub fn app(dashboard: impl Dashboard + 'static, frontend: Option<Frontend>) -> Router {
-    app_with_weather(dashboard, frontend, weather::WeatherService::omarchy())
+/// The API routes over `dashboard`, with the weather Omarchy reports and
+/// the daily look at the latest release.
+pub fn app(dashboard: impl Dashboard + 'static) -> Router {
+    app_with(
+        dashboard,
+        weather::WeatherService::omarchy(),
+        update::UpdateCheck::start(),
+    )
 }
 
 /// [`app`] with the weather route answered by `weather`.
 pub fn app_with_weather(
     dashboard: impl Dashboard + 'static,
-    frontend: Option<Frontend>,
     weather: weather::WeatherService,
+) -> Router {
+    app_with(dashboard, weather, update::UpdateCheck::off())
+}
+
+/// The API routes over `dashboard`, with the given weather and update
+/// services.
+pub fn app_with(
+    dashboard: impl Dashboard + 'static,
+    weather: weather::WeatherService,
+    update: update::UpdateCheck,
 ) -> Router {
     let state = AppState {
         dashboard: Arc::new(dashboard),
         last_refresh: Arc::new(Mutex::new(None)),
     };
-    let router = Router::new()
+    Router::new()
+        .route("/", get(root))
         .route("/healthz", get(healthz))
         .route("/api/v1/snapshot", get(snapshot))
         .route("/api/v1/refresh", post(refresh))
         .route("/api/v1/marks", post(set_mark))
         .route("/api/v1/snooze", post(set_snooze))
         .route("/api/v1/look", post(look))
-        .merge(weather::routes(weather));
-    let router = match frontend {
-        Some(Frontend::Directory(dir)) => router.fallback_service(ServeDir::new(dir)),
-        Some(Frontend::Embedded(files)) => {
-            router.fallback(move |uri: Uri| async move { serve_embedded_frontend(uri, files) })
-        }
-        None => router,
-    };
-    router
+        .merge(weather::routes(weather))
+        .merge(update::routes(update))
         .layer(axum::middleware::from_fn(local_hosts_only))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -282,54 +270,13 @@ async fn local_hosts_only(
     }
 }
 
-fn resolve_frontend(static_dir: Option<PathBuf>) -> anyhow::Result<Option<Frontend>> {
-    if let Some(dir) = static_dir {
-        if !dir.join("index.html").is_file() {
-            anyhow::bail!(
-                "{} has no index.html; build the frontend first",
-                dir.display()
-            );
-        }
-        return Ok(Some(Frontend::directory(dir)));
-    }
-
-    Ok(embedded_frontend::FILES
-        .iter()
-        .any(|file| file.path == "index.html")
-        .then(|| Frontend::embedded(embedded_frontend::FILES)))
-}
-
-fn serve_embedded_frontend(uri: Uri, files: &'static [EmbeddedFile]) -> axum::response::Response {
-    let requested = match uri.path().trim_start_matches('/') {
-        "" => "index.html",
-        path => path,
-    };
-    let Some(file) = files.iter().find(|file| file.path == requested) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-
-    let mut response = (StatusCode::OK, axum::body::Body::from(file.bytes)).into_response();
-    response.headers_mut().insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static(content_type(file.path)),
-    );
-    response
-}
-
-fn content_type(path: &str) -> &'static str {
-    match path.rsplit_once('.').map(|(_, extension)| extension) {
-        Some("css") => "text/css; charset=utf-8",
-        Some("html") => "text/html; charset=utf-8",
-        Some("ico") => "image/x-icon",
-        Some("jpeg" | "jpg") => "image/jpeg",
-        Some("js" | "mjs") => "application/javascript; charset=utf-8",
-        Some("json" | "map") => "application/json; charset=utf-8",
-        Some("png") => "image/png",
-        Some("svg") => "image/svg+xml",
-        Some("webp") => "image/webp",
-        Some("woff2") => "font/woff2",
-        _ => "application/octet-stream",
-    }
+/// A line for whoever opens the daemon's address in a browser: the page
+/// moved into the app.
+async fn root() -> String {
+    format!(
+        "TasksPending {} daemon. Open the dashboard with `tasks-pending` (the desktop app).\n",
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 async fn healthz() -> Json<Health> {
@@ -357,14 +304,18 @@ struct MarkRequest {
     marked: bool,
 }
 
+fn has_dashboard_header(headers: &HeaderMap) -> bool {
+    let (name, value) = DASHBOARD_HEADER;
+    headers.get(name).and_then(|v| v.to_str().ok()) == Some(value)
+}
+
 /// Marks or unmarks a card as in progress.
 async fn set_mark(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<MarkRequest>,
 ) -> StatusCode {
-    let (name, value) = DASHBOARD_HEADER;
-    if headers.get(name).and_then(|v| v.to_str().ok()) != Some(value) {
+    if !has_dashboard_header(&headers) {
         return StatusCode::FORBIDDEN;
     }
     match state.dashboard.set_mark(&request.id, request.marked) {
@@ -378,8 +329,7 @@ async fn set_mark(
 /// Records that the user is looking at the dashboard, so the next visit
 /// can flag what changed since.
 async fn look(State(state): State<AppState>, headers: HeaderMap) -> StatusCode {
-    let (name, value) = DASHBOARD_HEADER;
-    if headers.get(name).and_then(|v| v.to_str().ok()) != Some(value) {
+    if !has_dashboard_header(&headers) {
         return StatusCode::FORBIDDEN;
     }
     state.dashboard.look();
@@ -404,8 +354,7 @@ async fn set_snooze(
     headers: HeaderMap,
     Json(request): Json<SnoozeRequest>,
 ) -> StatusCode {
-    let (name, value) = DASHBOARD_HEADER;
-    if headers.get(name).and_then(|v| v.to_str().ok()) != Some(value) {
+    if !has_dashboard_header(&headers) {
         return StatusCode::FORBIDDEN;
     }
     let result = match request.snoozed {
@@ -423,8 +372,7 @@ async fn set_snooze(
 
 /// Refreshes every source now, at most once per [`REFRESH_COOLDOWN`].
 async fn refresh(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    let (name, value) = DASHBOARD_HEADER;
-    if headers.get(name).and_then(|v| v.to_str().ok()) != Some(value) {
+    if !has_dashboard_header(&headers) {
         return (
             StatusCode::FORBIDDEN,
             Json(RefreshReply::Forbidden {
@@ -458,7 +406,8 @@ async fn refresh(State(state): State<AppState>, headers: HeaderMap) -> impl Into
     )
 }
 
-fn init_tracing() {
+/// Logs to stderr at the level `RUST_LOG` asks for, info by default.
+pub fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "pending_api=info,pending_runtime=info,tower_http=info".into());
     tracing_subscriber::fmt().with_env_filter(filter).init();
@@ -496,7 +445,7 @@ mod tests {
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
 
-        let response = app(aggregator, None)
+        let response = app(aggregator)
             .oneshot(
                 Request::get("/api/v1/snapshot")
                     .body(Body::empty())
@@ -519,7 +468,7 @@ mod tests {
     /// contacts a provider before returning its simulated cards.
     #[tokio::test]
     async fn sandbox_snapshot_endpoint_serves_simulated_cards() {
-        let response = app(SandboxDashboard::default(), None)
+        let response = app(SandboxDashboard::default())
             .oneshot(
                 Request::get("/api/v1/snapshot")
                     .body(Body::empty())
@@ -565,7 +514,7 @@ mod tests {
             .sum::<usize>();
         assert!(changed.len() < cards, "only the newest cards are flagged");
 
-        let app = app(dashboard, None);
+        let app = app(dashboard);
         let status = post_json(app.clone(), "/api/v1/look", "", true).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         let (_, body) = get(app, "/api/v1/snapshot").await;
@@ -585,6 +534,30 @@ mod tests {
         (status, String::from_utf8_lossy(&body).into_owned())
     }
 
+    /// The daemon's address in a browser explains where the page went.
+    #[tokio::test]
+    async fn the_root_names_the_daemon_and_the_app() {
+        let (status, body) = get(app(idle_aggregator()), "/").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("TasksPending"), "{body}");
+        assert!(body.contains("tasks-pending"), "{body}");
+    }
+
+    /// The version route names the running version; with the check off
+    /// nothing is available.
+    #[tokio::test]
+    async fn the_version_route_names_the_daemon_version() {
+        let (status, body) = get(
+            app_with_weather(idle_aggregator(), weather::WeatherService::sample()),
+            "/api/v1/version",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let report: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(report["current"], env!("CARGO_PKG_VERSION"));
+        assert!(report["available"].is_null());
+    }
+
     fn idle_aggregator() -> Aggregator {
         Aggregator::start(Vec::new(), Duration::from_secs(30))
     }
@@ -596,34 +569,6 @@ mod tests {
 
         let error = validate_listen_addr("0.0.0.0:8080".parse().unwrap()).unwrap_err();
         assert!(error.to_string().contains("has no authentication"));
-    }
-
-    /// With the built frontend available, the API serves the page and assets
-    /// and still answers the API routes.
-    #[tokio::test]
-    async fn serves_the_built_frontend_next_to_the_api() {
-        let dir = std::env::temp_dir().join(format!("tasks-pending-static-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("assets")).unwrap();
-        std::fs::write(dir.join("index.html"), "<main id=app></main>").unwrap();
-        std::fs::write(dir.join("assets/app.js"), "console.log(1)").unwrap();
-        let app = app(idle_aggregator(), Some(Frontend::directory(&dir)));
-
-        assert_eq!(
-            get(app.clone(), "/").await,
-            (StatusCode::OK, "<main id=app></main>".to_owned())
-        );
-        assert_eq!(get(app.clone(), "/assets/app.js").await.0, StatusCode::OK);
-        assert_eq!(get(app.clone(), "/healthz").await.0, StatusCode::OK);
-        assert_eq!(get(app, "/api/v1/snapshot").await.0, StatusCode::OK);
-    }
-
-    /// Without a frontend configured, only the API routes exist.
-    #[tokio::test]
-    async fn without_a_frontend_only_api_routes_exist() {
-        let app = app(idle_aggregator(), None);
-
-        assert_eq!(get(app.clone(), "/").await.0, StatusCode::NOT_FOUND);
-        assert_eq!(get(app, "/healthz").await.0, StatusCode::OK);
     }
 
     struct Counting(Arc<std::sync::atomic::AtomicUsize>);
@@ -678,7 +623,7 @@ mod tests {
             Duration::from_secs(30),
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
-        let app = app(aggregator, None);
+        let app = app(aggregator);
 
         let (status, _) = post(app.clone(), "/api/v1/refresh", true).await;
         assert_eq!(status, StatusCode::ACCEPTED);
@@ -698,7 +643,7 @@ mod tests {
     /// header only the dashboard sends, the request is refused.
     #[tokio::test]
     async fn refresh_requires_the_dashboard_header() {
-        let (status, _) = post(app(idle_aggregator(), None), "/api/v1/refresh", false).await;
+        let (status, _) = post(app(idle_aggregator()), "/api/v1/refresh", false).await;
 
         assert_eq!(status, StatusCode::FORBIDDEN);
     }
@@ -724,7 +669,7 @@ mod tests {
     /// snapshot lists the marked cards. Unknown cards are refused.
     #[tokio::test]
     async fn marks_endpoint_marks_and_unmarks_cards() {
-        let app = app(SandboxDashboard::default(), None);
+        let app = app(SandboxDashboard::default());
         let id = sandbox_snapshot().boards[0].groups[0].columns[0].cards[0]
             .id
             .clone();
@@ -747,7 +692,7 @@ mod tests {
     /// only the dashboard itself may do so.
     #[tokio::test]
     async fn look_endpoint_requires_the_dashboard_header() {
-        let app = app(SandboxDashboard::default(), None);
+        let app = app(SandboxDashboard::default());
 
         let (status, _) = post(app.clone(), "/api/v1/look", false).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
@@ -775,7 +720,7 @@ mod tests {
     /// request without the dashboard header.
     #[tokio::test]
     async fn snooze_endpoint_hides_and_wakes_cards() {
-        let app = app(SandboxDashboard::default(), None);
+        let app = app(SandboxDashboard::default());
         let id = sandbox_snapshot().boards[0].groups[0].columns[0].cards[0]
             .id
             .clone();
@@ -812,7 +757,7 @@ mod tests {
     /// only the dashboard sends, the request is refused and nothing changes.
     #[tokio::test]
     async fn marks_require_the_dashboard_header() {
-        let app = app(SandboxDashboard::default(), None);
+        let app = app(SandboxDashboard::default());
         let id = sandbox_snapshot().boards[0].groups[0].columns[0].cards[0]
             .id
             .clone();
@@ -822,21 +767,6 @@ mod tests {
 
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert!(marked_ids(app).await.is_empty());
-    }
-
-    /// An explicit directory remains a development override, but it must have
-    /// the page entry point rather than silently replacing the embedded page.
-    #[test]
-    fn static_dir_requires_an_index_page() {
-        let directory = std::env::temp_dir().join(format!(
-            "tasks-pending-static-missing-index-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&directory).unwrap();
-
-        let error = resolve_frontend(Some(directory.clone())).unwrap_err();
-        assert!(error.to_string().contains("has no index.html"));
-        let _ = std::fs::remove_dir_all(&directory);
     }
 
     async fn get_with_host(app: Router, path: &str, host: &str) -> StatusCode {
@@ -855,7 +785,7 @@ mod tests {
     /// 127.0.0.1 (DNS rebinding) can't read the snapshot or trigger a refresh.
     #[tokio::test]
     async fn only_local_host_names_are_served() {
-        let app = app(idle_aggregator(), None);
+        let app = app(idle_aggregator());
 
         for host in [
             "127.0.0.1:8080",

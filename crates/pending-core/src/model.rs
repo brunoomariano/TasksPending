@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DashboardSnapshot {
     pub generated_at: DateTime<Utc>,
     /// Areas of work (Work, Personal, …), shown as tabs.
@@ -31,7 +30,7 @@ pub struct DashboardSnapshot {
 }
 
 /// A card hidden by the user for a while.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnoozedCard {
     pub card: PendingCard,
     /// Configured name of the source the card comes from.
@@ -41,14 +40,14 @@ pub struct SnoozedCard {
     pub until: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Board {
     pub name: String,
     /// One group of columns per source, in configuration order.
     pub groups: Vec<Group>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Group {
     /// Configured source name; matches a `SourceHealth::name`.
     pub source: String,
@@ -59,7 +58,7 @@ pub struct Group {
 }
 
 /// An image shown next to a source's name, by http(s) URL.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Icon {
     pub url: String,
     /// Used instead of `url` on dark themes.
@@ -68,13 +67,13 @@ pub struct Icon {
 }
 
 /// A kanban column: the cards matching one of the source's filters.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Column {
     pub name: String,
     pub cards: Vec<PendingCard>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingCard {
     pub id: String,
     pub title: String,
@@ -89,7 +88,7 @@ pub struct PendingCard {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CardSeverity {
     Info,
@@ -97,7 +96,7 @@ pub enum CardSeverity {
     Critical,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceHealth {
     pub name: String,
     pub status: SourceStatus,
@@ -105,7 +104,7 @@ pub struct SourceHealth {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceStatus {
     Ready,

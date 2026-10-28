@@ -106,10 +106,10 @@ pub fn locate(
     })
 }
 
-/// Where the source cache lives: `$XDG_STATE_HOME/tasks-pending/cache.json`,
-/// else `$HOME/.local/state/tasks-pending/cache.json`. Relative values are
-/// ignored, per the XDG spec.
-pub fn cache_path(env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+/// Where TasksPending keeps its state: `$XDG_STATE_HOME/tasks-pending`, else
+/// `$HOME/.local/state/tasks-pending`. Relative values are ignored, per the
+/// XDG spec; with neither variable there is none.
+pub fn state_dir(env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     let absolute = |key: &str| {
         env(key)
             .filter(|value| !value.is_empty())
@@ -118,7 +118,12 @@ pub fn cache_path(env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     };
     let base = absolute("XDG_STATE_HOME")
         .or_else(|| absolute("HOME").map(|home| home.join(".local").join("state")))?;
-    Some(base.join("tasks-pending").join("cache.json"))
+    Some(base.join("tasks-pending"))
+}
+
+/// Where the source cache lives: `cache.json` in the [`state_dir`].
+pub fn cache_path(env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    state_dir(env).map(|dir| dir.join("cache.json"))
 }
 
 /// Locates and loads the config, falling back to the sample source only when

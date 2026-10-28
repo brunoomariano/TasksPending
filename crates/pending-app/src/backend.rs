@@ -13,7 +13,7 @@ use pending_api::{LiveServer, Router, sandbox_app, serve_router, start_live};
 use pending_client::{Client, DEFAULT_DAEMON_URL, Error};
 use pending_core::{DashboardSnapshot, WeatherReport};
 use pending_runtime::config::Origin;
-use pending_runtime::live::Watch;
+use pending_runtime::live::{Env, Watch};
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -67,8 +67,13 @@ pub enum Event {
 pub enum Source {
     /// `tasks-pending serve` is running there.
     Daemon { url: String, version: String },
-    /// No daemon answered: the sources run inside the app, from `origin`.
-    BuiltIn { origin: Origin, address: SocketAddr },
+    /// The sources run inside the app, from `origin`: no daemon answered,
+    /// or none was looked for (`daemon_wanted` is false).
+    BuiltIn {
+        origin: Origin,
+        address: SocketAddr,
+        daemon_wanted: bool,
+    },
     /// Simulated cards.
     Sandbox { address: SocketAddr },
 }
@@ -79,18 +84,21 @@ impl Source {
         match self {
             Self::Daemon { url, version } => format!("daemon {version} at {url}"),
             Self::BuiltIn {
-                origin: Origin::File(path),
+                origin,
                 address,
-            } => format!(
-                "no daemon running; sources from {} (built-in API at {address})",
-                path.display()
-            ),
-            Self::BuiltIn {
-                origin: Origin::SampleDefault { .. },
-                address,
-            } => format!(
-                "no daemon running and no config; sample source (built-in API at {address})"
-            ),
+                daemon_wanted,
+            } => {
+                let why = if *daemon_wanted {
+                    "no daemon running"
+                } else {
+                    "without a daemon, as asked"
+                };
+                let what = match origin {
+                    Origin::File(path) => format!("sources from {}", path.display()),
+                    Origin::SampleDefault { .. } => "no config; sample source".to_owned(),
+                };
+                format!("{why}; {what} (built-in API at {address})")
+            }
             Self::Sandbox { address } => {
                 format!("sandbox: simulated cards, nothing is fetched (API at {address})")
             }
@@ -119,8 +127,9 @@ pub struct Options {
 }
 
 /// Finds the dashboard: the sandbox when asked, else the daemon, else the
-/// sources started here. Blocks on `runtime` while doing so.
-pub fn resolve(runtime: &Runtime, options: Options) -> anyhow::Result<Backend> {
+/// sources started here, reading `env` for their cache and tokens. Blocks
+/// on `runtime` while doing so.
+pub fn resolve(runtime: &Runtime, options: Options, env: Env) -> anyhow::Result<Backend> {
     runtime.block_on(async {
         if options.sandbox {
             let (client, address) = serve_here(sandbox_app()).await?;
@@ -148,8 +157,9 @@ pub fn resolve(runtime: &Runtime, options: Options) -> anyhow::Result<Backend> {
                         _watch: None,
                     });
                 }
-                Err(Error::Transport(error)) => {
-                    info!(url, error, "no daemon answered; starting the sources here")
+                // Nothing listening, or something that never answers.
+                Err(error @ (Error::Transport(_) | Error::Timeout)) => {
+                    info!(url, %error, "no daemon answered; starting the sources here")
                 }
                 Err(error) => anyhow::bail!("the daemon at {url} is not usable: {error}"),
             }
@@ -158,11 +168,15 @@ pub fn resolve(runtime: &Runtime, options: Options) -> anyhow::Result<Backend> {
             router,
             origin,
             watch,
-        } = start_live(options.config)?;
+        } = start_live(options.config, env)?;
         let (client, address) = serve_here(router).await?;
         Ok(Backend {
             client,
-            source: Source::BuiltIn { origin, address },
+            source: Source::BuiltIn {
+                origin,
+                address,
+                daemon_wanted: !options.no_daemon,
+            },
             _watch: Some(watch),
         })
     })
@@ -246,6 +260,8 @@ fn text(error: Error) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     fn runtime() -> Runtime {
@@ -255,17 +271,72 @@ mod tests {
             .unwrap()
     }
 
+    /// A directory of this test's own, so nothing lands in the real state
+    /// directory; it holds the config file and is the fake `XDG_STATE_HOME`.
+    struct Scratch {
+        dir: PathBuf,
+    }
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("tasks-pending-app-{}-{name}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self { dir }
+        }
+
+        fn sample_config(&self) -> PathBuf {
+            let config = self.dir.join("config.toml");
+            std::fs::write(
+                &config,
+                "[[sources]]\nname = \"sample\"\nkind = \"sample\"\n",
+            )
+            .unwrap();
+            config
+        }
+
+        /// An environment with only `XDG_STATE_HOME`, pointing here.
+        fn env(&self) -> Env {
+            let dir = self.dir.clone();
+            Arc::new(move |key| (key == "XDG_STATE_HOME").then(|| dir.clone().into()))
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// Serves `router` on a loopback port and gives its URL.
+    fn serve(runtime: &Runtime, router: Router) -> String {
+        let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
+        let address = listener.local_addr().unwrap();
+        runtime.spawn(async move { serve_router(listener, router).await });
+        format!("http://{address}")
+    }
+
+    /// A port nothing listens on.
+    fn free_port(runtime: &Runtime) -> String {
+        let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        format!("http://{address}")
+    }
+
     /// The sandbox serves on a port of its own, and the worker answers a
     /// poll with its cards and a mark with the snapshot that shows it.
     #[test]
     fn the_sandbox_backend_answers_through_the_worker() {
         let runtime = runtime();
+        let scratch = Scratch::new("sandbox");
         let backend = resolve(
             &runtime,
             Options {
                 sandbox: true,
                 ..Options::default()
             },
+            scratch.env(),
         )
         .unwrap();
         assert!(matches!(backend.source, Source::Sandbox { .. }));
@@ -300,40 +371,132 @@ mod tests {
         assert_eq!(report.place, "Recife");
     }
 
+    /// A daemon answering at the address is used as it is: nothing is
+    /// started here.
+    #[test]
+    fn uses_the_daemon_that_answers() {
+        let runtime = runtime();
+        let scratch = Scratch::new("daemon");
+        let url = serve(&runtime, sandbox_app());
+        let backend = resolve(
+            &runtime,
+            Options {
+                daemon: Some(url.clone()),
+                ..Options::default()
+            },
+            scratch.env(),
+        )
+        .unwrap();
+        let Source::Daemon {
+            url: found,
+            version,
+        } = &backend.source
+        else {
+            panic!("expected the daemon, got {:?}", backend.source);
+        };
+        assert_eq!(found, &url);
+        assert_eq!(version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            backend.source.describe(),
+            format!("daemon {version} at {url}")
+        );
+        assert!(runtime.block_on(backend.client.snapshot()).is_ok());
+    }
+
     /// With nothing listening at the daemon address, the app runs the
     /// sources itself, from the config it is given, and says so.
     #[test]
     fn falls_back_to_the_built_in_sources() {
         let runtime = runtime();
-        let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
-        let free = listener.local_addr().unwrap();
-        drop(listener);
-        let config = std::env::temp_dir().join(format!(
-            "tasks-pending-app-{}-config.toml",
-            std::process::id()
-        ));
-        std::fs::write(
-            &config,
-            "[[sources]]\nname = \"sample\"\nkind = \"sample\"\n",
-        )
-        .unwrap();
+        let scratch = Scratch::new("fallback");
         let backend = resolve(
             &runtime,
             Options {
-                config: Some(config.clone()),
-                daemon: Some(format!("http://{free}")),
+                config: Some(scratch.sample_config()),
+                daemon: Some(free_port(&runtime)),
                 ..Options::default()
             },
+            scratch.env(),
         )
         .unwrap();
-        let _ = std::fs::remove_file(&config);
         assert!(
-            matches!(backend.source, Source::BuiltIn { .. }),
+            matches!(
+                backend.source,
+                Source::BuiltIn {
+                    daemon_wanted: true,
+                    ..
+                }
+            ),
             "{:?}",
             backend.source
         );
-        assert!(backend.source.describe().contains("no daemon"));
+        let line = backend.source.describe();
+        assert!(
+            line.starts_with("no daemon running; sources from "),
+            "{line}"
+        );
         let snapshot = runtime.block_on(backend.client.snapshot()).unwrap();
         assert!(!snapshot.sources.is_empty());
+        assert!(
+            scratch.dir.join("tasks-pending").is_dir(),
+            "the cache goes where the environment says"
+        );
+    }
+
+    /// Asked not to look for a daemon, the app does not, even with one
+    /// answering, and the status line says so.
+    #[test]
+    fn runs_the_sources_here_when_told_not_to_look() {
+        let runtime = runtime();
+        let scratch = Scratch::new("no-daemon");
+        let backend = resolve(
+            &runtime,
+            Options {
+                config: Some(scratch.sample_config()),
+                daemon: Some(serve(&runtime, sandbox_app())),
+                no_daemon: true,
+                ..Options::default()
+            },
+            scratch.env(),
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                backend.source,
+                Source::BuiltIn {
+                    daemon_wanted: false,
+                    ..
+                }
+            ),
+            "{:?}",
+            backend.source
+        );
+        let line = backend.source.describe();
+        assert!(line.starts_with("without a daemon, as asked; "), "{line}");
+    }
+
+    /// Something that answers at the address but is not the daemon is an
+    /// error, not a reason to start the sources: the address was wrong.
+    #[test]
+    fn refuses_an_address_that_answers_wrongly() {
+        let runtime = runtime();
+        let scratch = Scratch::new("wrong");
+        let url = serve(&runtime, Router::new());
+        let error = resolve(
+            &runtime,
+            Options {
+                config: Some(scratch.sample_config()),
+                daemon: Some(url.clone()),
+                ..Options::default()
+            },
+            scratch.env(),
+        )
+        .err()
+        .expect("a 404 at the daemon address is an error");
+        let text = error.to_string();
+        assert!(
+            text.contains("not usable") && text.contains("404"),
+            "{text}"
+        );
     }
 }

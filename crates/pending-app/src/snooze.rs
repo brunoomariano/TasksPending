@@ -81,6 +81,15 @@ mod tests {
     #[test]
     fn offers_four_choices() {
         assert_eq!(
+            CHOICES.map(|(choice, _)| choice),
+            [
+                Choice::Hour,
+                Choice::Tomorrow,
+                Choice::NextWeek,
+                Choice::UntilChange
+            ]
+        );
+        assert_eq!(
             CHOICES.map(|(_, label)| label),
             ["1 hour", "Tomorrow", "Next week", "Until it changes"]
         );
@@ -120,10 +129,20 @@ mod tests {
             "a Monday goes to the following one"
         );
         assert_eq!(
+            until(Choice::NextWeek, &local(2026, 10, 10, 12, 0)),
+            monday,
+            "a Saturday"
+        );
+        assert_eq!(
             until(Choice::NextWeek, &local(2026, 10, 11, 23, 0)),
             monday,
             "a Sunday night"
         );
+    }
+
+    /// "Until it changes" has no time.
+    #[test]
+    fn until_it_changes_has_no_time() {
         assert_eq!(until(Choice::UntilChange, &now()), None);
     }
 

@@ -6,25 +6,15 @@ use gtk4 as gtk;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use pending_core::SourceStatus;
 
-use super::Ctx;
 use super::icons::{source_icon, symbolic};
+use super::{Ctx, wrapped as text};
 use crate::backend::Command;
 use crate::view::{AUTO_REFRESH_CHOICES, View, flip, hide_key};
 
-fn text(label: &str, classes: &[&str]) -> gtk::Label {
-    let widget = gtk::Label::builder()
-        .label(label)
-        .xalign(0.0)
-        .wrap(true)
-        .wrap_mode(gtk::pango::WrapMode::WordChar)
-        .build();
-    for class in classes {
-        widget.add_css_class(class);
-    }
-    widget
-}
+/// Every dialog's width: enough for a source's message or a stack's name
+/// on one line, and the same for all three so they open in one place.
+const DIALOG_WIDTH: i32 = 600;
 
 /// A dialog titled `title` over the window, holding `content`.
 fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) -> adw::Dialog {
@@ -42,30 +32,12 @@ fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) -> adw::Dialog {
     // the content size would shrink wrapped labels to a word a line.)
     let dialog = adw::Dialog::builder()
         .title(title)
-        .content_width(600)
+        .content_width(DIALOG_WIDTH)
         .child(&view)
         .build();
     dialog.add_css_class("tasks-pending");
     dialog.present(ctx.window().as_ref());
     dialog
-}
-
-fn status_icon(status: SourceStatus) -> &'static str {
-    match status {
-        SourceStatus::Ready => "object-select-symbolic",
-        SourceStatus::Refreshing => "view-refresh-symbolic",
-        SourceStatus::Degraded => "dialog-warning-symbolic",
-        SourceStatus::Failed => "process-stop-symbolic",
-    }
-}
-
-fn status_class(status: SourceStatus) -> &'static str {
-    match status {
-        SourceStatus::Ready => "ready",
-        SourceStatus::Refreshing => "refreshing",
-        SourceStatus::Degraded => "degraded",
-        SourceStatus::Failed => "failed",
-    }
 }
 
 /// Every source with its state and last fetch, and the config error when
@@ -104,8 +76,8 @@ pub fn show_sources(ctx: &Rc<Ctx>) {
             .hexpand(true)
             .build();
         status.add_css_class("status");
-        status.add_css_class(status_class(source.status));
-        status.append(&symbolic(status_icon(source.status), 14));
+        status.add_css_class(source.status_class);
+        status.append(&symbolic(source.status_icon, 14));
         status.append(&gtk::Label::new(Some(source.status_text)));
         top.append(&status);
         row.append(&top);
@@ -145,7 +117,7 @@ pub fn show_snoozed(ctx: &Rc<Ctx>) {
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         footer.add_css_class("card-source");
         footer.append(&source_icon(ctx, entry.icon.as_ref(), 13));
-        footer.append(&text(&format!("{} · {}", entry.source, entry.until), &[]));
+        footer.append(&text(&entry.footer(), &[]));
         texts.append(&footer);
         row.append(&texts);
         let wake = gtk::Button::builder()
@@ -178,15 +150,11 @@ pub fn show_snoozed(ctx: &Rc<Ctx>) {
 /// groups and stacks.
 pub fn show_settings(ctx: &Rc<Ctx>) {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    let rebuild: Rc<dyn Fn()> = {
-        let ctx = ctx.clone();
-        let content = content.clone();
-        Rc::new(move || fill_settings(&ctx, &content))
-    };
-    fill_settings_with(ctx, &content, rebuild);
+    fill_settings(ctx, &content);
     present(ctx, "Settings", &content);
 }
 
+/// Fills `content` with the settings, and again on each change.
 fn fill_settings(ctx: &Rc<Ctx>, content: &gtk::Box) {
     let rebuild: Rc<dyn Fn()> = {
         let ctx = ctx.clone();
@@ -282,12 +250,14 @@ fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) 
         board_box.append(&switch_row(
             ctx,
             &rebuild,
-            &board.name,
-            hide_key::board(&board.name),
             &view,
-            false,
-            None,
-            true,
+            SwitchRow {
+                label: &board.name,
+                key: hide_key::board(&board.name),
+                inherited: false,
+                prefix: None,
+                is_board: true,
+            },
         ));
         for group in &board.groups {
             let group_off = view
@@ -300,23 +270,27 @@ fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) 
             group_box.append(&switch_row(
                 ctx,
                 &rebuild,
-                &group.source,
-                hide_key::group(&board.name, &group.source),
                 &view,
-                board_off,
-                Some(source_icon(ctx, group.icon.as_ref(), 16)),
-                false,
+                SwitchRow {
+                    label: &group.source,
+                    key: hide_key::group(&board.name, &group.source),
+                    inherited: board_off,
+                    prefix: Some(source_icon(ctx, group.icon.as_ref(), 16)),
+                    is_board: false,
+                },
             ));
             for column in &group.columns {
                 let row = switch_row(
                     ctx,
                     &rebuild,
-                    &column.name,
-                    hide_key::column(&board.name, &group.source, &column.name),
                     &view,
-                    board_off || group_off,
-                    None,
-                    false,
+                    SwitchRow {
+                        label: &column.name,
+                        key: hide_key::column(&board.name, &group.source, &column.name),
+                        inherited: board_off || group_off,
+                        prefix: None,
+                        is_board: false,
+                    },
                 );
                 row.set_margin_start(18);
                 group_box.append(&row);
@@ -336,19 +310,28 @@ fn flow_child(widget: &impl IsA<gtk::Widget>) -> gtk::FlowBoxChild {
         .build()
 }
 
-/// A show/hide switch; `inherited` greys it out when a parent is hidden,
-/// keeping its own setting for when the parent comes back.
-#[allow(clippy::too_many_arguments)]
-fn switch_row(
-    ctx: &Rc<Ctx>,
-    rebuild: &Rc<dyn Fn()>,
-    label: &str,
+/// One thing the settings can show or hide.
+struct SwitchRow<'a> {
+    label: &'a str,
+    /// Its entry in the view's hidden set (see [`hide_key`]).
     key: String,
-    view: &View,
+    /// A parent is hidden: the switch is greyed out, keeping its own
+    /// setting for when the parent comes back.
     inherited: bool,
+    /// A logo before the label.
     prefix: Option<gtk::Widget>,
     is_board: bool,
-) -> gtk::Box {
+}
+
+/// The show/hide switch for `row`.
+fn switch_row(ctx: &Rc<Ctx>, rebuild: &Rc<dyn Fn()>, view: &View, row: SwitchRow) -> gtk::Box {
+    let SwitchRow {
+        label,
+        key,
+        inherited,
+        prefix,
+        is_board,
+    } = row;
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     row.add_css_class("switch-row");
     if inherited {

@@ -9,7 +9,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use pending_core::api::{DASHBOARD_HEADER, Health, REFRESH_COOLDOWN};
+use pending_core::api::{DASHBOARD_HEADER, Health, REFRESH_COOLDOWN, RefreshWait};
 use pending_core::{DashboardSnapshot, sandbox_snapshot};
 use pending_runtime::Dashboard;
 use pending_runtime::config::{Origin, cache_path};
@@ -289,7 +289,7 @@ async fn snapshot(State(state): State<AppState>) -> Json<DashboardSnapshot> {
 #[serde(untagged)]
 enum RefreshReply {
     Accepted { accepted: bool },
-    Wait { retry_after_secs: u64 },
+    Wait(RefreshWait),
     Forbidden { error: &'static str },
 }
 
@@ -388,9 +388,9 @@ async fn refresh(State(state): State<AppState>, headers: HeaderMap) -> impl Into
         let wait = (REFRESH_COOLDOWN - elapsed).as_secs_f64().ceil() as u64;
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            Json(RefreshReply::Wait {
+            Json(RefreshReply::Wait(RefreshWait {
                 retry_after_secs: wait,
-            }),
+            })),
         );
     }
     *last = Some(now);
@@ -649,7 +649,9 @@ mod tests {
 
         let (status, body) = post(app.clone(), "/api/v1/refresh", true).await;
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-        assert!(body.contains("retry_after_secs"), "{body}");
+        // The shape the window reads; 10 ms into a 10 s cooldown, rounded up.
+        let wait: RefreshWait = serde_json::from_str(&body).unwrap();
+        assert_eq!(wait.retry_after_secs, 10);
 
         tokio::time::sleep(Duration::from_secs(10)).await;
         let (status, _) = post(app, "/api/v1/refresh", true).await;

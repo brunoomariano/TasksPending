@@ -41,10 +41,6 @@ window.tasks-pending {
   outline-offset: 2px;
 }
 
-.tasks-pending .dimmed {
-  color: {{text-3}};
-}
-
 /* Hero: the clock, with the weather on one side and the controls on the
    other. */
 .hero {

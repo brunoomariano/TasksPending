@@ -11,10 +11,9 @@ use reqwest::{StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-pub use pending_core::api::{Health, VersionReport};
-
 /// Where `tasks-pending serve` listens by default.
-pub const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:61000";
+pub use pending_core::api::DEFAULT_DAEMON_URL;
+pub use pending_core::api::{Health, VersionReport};
 
 /// Longest wait for one answer. The daemon answers from memory, so this is
 /// generous; it only ends a request the daemon will never answer.

@@ -8,8 +8,7 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use pending_api::{ServeOptions, serve};
 use pending_app::{AppOptions, Scene};
-
-const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:61000";
+use pending_core::api::DEFAULT_LISTEN_ADDR;
 
 #[derive(Debug, Parser)]
 #[command(

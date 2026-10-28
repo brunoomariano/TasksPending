@@ -40,19 +40,21 @@ enum Logo {
     Fetching,
     Ready(gtk::glib::Bytes),
     /// Not fetched, decoded or small enough, `attempts` times so far; tried
-    /// again when a page built after `retry_at` wants it.
+    /// again at `retry_at` for the pictures still waiting then, or when a
+    /// page built after it wants the logo.
     Failed {
         attempts: u32,
         retry_at: Instant,
     },
 }
 
-/// Logos by URL, and the pictures waiting for one being fetched (the page
-/// may be rebuilt while a fetch is in flight).
+/// Logos by URL, and the pictures waiting for one: being fetched, or
+/// failed and due again (the page may be rebuilt meanwhile, so they are
+/// held weakly and a picture no longer shown is let go).
 #[derive(Default)]
 pub struct Cache {
     logos: HashMap<String, Logo>,
-    waiting: HashMap<String, Vec<gtk::Image>>,
+    waiting: HashMap<String, Vec<gtk::glib::WeakRef<gtk::Image>>>,
     http: Option<reqwest::Client>,
 }
 
@@ -87,10 +89,9 @@ pub fn symbolic(name: &str, size: i32) -> gtk::Image {
 /// What to do for a picture that wants a logo.
 enum Next {
     Show(gtk::glib::Bytes),
-    /// Being fetched: this picture gets the logo with the others.
+    /// Being fetched, or failed lately and not due yet: this picture stays
+    /// empty and gets the logo with the others.
     Wait,
-    /// Failed lately: stay empty until the retry is due.
-    Skip,
     Fetch {
         attempts: u32,
     },
@@ -119,24 +120,25 @@ pub fn source_icon(ctx: &Rc<Ctx>, icon: Option<&Icon>, size: i32) -> gtk::Widget
     let next = match ctx.model.borrow().icons.logos.get(&url) {
         Some(Logo::Ready(bytes)) => Next::Show(bytes.clone()),
         Some(Logo::Fetching) => Next::Wait,
-        Some(Logo::Failed { retry_at, .. }) if Instant::now() < *retry_at => Next::Skip,
+        Some(Logo::Failed { retry_at, .. }) if Instant::now() < *retry_at => Next::Wait,
         Some(Logo::Failed { attempts, .. }) => Next::Fetch {
             attempts: *attempts,
         },
         None => Next::Fetch { attempts: 0 },
     };
-    match next {
-        Next::Show(bytes) => show(&picture, &bytes),
-        Next::Wait => ctx
-            .model
-            .borrow_mut()
-            .icons
-            .waiting
-            .entry(url)
-            .or_default()
-            .push(picture.clone()),
-        Next::Skip => {}
-        Next::Fetch { attempts } => fetch(ctx, url, picture.clone(), attempts),
+    if let Next::Show(bytes) = &next {
+        show(&picture, bytes);
+        return picture.upcast();
+    }
+    ctx.model
+        .borrow_mut()
+        .icons
+        .waiting
+        .entry(url.clone())
+        .or_default()
+        .push(picture.downgrade());
+    if let Next::Fetch { attempts } = next {
+        fetch(ctx, url, attempts);
     }
     picture.upcast()
 }
@@ -148,9 +150,10 @@ fn show(image: &gtk::Image, bytes: &gtk::glib::Bytes) {
 }
 
 /// Fetches the logo on the runtime and shows it on the GTK thread, on
-/// this picture and on every one that asked for it meanwhile. `attempts`
-/// is how many fetches of it failed before.
-fn fetch(ctx: &Rc<Ctx>, url: String, picture: gtk::Image, attempts: u32) {
+/// every picture waiting for it. `attempts` is how many fetches of it
+/// failed before; after another failure it is fetched again once the
+/// retry is due, if a picture still waits for it.
+fn fetch(ctx: &Rc<Ctx>, url: String, attempts: u32) {
     let client = {
         let mut model = ctx.model.borrow_mut();
         let Some(client) = model.icons.client() else {
@@ -158,7 +161,6 @@ fn fetch(ctx: &Rc<Ctx>, url: String, picture: gtk::Image, attempts: u32) {
             return;
         };
         model.icons.logos.insert(url.clone(), Logo::Fetching);
-        model.icons.waiting.insert(url.clone(), vec![picture]);
         client
     };
     let (sender, receiver) = tokio::sync::oneshot::channel::<Option<Vec<u8>>>();
@@ -180,20 +182,57 @@ fn fetch(ctx: &Rc<Ctx>, url: String, picture: gtk::Image, attempts: u32) {
             }
         });
         let mut model = ctx.model.borrow_mut();
-        let waiting = model.icons.waiting.remove(&url).unwrap_or_default();
         match bytes {
             Some(bytes) => {
+                let waiting = model.icons.waiting.remove(&url).unwrap_or_default();
                 model.icons.logos.insert(url, Logo::Ready(bytes.clone()));
                 drop(model);
-                for picture in waiting {
+                for picture in waiting.iter().filter_map(|picture| picture.upgrade()) {
                     show(&picture, &bytes);
                 }
             }
             None => {
-                model.icons.logos.insert(url, failed(attempts));
+                model.icons.logos.insert(url.clone(), failed(attempts));
+                drop(model);
+                retry_later(&ctx, url, retry_delay(attempts));
             }
         }
     });
+}
+
+/// Fetches `url` again after `delay`, when a picture still on screen waits
+/// for it: a logo missed while the network was down shows up without the
+/// page having to be rebuilt.
+fn retry_later(ctx: &Rc<Ctx>, url: String, delay: Duration) {
+    let ctx = Rc::downgrade(ctx);
+    gtk::glib::timeout_add_local_once(delay, move || {
+        let Some(ctx) = ctx.upgrade() else {
+            return;
+        };
+        let attempts = {
+            let mut model = ctx.model.borrow_mut();
+            let Some(attempts) = retry_due(model.icons.logos.get(&url), Instant::now()) else {
+                return;
+            };
+            let waiting = model.icons.waiting.entry(url.clone()).or_default();
+            waiting.retain(|picture| picture.upgrade().is_some_and(|p| p.parent().is_some()));
+            if waiting.is_empty() {
+                return;
+            }
+            attempts
+        };
+        fetch(&ctx, url, attempts);
+    });
+}
+
+/// The failed attempts so far when a fetch of this logo is due at `now`;
+/// `None` when it is fetched, being fetched, or failed again since the
+/// timer was set (that failure's own timer is the one due).
+fn retry_due(logo: Option<&Logo>, now: Instant) -> Option<u32> {
+    match logo {
+        Some(Logo::Failed { attempts, retry_at }) if now >= *retry_at => Some(*attempts),
+        _ => None,
+    }
 }
 
 fn failed(attempts: u32) -> Logo {
@@ -248,6 +287,28 @@ async fn download(client: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Scenario: a logo failed while the network was down and its retry
+    /// comes due. It is fetched again for the pictures waiting; a timer
+    /// left from an earlier failure does nothing before the latest
+    /// failure's retry is due, and nothing happens once the logo is in.
+    #[test]
+    fn retries_a_failed_logo_only_when_due() {
+        let now = Instant::now();
+        let failed_at = |retry_at| Logo::Failed {
+            attempts: 2,
+            retry_at,
+        };
+        assert_eq!(retry_due(Some(&failed_at(now)), now), Some(2));
+        assert_eq!(
+            retry_due(Some(&failed_at(now + Duration::from_secs(60))), now),
+            None
+        );
+        assert_eq!(retry_due(Some(&Logo::Fetching), now), None);
+        let ready = Logo::Ready(gtk::glib::Bytes::from_static(b"png"));
+        assert_eq!(retry_due(Some(&ready), now), None);
+        assert_eq!(retry_due(None, now), None);
+    }
 
     /// A failed logo is tried again after a minute, then after twice as
     /// long each time, and never less often than once an hour.

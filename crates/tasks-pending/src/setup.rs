@@ -39,7 +39,8 @@ struct Paths {
     /// `config.toml` in the config directory.
     config: PathBuf,
     /// Where the unit reads the tokens from (`%E/tasks-pending/env`): the
-    /// config directory, whatever `TASKS_PENDING_CONFIG` says.
+    /// path systemd resolved for the unit when it can say, else the config
+    /// directory, whatever `TASKS_PENDING_CONFIG` says.
     env: PathBuf,
 }
 
@@ -162,20 +163,36 @@ fn systemctl_output(args: &[&str]) -> std::io::Result<Option<String>> {
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned()))
 }
 
+/// The env file the unit reads, from `systemctl show -p EnvironmentFiles
+/// --value` (`/home/me/.config/tasks-pending/env (ignore_errors=yes)`, one
+/// file a line). systemd expands `%E` from the user manager's own
+/// XDG_CONFIG_HOME, which `show-environment` need not show: `environment.d`
+/// sets variables for the services, not for the manager.
+fn env_file_from_unit(shown: &str) -> Option<PathBuf> {
+    shown.lines().find_map(|line| {
+        let path = line.rsplit_once(" (").map_or(line, |(path, _)| path).trim();
+        (path.starts_with('/') && path.ends_with("/tasks-pending/env")).then(|| PathBuf::from(path))
+    })
+}
+
 /// The variables that decide where the daemon reads, as the service sees
-/// them: `XDG_CONFIG_HOME` from the user manager when one answers (the
-/// unit's `%E`, and the daemon's own), whether or not this shell has
-/// another; the rest from `shell`. A value systemd had to quote (`$'…'`)
-/// is not an absolute path, and is ignored like any other.
+/// them: `XDG_CONFIG_HOME` from the user manager when one answers, whether
+/// or not this shell has another; the rest from `shell`. A value systemd
+/// had to quote (`$'…'`) cannot be read back, and the shell's stands in.
 fn service_env<'a>(
     shell: &'a dyn Fn(&str) -> Option<OsString>,
     manager: &'a UserManager,
 ) -> impl Fn(&str) -> Option<OsString> + 'a {
     move |key| match manager {
-        UserManager::Running(environment) if key == "XDG_CONFIG_HOME" => environment
-            .lines()
-            .find_map(|line| line.strip_prefix("XDG_CONFIG_HOME="))
-            .map(OsString::from),
+        UserManager::Running(environment) if key == "XDG_CONFIG_HOME" => {
+            match environment
+                .lines()
+                .find_map(|line| line.strip_prefix("XDG_CONFIG_HOME="))
+            {
+                Some(quoted) if quoted.starts_with("$'") => shell(key),
+                value => value.map(OsString::from),
+            }
+        }
         _ => shell(key),
     }
 }
@@ -300,7 +317,20 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     refuse_root("setup")?;
     let manager = user_manager(systemctl_output);
     let shell = |key: &str| std::env::var_os(key);
-    let paths = setup_paths(&service_env(&shell, &manager))?;
+    let mut paths = setup_paths(&service_env(&shell, &manager))?;
+    if let UserManager::Running(_) = manager
+        && let Ok(Some(shown)) = systemctl_output(&[
+            "--user",
+            "show",
+            "-p",
+            "EnvironmentFiles",
+            "--value",
+            SERVICE,
+        ])
+        && let Some(env) = env_file_from_unit(&shown)
+    {
+        paths.env = env;
+    }
     let config = &paths.config;
     if ensure_file(config, CONFIG_EXAMPLE, 0o644)? {
         println!(
@@ -437,10 +467,10 @@ mod tests {
     }
 
     /// The service starts from the user manager's environment, not this
-    /// shell's: the env file goes where its `%E` points, and the config
-    /// where the daemon looks, both under the manager's XDG_CONFIG_HOME,
-    /// or ~/.config when the manager has none. Without a manager the
-    /// shell's is all there is.
+    /// shell's: the config goes where the daemon looks, under the
+    /// manager's XDG_CONFIG_HOME, or ~/.config when the manager has none,
+    /// and so does the env file when the unit cannot say where it reads
+    /// it. Without a manager the shell's is all there is.
     #[test]
     fn reads_the_config_home_the_service_sees() {
         let shell = env_of(&[("HOME", "/home/me"), ("XDG_CONFIG_HOME", "/shell/cfg")]);
@@ -464,6 +494,34 @@ mod tests {
             let paths = setup_paths(&service_env(&shell, &manager)).unwrap();
             assert_eq!(paths.env, PathBuf::from("/shell/cfg/tasks-pending/env"));
         }
+
+        // A value systemd had to quote cannot be read back: the shell's
+        // is the better guess.
+        let manager = UserManager::Running("XDG_CONFIG_HOME=$'/home/me/My\\tConfig'\n".to_owned());
+        let paths = setup_paths(&service_env(&shell, &manager)).unwrap();
+        assert_eq!(paths.env, PathBuf::from("/shell/cfg/tasks-pending/env"));
+    }
+
+    /// The env file is where systemd resolved the unit's `%E`, which comes
+    /// from the manager's own environment: `environment.d` may set an
+    /// XDG_CONFIG_HOME that services see and `%E` does not.
+    #[test]
+    fn reads_the_env_file_the_unit_resolved() {
+        assert_eq!(
+            env_file_from_unit("/home/me/.config/tasks-pending/env (ignore_errors=yes)\n"),
+            Some(PathBuf::from("/home/me/.config/tasks-pending/env"))
+        );
+        assert_eq!(
+            env_file_from_unit(
+                "/etc/other.env (ignore_errors=no)\n/home/me/My Config/tasks-pending/env (ignore_errors=yes)\n"
+            ),
+            Some(PathBuf::from("/home/me/My Config/tasks-pending/env"))
+        );
+        assert_eq!(env_file_from_unit(""), None);
+        assert_eq!(
+            env_file_from_unit("/etc/other.env (ignore_errors=no)\n"),
+            None
+        );
     }
 
     /// Once the service is started, the daemon must answer, and as this

@@ -179,6 +179,9 @@ install_arch_package() {
     pacman -U $confirm "$package" <"$input"
   elif command -v sudo >/dev/null 2>&1; then
     say "running: sudo pacman -U $confirm $package"
+    # The user's shell opens the terminal (or /dev/null) for pacman; root
+    # never needs to.
+    # shellcheck disable=SC2024
     sudo pacman -U $confirm "$package" <"$input"
   else
     fail "sudo is required to install the Arch package"

@@ -166,6 +166,12 @@ pub struct Page {
     pub config_error: Option<String>,
 }
 
+/// What the newer-version line explains when pointed at. Not only the
+/// install script's command: a copy built or installed by hand is updated
+/// the same way it was installed.
+pub const UPDATE_TOOLTIP: &str = "A newer version is published. Update it the way you \
+     installed it: tasks-pending upgrade, after the install script.";
+
 /// "· v0.7.0 available": a newer published `version`.
 pub fn update_line(version: &str) -> String {
     format!("· v{version} available")

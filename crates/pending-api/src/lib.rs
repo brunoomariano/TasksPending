@@ -108,8 +108,14 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
     serve_router(listener, server.router).await
 }
 
-/// Serves `router` on `listener` until the process ends.
+/// Serves `router` on `listener` until the process ends. The listener
+/// must be bound to a loopback address, like the daemon's own.
 pub async fn serve_router(listener: TcpListener, router: Router) -> anyhow::Result<()> {
+    validate_listen_addr(
+        listener
+            .local_addr()
+            .context("reading the listener's address")?,
+    )?;
     axum::serve(listener, router).await.context("serving API")?;
     Ok(())
 }
@@ -568,6 +574,18 @@ mod tests {
 
         let error = validate_listen_addr("0.0.0.0:8080".parse().unwrap()).unwrap_err();
         assert!(error.to_string().contains("has no authentication"));
+    }
+
+    /// Whoever serves a router (the daemon, the window's built-in API)
+    /// cannot do so on a listener open to the network.
+    #[tokio::test]
+    async fn serve_router_refuses_a_non_loopback_listener() {
+        let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
+        let error = serve_router(listener, Router::new()).await.unwrap_err();
+        assert!(
+            error.to_string().contains("has no authentication"),
+            "{error}"
+        );
     }
 
     struct Counting(Arc<std::sync::atomic::AtomicUsize>);

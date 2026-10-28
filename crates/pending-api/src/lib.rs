@@ -51,9 +51,9 @@ pub struct LiveServer {
 /// Starts the live dashboard (the sources, their cache and the config
 /// watch) and returns its API routes, to serve on a listener of the
 /// caller's choosing: the daemon's port, or one the app picks for itself
-/// when no daemon is running. `env` is what the sources and the cache read
-/// (XDG directories, tokens): the process environment, or a fake one in
-/// tests. Needs a Tokio runtime: the sources, the config watch and the
+/// when no daemon is running. `env` is what the sources, the cache and the
+/// release check read (XDG directories, tokens, where releases live): the
+/// process environment, or a fake one in tests. Needs a Tokio runtime: the sources, the config watch and the
 /// release check are spawned on it.
 pub fn start_live(config: Option<PathBuf>, env: Env) -> anyhow::Result<LiveServer> {
     let cache = cache_path(&*env);
@@ -61,7 +61,7 @@ pub fn start_live(config: Option<PathBuf>, env: Env) -> anyhow::Result<LiveServe
         Some(path) => info!(cache = %path.display(), "source cache enabled"),
         None => warn!("no XDG_STATE_HOME or HOME; the source cache is disabled"),
     }
-    let (live, origin) = Live::start(config, env, cache)?;
+    let (live, origin) = Live::start(config, env.clone(), cache)?;
     let sources = live.snapshot().sources.len();
     match &origin {
         Origin::File(path) if sources == 0 => warn!(
@@ -77,10 +77,19 @@ pub fn start_live(config: Option<PathBuf>, env: Env) -> anyhow::Result<LiveServe
     // Saving the config file is enough; no restart needed.
     let watch = live.watch(CONFIG_WATCH_INTERVAL);
     Ok(LiveServer {
-        router: app(live),
+        router: app_with(
+            live,
+            weather::WeatherService::omarchy(),
+            release_check(&env),
+        ),
         origin,
         watch,
     })
+}
+
+/// The daily look at the latest release, switched and pointed by `env`.
+fn release_check(env: &Env) -> update::UpdateCheck {
+    update::UpdateCheck::start_in(&|name| env(name).and_then(|value| value.into_string().ok()))
 }
 
 /// The API over deterministic simulated cards, without loading user
@@ -195,27 +204,9 @@ impl Dashboard for SandboxDashboard {
     fn look(&self) {}
 }
 
-/// The API routes over `dashboard`, with the weather Omarchy reports and
-/// the daily look at the latest release.
-pub fn app(dashboard: impl Dashboard + 'static) -> Router {
-    app_with(
-        dashboard,
-        weather::WeatherService::omarchy(),
-        update::UpdateCheck::start(),
-    )
-}
-
-/// [`app`] with the weather route answered by `weather`.
-pub fn app_with_weather(
-    dashboard: impl Dashboard + 'static,
-    weather: weather::WeatherService,
-) -> Router {
-    app_with(dashboard, weather, update::UpdateCheck::off())
-}
-
 /// The API routes over `dashboard`, with the given weather and update
 /// services.
-pub fn app_with(
+fn app_with(
     dashboard: impl Dashboard + 'static,
     weather: weather::WeatherService,
     update: update::UpdateCheck,
@@ -421,8 +412,8 @@ mod tests {
 
     use super::*;
 
-    /// [`app`] without the release check, which would reach GitHub from a
-    /// test that runs long enough.
+    /// The daemon's routes without the release check, which would reach
+    /// GitHub from a test that runs long enough.
     fn test_app(dashboard: impl Dashboard + 'static) -> Router {
         app_with(
             dashboard,
@@ -552,11 +543,7 @@ mod tests {
     /// nothing is available.
     #[tokio::test]
     async fn the_version_route_names_the_daemon_version() {
-        let (status, body) = get(
-            app_with_weather(idle_aggregator(), weather::WeatherService::sample()),
-            "/api/v1/version",
-        )
-        .await;
+        let (status, body) = get(test_app(idle_aggregator()), "/api/v1/version").await;
         assert_eq!(status, StatusCode::OK);
         let report: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(report["current"], env!("CARGO_PKG_VERSION"));
@@ -586,6 +573,33 @@ mod tests {
             error.to_string().contains("has no authentication"),
             "{error}"
         );
+    }
+
+    /// An environment holding only `pairs`.
+    fn fake_env(pairs: &[(&'static str, &'static str)]) -> Env {
+        let pairs = pairs.to_vec();
+        Arc::new(move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).into())
+        })
+    }
+
+    /// Scenario: the window runs the dashboard itself, with the environment
+    /// it was handed rather than the process's. The release check reads
+    /// that environment too: the switch set there turns it off, and without
+    /// it the check looks, at the releases location set there.
+    #[tokio::test]
+    async fn the_release_check_reads_the_given_environment() {
+        const RELEASES: (&str, &str) = (
+            pending_core::release::BASE_URL_VARIABLE,
+            "https://127.0.0.1:9/releases",
+        );
+        let off = fake_env(&[RELEASES, (update::DISABLE_VARIABLE, "1")]);
+        assert!(!release_check(&off).is_looking());
+        // The first look is half a minute away: the test ends before it.
+        assert!(release_check(&fake_env(&[RELEASES])).is_looking());
     }
 
     struct Counting(Arc<std::sync::atomic::AtomicUsize>);

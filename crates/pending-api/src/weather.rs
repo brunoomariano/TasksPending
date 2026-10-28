@@ -265,9 +265,10 @@ mod tests {
     }
 
     fn api(service: WeatherService) -> Router {
-        crate::app_with_weather(
+        crate::app_with(
             Aggregator::start(Vec::new(), Duration::from_secs(30)),
             service,
+            crate::update::UpdateCheck::off(),
         )
     }
 

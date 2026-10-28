@@ -104,6 +104,9 @@ impl Client {
             // Loopback never goes through a proxy, whatever the environment
             // says.
             .no_proxy()
+            // The daemon never redirects; following one would take the
+            // request, and the dashboard header, off loopback.
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Self { base: url, http })
     }
@@ -231,6 +234,9 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use axum::routing::get;
     use chrono::Duration as ChronoDuration;
     use tokio::net::TcpListener;
@@ -384,6 +390,51 @@ mod tests {
         let client =
             Client::with_timeout(&format!("http://{address}"), Duration::from_millis(200)).unwrap();
         assert!(matches!(client.health().await, Err(Error::Timeout)));
+    }
+
+    /// Scenario: something on the daemon's port answers with a redirect.
+    /// When the window reads health or posts a change, it does not follow
+    /// the redirect elsewhere: the request stays on the loopback address
+    /// it was given and the redirect is reported as an error status.
+    #[tokio::test]
+    async fn does_not_follow_redirects_away_from_the_daemon() {
+        let elsewhere_hits = Arc::new(AtomicUsize::new(0));
+        let hits = elsewhere_hits.clone();
+        let elsewhere = serve(
+            pending_api::Router::new()
+                .route(
+                    "/healthz",
+                    get(move || {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        async {
+                            axum::Json(Health {
+                                status: "ok".to_owned(),
+                                version: "9.9.9".to_owned(),
+                            })
+                        }
+                    }),
+                )
+                .route("/api/v1/look", axum::routing::post(|| async { "" })),
+        )
+        .await;
+        let target = elsewhere.base.clone();
+        let redirect = move |status: StatusCode, path: &'static str| {
+            let location = target.join(path).unwrap().to_string();
+            move || async move { (status, [(reqwest::header::LOCATION, location)]) }
+        };
+        let client = serve(
+            pending_api::Router::new()
+                .route("/healthz", get(redirect(StatusCode::FOUND, "/healthz")))
+                .route(
+                    "/api/v1/look",
+                    axum::routing::post(redirect(StatusCode::TEMPORARY_REDIRECT, "/api/v1/look")),
+                ),
+        )
+        .await;
+
+        assert!(matches!(client.health().await, Err(Error::Status(302))));
+        assert!(matches!(client.look().await, Err(Error::Status(307))));
+        assert_eq!(elsewhere_hits.load(Ordering::SeqCst), 0);
     }
 
     /// An answer that is not what this version expects is reported as

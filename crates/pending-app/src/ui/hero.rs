@@ -14,7 +14,7 @@ use super::icons::symbolic;
 use super::{Ctx, Widgets};
 use crate::backend::Command;
 use crate::clock::{clock_text, date_text, drawing};
-use crate::present::{Page, refresh_button, update_line, weather_icon_name};
+use crate::present::{Page, UPDATE_TOOLTIP, refresh_button, update_line, weather_icon_name};
 use crate::view::View;
 
 /// Widest the clock gets.
@@ -175,9 +175,7 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
     updated_line.append(&snoozed_button);
     let update = label("", &[]);
     update.set_visible(false);
-    update.set_tooltip_text(Some(
-        "A newer version is published. Run: tasks-pending upgrade",
-    ));
+    update.set_tooltip_text(Some(UPDATE_TOOLTIP));
     updated_line.append(&update);
     let note = label("", &["updated"]);
     note.set_halign(gtk::Align::Center);

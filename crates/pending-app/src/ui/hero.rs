@@ -10,7 +10,7 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 
 use super::dialogs;
-use super::icons::symbolic;
+use super::icons::{size, symbolic};
 use super::{Ctx, Widgets};
 use crate::backend::Command;
 use crate::clock::{clock_text, date_text, drawing};
@@ -69,7 +69,7 @@ fn control_button(
     text: &str,
     classes: &[&str],
 ) -> (gtk::Button, gtk::Image, gtk::Label) {
-    let image = symbolic(icon, 16);
+    let image = symbolic(icon, size::CONTROL);
     let label = gtk::Label::new(Some(text));
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     content.append(&image);
@@ -84,7 +84,7 @@ fn control_button(
 
 pub fn build(ctx: &Rc<Ctx>) -> Hero {
     // Weather: icon and temperature, then place and wind.
-    let weather_icon = symbolic("weather-overcast-symbolic", 28);
+    let weather_icon = symbolic("weather-overcast-symbolic", size::WEATHER);
     let weather_temperature = label("", &["weather-temperature"]);
     let now = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     now.append(&weather_icon);
@@ -145,7 +145,7 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
         .visible(false)
         .build();
     filter_dot.add_css_class("filter-dot");
-    let settings_icon = symbolic("emblem-system-symbolic", 16);
+    let settings_icon = symbolic("emblem-system-symbolic", size::CONTROL);
     let settings_overlay = gtk::Overlay::builder().child(&settings_icon).build();
     settings_overlay.add_overlay(&filter_dot);
     let settings_button = gtk::Button::builder().child(&settings_overlay).build();
@@ -169,7 +169,7 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
         .visible(false)
         .build();
     updated_line.add_css_class("updated");
-    updated_line.append(&symbolic("alarm-symbolic", 13));
+    updated_line.append(&symbolic("alarm-symbolic", size::SMALL));
     updated_line.append(&updated);
     updated_line.append(&version);
     updated_line.append(&snoozed_button);

@@ -8,7 +8,7 @@ use gtk4 as gtk;
 use gtk4::prelude::*;
 
 use super::hero::show_note;
-use super::icons::{source_icon, symbolic};
+use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped};
 use crate::backend::Command;
 use crate::present::{BoardView, CardView, GroupView, Notice, NowItem, StackView, link_note};
@@ -95,7 +95,7 @@ pub fn notice(kind: &str, title: &str, body: &str) -> gtk::Box {
 fn empty_line(message: &str) -> gtk::Box {
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     line.add_css_class("empty");
-    line.append(&symbolic("object-select-symbolic", 14));
+    line.append(&symbolic("object-select-symbolic", size::TEXT));
     line.append(&text(message, &[]));
     line
 }
@@ -115,7 +115,7 @@ fn source_tile(ctx: &Rc<Ctx>, icon: Option<&pending_core::Icon>) -> gtk::Box {
         .valign(gtk::Align::Center)
         .build();
     tile.add_css_class("source-tile");
-    tile.append(&source_icon(ctx, icon, 18));
+    tile.append(&source_icon(ctx, icon, size::LOGO));
     tile
 }
 
@@ -169,7 +169,7 @@ fn now_section(ctx: &Rc<Ctx>, items: &[NowItem]) -> gtk::Box {
     section.add_css_class("now");
     let title = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     title.add_css_class("now-title");
-    title.append(&symbolic("view-pin-symbolic", 14));
+    title.append(&symbolic("view-pin-symbolic", size::TEXT));
     title.append(&tracked("Now", &[]));
     let count = gtk::Label::new(Some(&items.len().to_string()));
     count.add_css_class("count");
@@ -187,7 +187,7 @@ fn now_section(ctx: &Rc<Ctx>, items: &[NowItem]) -> gtk::Box {
         let card = card_widget(ctx, &item.card, true);
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         footer.add_css_class("card-source");
-        footer.append(&source_icon(ctx, item.icon.as_ref(), 13));
+        footer.append(&source_icon(ctx, item.icon.as_ref(), size::SMALL));
         footer.append(&line(&item.source, &[]));
         card.append(&footer);
         let child = gtk::FlowBoxChild::builder()
@@ -222,7 +222,7 @@ fn group_widget(ctx: &Rc<Ctx>, group: &GroupView) -> gtk::Box {
     header.append(&board);
     if let Some(empty) = &group.empty_toggle {
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        content.append(&symbolic(empty.icon, 13));
+        content.append(&symbolic(empty.icon, size::SMALL));
         content.append(&gtk::Label::new(Some(&empty.label)));
         let toggle = gtk::Button::builder()
             .child(&content)
@@ -262,7 +262,7 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
     }
 
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    content.append(&symbolic("pan-down-symbolic", 14));
+    content.append(&symbolic("pan-down-symbolic", size::TEXT));
     content.append(&tracked(&stack.name, &[]));
     let count = gtk::Label::new(Some(&stack.count.to_string()));
     count.add_css_class("count");

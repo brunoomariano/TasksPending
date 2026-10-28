@@ -23,7 +23,7 @@ Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Board` (a fil
 - `make app`: open the window (over the daemon when it runs, else over the sources).
 - `make sandbox`: open the window over deterministic simulated cards, without reading config, credentials, cache, or external sources.
 - `make screenshots`: regenerate the README pictures in `docs/assets` from the sandbox window (`tasks-pending sandbox --screenshot <file> --scene board|light|sources|settings|snoozed`); run it after a change that alters how the window looks. It needs a display that is drawing frames (not one on DPMS off). Without one, GTK's Broadway backend works headless at 1024×768: `gtk4-broadwayd :5 &` then `GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 make screenshots`.
-- `make changelog-check`: check `CHANGELOG.md`'s sections.
+- `make changelog-check`: check `CHANGELOG.md`'s sections (and run that check's own harness, `scripts/test-check-changelog.sh`).
 - `make install-test` / `make release-installer-test` / `make release-assets-test`: validate the source installer, the public release installer and its stable download aliases without network access or changes to the machine.
 - `make release-local` / `make release-smoke`: build the release bundle under `dist/`, and smoke test it.
 - `make install` / `make uninstall`: build a release and install it under `PREFIX` (default `~/.local`) with the desktop entry, icon and user service, or remove it.
@@ -48,6 +48,8 @@ GTK4 and libadwaita, through `gtk4-rs` and `libadwaita-rs` without a component f
 
 Visual style: simple and quiet, described in `crates/pending-app/DESIGN.md` (read it before changing how the window looks). Colours come from the app's own palette in `crates/pending-app/src/theme.rs` (dark by default, light when the system asks), filled into `crates/pending-app/src/style.css`; no Omarchy or GTK theme colours. Icons are the system's symbolic icons (names present in Adwaita and Yaru); source logos are fetched from their configured URL. Cards carry no severity colour or label. Thin 1px borders over shadows, one accent, 6/12/18 px rhythm.
 
+The app's tests need no display (CI has none): what they check lives outside the widgets, in `present`, `state`, `view` and `backend`, against a stand-in daemon on a loopback port. Widget lifetimes (closures that capture a widget hold it alive: capture it weakly when the widget owns the closure) and keyboard focus (never `can_focus(false)` on a container, which shuts its children out) are checked by hand on a display.
+
 ## Changes That Travel Together
 
 - **New source kind:**
@@ -57,7 +59,7 @@ Visual style: simple and quiet, described in `crates/pending-app/DESIGN.md` (rea
   - `docs/operations.md` (kind table and section);
   - `config.example.toml`;
   - `docs/install.md` (tokens table).
-- **Model change (`pending-core` types):** struct literals in `pending-api`, `pending-client` and `pending-app` tests usually need the new field. The API's JSON is the contract the window reads; keep it backwards compatible (`#[serde(default)]`) because a window may talk to an older daemon. The types both sides share (`Health`, `VersionReport`, the dashboard header, the refresh cooldown) live in `pending-core::api`, not in the daemon or the client.
+- **Model change (`pending-core` types):** struct literals in `pending-api`, `pending-client` and `pending-app` tests usually need the new field. The API's JSON is the contract the window reads; keep it backwards compatible (`#[serde(default)]`) because a window may talk to an older daemon. The types both sides share (the default address `DEFAULT_LISTEN_ADDR`/`DEFAULT_DAEMON_URL`, `Health`, `VersionReport`, the dashboard header, the refresh cooldown and its 429 body `RefreshWait`) live in `pending-core::api`, not in the daemon or the client. `crates/pending-core/tests/fixtures/snapshot-0.5.0.json` is what a 0.5.0 daemon sends: fields may be added, never renamed or dropped.
 - **Per-stack option for every kind:** `StackConfig` (pending-core), then `SourceSpec` / `SourceReport` if the snapshot needs it.
 - **State the user changes from the window (marks, snoozes):** the store in `pending-runtime` (`marks.rs`, `snoozes.rs`, `looks.rs`, all on `store.rs`), the `Dashboard` trait, a route in `pending-api` guarded by the dashboard header, a method in `pending-client`, a `Command` in `pending-app`'s backend, and the snapshot field the window reads. Window-only choices go in `View` instead.
 - **New window setting:**
@@ -73,6 +75,8 @@ Visual style: simple and quiet, described in `crates/pending-app/DESIGN.md` (rea
   - `packaging/` (systemd, applications, icons, PKGBUILD);
   - `tasks-pending setup` and `upgrade` (`crates/tasks-pending/src`);
   - `docs/install.md`.
+
+  The installer harnesses run with a temporary `HOME` and none of the caller's `XDG_*` variables. Under `set -e`, write an assertion as `if …; then fail …; fi`, never with `!`, which cannot fail there (CI's shellcheck at `--severity=info` flags it).
 
 ## Release
 

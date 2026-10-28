@@ -4,13 +4,16 @@
 #   curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh
 #
 # On Arch Linux (or a distribution derived from it, per os-release's ID_LIKE)
-# it installs the release's pacman package. Elsewhere it downloads
+# it installs the release's pacman package, which holds the desktop entry
+# and the user service, and retires an earlier install of the user's that
+# would shadow it. Elsewhere it downloads
 # tasks-pending-x86_64-unknown-linux-gnu.tar.gz, checks it against the
 # release's published .sha256, unpacks it under ~/.local/lib/tasks-pending and
-# links ~/.local/bin/tasks-pending to it. A missing or mismatched checksum
-# stops the install before anything is unpacked. Either way it ends with
-# `tasks-pending setup`, which installs the desktop entry and the user service
-# and starts (or restarts) the daemon.
+# runs the bundle's installer, which links ~/.local/bin/tasks-pending to it
+# and installs the desktop entry and the user service. A missing or
+# mismatched checksum stops the install before anything is unpacked. Either
+# way it ends with `tasks-pending setup`, which creates the config and env
+# files when missing and starts (or restarts) the daemon.
 #
 # Environment (all optional):
 #   TASKS_PENDING_VERSION           release to install, e.g. 0.6.0 (default: latest)
@@ -173,8 +176,71 @@ install_bundle() {
   say "installed $("$bin_dir/tasks-pending" --version 2>/dev/null || echo tasks-pending) to $lib_dir"
 }
 
+# retire_user_install <bin-dir> <lib-dir>: a release installed earlier for
+# this user (the bundle, before the package path covered distributions
+# built on Arch, or `make install`) would shadow the package: its unit in
+# ~/.config/systemd/user wins over the package's, so the old daemon would
+# go on running, and its executable and launcher entry come first. This
+# stops that service and removes what that install put down, and only
+# that: the config, the tokens, the service's drop-ins and anything else
+# stay. A unit that runs something else is the user's own, and is kept.
+retire_user_install() {
+  bin_dir="$1" lib_dir="$2"
+  exe="$bin_dir/tasks-pending"
+  share="$HOME/.local/share"
+  units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  unit="$units/tasks-pending.service"
+  app_id="io.github.brunoomariano.TasksPending"
+  retired=""
+
+  if [ -f "$unit" ]; then
+    if grep -Fq "ExecStart=$exe " "$unit"; then
+      if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user disable --now tasks-pending.service >/dev/null 2>&1 || true
+      fi
+      wants="$units/default.target.wants/tasks-pending.service"
+      if [ -L "$wants" ] && [ "$(readlink "$wants")" = "$unit" ]; then
+        rm -f "$wants"
+      fi
+      rm -f "$unit"
+      retired="$retired $unit"
+    else
+      say "note: $unit overrides the package's unit and runs something else; it was left as it is"
+    fi
+  fi
+
+  if [ -L "$exe" ] && [ "$(readlink "$exe")" = "$lib_dir/bin/tasks-pending" ]; then
+    rm -f "$exe"
+    retired="$retired $exe"
+  elif [ -f "$exe" ] && [ -x "$exe" ] && "$exe" --version 2>/dev/null | grep -q '^tasks-pending '; then
+    rm -f "$exe"
+    retired="$retired $exe"
+  fi
+  if [ -x "$lib_dir/bin/tasks-pending" ]; then
+    rm -rf "${lib_dir:?}"
+    retired="$retired $lib_dir"
+  fi
+  entry="$share/applications/$app_id.desktop"
+  if [ -f "$entry" ] && grep -Fqx "Exec=$exe" "$entry"; then
+    rm -f "$entry" "$share/icons/hicolor/scalable/apps/$app_id.svg" "$share/icons/hicolor/256x256/apps/$app_id.png"
+    retired="$retired $entry"
+  fi
+  if [ -n "$retired" ] && [ -d "$share/tasks-pending" ]; then
+    for file in config.example.toml env.example tasks-pending.png tasks-pending.svg; do
+      rm -f "$share/tasks-pending/$file"
+    done
+    rmdir "$share/tasks-pending" 2>/dev/null || true
+  fi
+  if [ -n "$retired" ]; then
+    say "retired the earlier install the package replaces:$retired (your config and tokens stay)"
+  fi
+  if [ -f "$share/applications/TasksPending.desktop" ]; then
+    say "note: the TasksPending web app opens a page the daemon no longer serves; remove it with \`omarchy-webapp-remove TasksPending\`"
+  fi
+}
+
 install_arch_package() {
-  base="$1" work="$2"
+  base="$1" work="$2" bin_dir="$3" lib_dir="$4"
   command -v pacman >/dev/null 2>&1 || fail "pacman is required to install the Arch package"
   package="$(download_checked "$base" "tasks-pending-bin-x86_64.pkg.tar.zst" "$work")"
   # pacman asks before installing when a terminal is there to answer (the
@@ -208,6 +274,7 @@ install_arch_package() {
     say "installed the package; now run \`tasks-pending setup\` as the user who will use TasksPending"
     return
   fi
+  retire_user_install "$bin_dir" "$lib_dir"
   "$executable" setup
 }
 
@@ -255,7 +322,7 @@ main() {
 
   say "fetching TasksPending ($version) from $base"
   if [ "$arch_based" -eq 1 ]; then
-    install_arch_package "$base" "$work"
+    install_arch_package "$base" "$work" "$bin_dir" "$lib_dir"
   else
     install_bundle "$base" "$work" "$bin_dir" "$lib_dir"
   fi

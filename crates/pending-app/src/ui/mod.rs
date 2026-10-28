@@ -263,6 +263,15 @@ pub fn run(
             screenshot.as_ref().map(|(_, scene)| *scene),
         ));
         load_stylesheet();
+        // A logo's dark or light variant is picked when the page is built.
+        adw::StyleManager::default().connect_dark_notify({
+            let ctx = Rc::downgrade(&ctx);
+            move |_| {
+                if let Some(ctx) = ctx.upgrade() {
+                    ctx.redraw(true);
+                }
+            }
+        });
         build_window(app, &ctx);
         if let Some(events) = events.borrow_mut().take() {
             pump_events(&ctx, events);

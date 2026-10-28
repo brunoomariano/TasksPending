@@ -18,7 +18,7 @@ TasksPending is now a native Linux window. The web page and the terminal dashboa
 
 - The daemon no longer serves a page: `GET /` is one line naming the app. The Omarchy web app launcher (`make webapp`) and `--static-dir` are gone.
 - The Arch package depends on `gtk4` and `libadwaita`.
-- The user service runs with `NoNewPrivileges=yes` and reads its tokens from `$XDG_CONFIG_HOME/tasks-pending/env` (`%E`), where `setup` creates the file.
+- The user service runs with `NoNewPrivileges=yes` and reads its tokens from `$XDG_CONFIG_HOME/tasks-pending/env` (`%E`), where `setup` creates the file, taking `XDG_CONFIG_HOME` from the user manager rather than the shell it runs in.
 - A window reads a source status or card severity that a newer daemon added as degraded or info, instead of failing to read the dashboard.
 - `make ci-check` also checks `CHANGELOG.md` (`## Unreleased` only at the top, then one section per version, newest first), and CI runs shellcheck at `--severity=info`.
 

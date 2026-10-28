@@ -25,6 +25,12 @@ use tracing::info;
 /// after.
 const AFTER_REFRESH: Duration = Duration::from_secs(2);
 
+/// Longest the window waits, when it opens, to learn whether a daemon
+/// answers. A daemon answers its health check from memory in well under
+/// this; something that takes the connection and stays silent must not
+/// hold the window up for a whole request timeout.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// What the window asks of the dashboard.
 #[derive(Debug)]
 pub enum Command {
@@ -146,12 +152,13 @@ pub fn resolve(runtime: &Runtime, options: Options, env: Env) -> anyhow::Result<
             .clone()
             .unwrap_or_else(|| DEFAULT_DAEMON_URL.to_owned());
         if !options.no_daemon {
-            let client = Client::new(&url).with_context(|| format!("daemon address {url}"))?;
-            match client.health().await {
+            let probe = Client::with_timeout(&url, PROBE_TIMEOUT)
+                .with_context(|| format!("daemon address {url}"))?;
+            match probe.health().await {
                 Ok(health) => {
                     info!(url, version = health.version, "using the daemon");
                     return Ok(Backend {
-                        client,
+                        client: Client::new(&url)?,
                         source: Source::Daemon {
                             url,
                             version: health.version,
@@ -744,6 +751,45 @@ mod tests {
         assert!(
             scratch.dir.join("tasks-pending").is_dir(),
             "the cache goes where the environment says"
+        );
+    }
+
+    /// Something at the daemon address that takes the connection but
+    /// never answers holds the window up for a moment, not for a whole
+    /// request timeout: the app gives up on it and runs the sources here.
+    #[test]
+    fn gives_up_soon_on_an_address_that_never_answers() {
+        let runtime = runtime();
+        let scratch = Scratch::new("silent");
+        // Bound and never accepting: the system takes the connection and
+        // nothing ever answers on it.
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let started = std::time::Instant::now();
+        let backend = resolve(
+            &runtime,
+            Options {
+                config: Some(scratch.sample_config()),
+                daemon: Some(format!("http://{}", silent.local_addr().unwrap())),
+                ..Options::default()
+            },
+            scratch.env(),
+        )
+        .unwrap();
+        let waited = started.elapsed();
+        assert!(
+            matches!(
+                backend.source,
+                Source::BuiltIn {
+                    daemon_wanted: true,
+                    ..
+                }
+            ),
+            "{:?}",
+            backend.source
+        );
+        assert!(
+            waited < pending_client::REQUEST_TIMEOUT,
+            "waited {waited:?}"
         );
     }
 

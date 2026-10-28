@@ -184,6 +184,10 @@ cat >"$FAKE_BIN/tasks-pending" <<'EOF2'
 #!/bin/sh
 printf 'path %s\n' "$*" >>"$BINARY_LOG"
 EOF2
+cat >"$FAKE_BIN/systemctl" <<'EOF2'
+#!/bin/sh
+printf 'systemctl %s\n' "$*" >>"$SYSTEMCTL_LOG"
+EOF2
 chmod +x "$FAKE_BIN"/* "$PACKAGE_EXE"
 
 # run_installer <home> <env...>: runs the installer with the fakes on PATH
@@ -196,12 +200,16 @@ set -euo pipefail
 home=$1
 shift
 mkdir -p "$home"
+# Nothing of the real user's may leak in: the installer must only see the
+# fake home.
+unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME
 HOME="$home" \
   PATH="$FAKE_BIN:$PATH" \
   BUNDLE_ASSET="$ASSET" \
   BINARY_LOG="$home/binary.log" \
   CURL_LOG="$home/curl.log" \
   PACMAN_LOG="$home/pacman.log" \
+  SYSTEMCTL_LOG="$home/systemctl.log" \
   TASKS_PENDING_RELEASE_BASE_URL="${RELEASE_BASE_URL:-https://example.test/releases}" \
   TASKS_PENDING_OS_RELEASE="${OS_RELEASE:-$WORK/non-arch-os-release}" \
   MOCK_UNAME_S="${MOCK_UNAME_S:-Linux}" \
@@ -373,6 +381,7 @@ if grep -q '^path ' "$home/binary.log"; then
 fi
 [[ $output == *"running: sudo pacman -U --noconfirm "* ]] || fail "the command was not shown: $output"
 test ! -e "$home/.local/lib/tasks-pending"
+test ! -e "$home/systemctl.log" || fail "the installer touched the user service with nothing to retire"
 
 # os-release values may be single-quoted, as the format allows.
 printf "ID='arch'\n" >"$WORK/quoted-os-release"
@@ -403,3 +412,102 @@ if grep -q 'setup' "$home/binary.log" 2>/dev/null; then
   fail "setup ran as root"
 fi
 [[ $output == *"run \`tasks-pending setup\` as the user"* ]] || fail "root was not told what is left: $output"
+
+# A release installed for the user before the package (0.5.0's bundle on
+# Manjaro, say, or `make install`) would shadow it: its unit in
+# ~/.config/systemd/user wins over the package's, so the old daemon would
+# keep running. The installer retires what that install put down, stops
+# its service first, and leaves the config, the tokens, the service's
+# drop-ins and anything else alone.
+seed_user_install() {
+  local home=$1 units="$1/.config/systemd/user"
+  mkdir -p "$home/.local/bin" "$units/default.target.wants" "$units/tasks-pending.service.d" \
+    "$home/.config/tasks-pending" "$home/.local/share/applications"
+  printf '[Unit]\nDescription=TasksPending dashboard API\n[Service]\nExecStart=%s serve --listen 127.0.0.1:61000\n' \
+    "$home/.local/bin/tasks-pending" >"$units/tasks-pending.service"
+  ln -s "$units/tasks-pending.service" "$units/default.target.wants/tasks-pending.service"
+  printf '[Service]\nEnvironment=RUST_LOG=debug\n' >"$units/tasks-pending.service.d/override.conf"
+  printf '[sources]\n' >"$home/.config/tasks-pending/config.toml"
+  printf 'GITHUB_TOKEN=mine\n' >"$home/.config/tasks-pending/env"
+  printf '#!/bin/sh\n' >"$home/.local/bin/other-tool"
+  printf '[Desktop Entry]\nExec=other\n' >"$home/.local/share/applications/other.desktop"
+}
+check_user_install_retired() {
+  local home=$1 output=$2 units="$1/.config/systemd/user"
+  grep -Fqx 'systemctl --user disable --now tasks-pending.service' "$home/systemctl.log" ||
+    fail "the old service was not stopped: $(cat "$home/systemctl.log" 2>/dev/null)"
+  for gone in "$home/.local/bin/tasks-pending" "$units/tasks-pending.service" \
+    "$units/default.target.wants/tasks-pending.service" "$home/.local/share/tasks-pending"; do
+    if [[ -e $gone || -L $gone ]]; then
+      fail "the old install's $gone is still there"
+    fi
+  done
+  for kept in "$units/tasks-pending.service.d/override.conf" "$home/.config/tasks-pending/config.toml" \
+    "$home/.local/bin/other-tool" "$home/.local/share/applications/other.desktop"; do
+    test -e "$kept" || fail "$kept was removed"
+  done
+  grep -Fqx 'GITHUB_TOKEN=mine' "$home/.config/tasks-pending/env" || fail "the tokens were touched"
+  grep -Fqx 'package setup' "$home/binary.log" || fail "the package's setup did not run"
+  [[ $output == *"retired"* ]] || fail "the retirement was not reported: $output"
+}
+
+# 0.5.0's bundle: an executable copied into ~/.local/bin, the examples and
+# icon in ~/.local/share/tasks-pending, and Omarchy's web app for its page.
+home="$WORK/arch-from-0.5"
+seed_user_install "$home"
+cat >"$home/.local/bin/tasks-pending" <<'EOF2'
+#!/bin/sh
+[ "$1" = --version ] && echo "tasks-pending 0.5.0"
+EOF2
+chmod +x "$home/.local/bin/tasks-pending"
+mkdir -p "$home/.local/share/tasks-pending"
+for file in config.example.toml env.example tasks-pending.png tasks-pending.svg; do
+  : >"$home/.local/share/tasks-pending/$file"
+done
+printf '[Desktop Entry]\nExec=omarchy-launch-webapp http://127.0.0.1:61000\n' \
+  >"$home/.local/share/applications/TasksPending.desktop"
+output="$(OS_RELEASE="$WORK/omarchy-os-release" setsid -w "$WORK/run-installer.sh" "$home" env </dev/null)"
+check_user_install_retired "$home" "$output"
+[[ $output == *"omarchy-webapp-remove TasksPending"* ]] || fail "the old web app was not mentioned: $output"
+test -e "$home/.local/share/applications/TasksPending.desktop" || fail "the web app was removed"
+
+# 0.6.0's bundle: the release under ~/.local/lib, a link to it, and a
+# launcher entry and icons that run that link.
+home="$WORK/arch-from-bundle"
+seed_user_install "$home"
+lib="$home/.local/lib/tasks-pending"
+mkdir -p "$lib/bin" "$home/.local/share/tasks-pending" \
+  "$home/.local/share/icons/hicolor/scalable/apps" "$home/.local/share/icons/hicolor/256x256/apps"
+cat >"$lib/bin/tasks-pending" <<'EOF2'
+#!/bin/sh
+[ "$1" = --version ] && echo "tasks-pending 0.6.0"
+EOF2
+chmod +x "$lib/bin/tasks-pending"
+ln -s "$lib/bin/tasks-pending" "$home/.local/bin/tasks-pending"
+: >"$home/.local/share/tasks-pending/env.example"
+app_id=io.github.brunoomariano.TasksPending
+printf '[Desktop Entry]\nExec=%s\n' "$home/.local/bin/tasks-pending" \
+  >"$home/.local/share/applications/$app_id.desktop"
+: >"$home/.local/share/icons/hicolor/scalable/apps/$app_id.svg"
+: >"$home/.local/share/icons/hicolor/256x256/apps/$app_id.png"
+output="$(OS_RELEASE="$WORK/omarchy-os-release" setsid -w "$WORK/run-installer.sh" "$home" env </dev/null)"
+check_user_install_retired "$home" "$output"
+for gone in "$lib" "$home/.local/share/applications/$app_id.desktop" \
+  "$home/.local/share/icons/hicolor/scalable/apps/$app_id.svg" \
+  "$home/.local/share/icons/hicolor/256x256/apps/$app_id.png"; do
+  test ! -e "$gone" || fail "the old install's $gone is still there"
+done
+if [[ $output == *"omarchy-webapp-remove"* ]]; then
+  fail "a web app that is not there was mentioned"
+fi
+
+# A unit of the user's own, which runs something else, is not removed,
+# but the installer says it overrides the package's.
+home="$WORK/arch-own-unit"
+mkdir -p "$home/.config/systemd/user"
+printf '[Service]\nExecStart=/opt/mine/tasks-pending serve\n' >"$home/.config/systemd/user/tasks-pending.service"
+output="$(OS_RELEASE="$WORK/omarchy-os-release" setsid -w "$WORK/run-installer.sh" "$home" env </dev/null)"
+grep -Fq '/opt/mine/tasks-pending' "$home/.config/systemd/user/tasks-pending.service" ||
+  fail "the user's own unit was changed"
+[[ $output == *"overrides the package's"* ]] || fail "the shadowing unit was not reported: $output"
+test ! -e "$home/systemctl.log" || fail "the user's own service was stopped"

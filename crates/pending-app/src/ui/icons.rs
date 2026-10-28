@@ -55,6 +55,9 @@ enum Logo {
 pub struct Cache {
     logos: HashMap<String, Logo>,
     waiting: HashMap<String, Vec<gtk::glib::WeakRef<gtk::Image>>>,
+    /// The pictures of a logo that has a variant for each theme, to swap
+    /// when the theme changes (held weakly too).
+    themed: Vec<(gtk::glib::WeakRef<gtk::Image>, Icon)>,
     http: Option<reqwest::Client>,
 }
 
@@ -103,20 +106,60 @@ enum Next {
 /// with a pixel size measures exactly that, whatever the logo's own size;
 /// a picture would ask for the logo's intrinsic size and widen its group.
 pub fn source_icon(ctx: &Rc<Ctx>, icon: Option<&Icon>, size: i32) -> gtk::Widget {
-    let url = icon.and_then(|icon| {
-        let dark = adw::StyleManager::default().is_dark();
-        let url = match (&icon.dark_url, dark) {
-            (Some(dark_url), true) if is_http_url(dark_url) => dark_url.as_str(),
-            _ => icon.url.as_str(),
-        };
-        is_http_url(url).then(|| url.to_owned())
-    });
-    let Some(url) = url else {
-        let image = symbolic("view-list-symbolic", size);
-        return image.upcast();
+    let dark = adw::StyleManager::default().is_dark();
+    let Some((icon, url)) = icon.and_then(|icon| Some((icon, variant(icon, dark)?))) else {
+        return symbolic(NO_LOGO, size).upcast();
     };
     let picture = gtk::Image::new();
     picture.set_pixel_size(size);
+    if variant(icon, !dark).as_ref() != Some(&url) {
+        let themed = &mut ctx.model.borrow_mut().icons.themed;
+        themed.retain(|(picture, _)| picture.upgrade().is_some());
+        themed.push((picture.downgrade(), icon.clone()));
+    }
+    load(ctx, &picture, url);
+    picture.upcast()
+}
+
+/// The icon shown for a source without a logo.
+const NO_LOGO: &str = "view-list-symbolic";
+
+/// The logo's address for a dark theme or a light one: the dark variant
+/// on a dark theme when it is a web address, the plain one otherwise;
+/// nothing when the one to show is not a web address.
+fn variant(icon: &Icon, dark: bool) -> Option<String> {
+    let url = match (&icon.dark_url, dark) {
+        (Some(dark_url), true) if is_http_url(dark_url) => dark_url,
+        _ => &icon.url,
+    };
+    is_http_url(url).then(|| url.clone())
+}
+
+/// Shows every logo still on screen that has a variant for each theme in
+/// the one for the theme now in use: the page's, and the open dialogs',
+/// which are not rebuilt.
+pub fn follow_theme(ctx: &Rc<Ctx>) {
+    let dark = adw::StyleManager::default().is_dark();
+    let shown: Vec<(gtk::Image, Icon)> = {
+        let themed = &mut ctx.model.borrow_mut().icons.themed;
+        themed.retain(|(picture, _)| picture.upgrade().is_some_and(|p| p.parent().is_some()));
+        themed
+            .iter()
+            .filter_map(|(picture, icon)| Some((picture.upgrade()?, icon.clone())))
+            .collect()
+    };
+    for (picture, icon) in shown {
+        picture.set_paintable(None::<&gtk::gdk::Paintable>);
+        match variant(&icon, dark) {
+            Some(url) => load(ctx, &picture, url),
+            None => picture.set_icon_name(Some(NO_LOGO)),
+        }
+    }
+}
+
+/// Shows the logo at `url` on `picture`: now when it is in, else once it
+/// is fetched (fetching it unless that is under way or failed lately).
+fn load(ctx: &Rc<Ctx>, picture: &gtk::Image, url: String) {
     let next = match ctx.model.borrow().icons.logos.get(&url) {
         Some(Logo::Ready(bytes)) => Next::Show(bytes.clone()),
         Some(Logo::Fetching) => Next::Wait,
@@ -127,8 +170,8 @@ pub fn source_icon(ctx: &Rc<Ctx>, icon: Option<&Icon>, size: i32) -> gtk::Widget
         None => Next::Fetch { attempts: 0 },
     };
     if let Next::Show(bytes) = &next {
-        show(&picture, bytes);
-        return picture.upcast();
+        show(picture, bytes);
+        return;
     }
     ctx.model
         .borrow_mut()
@@ -140,7 +183,6 @@ pub fn source_icon(ctx: &Rc<Ctx>, icon: Option<&Icon>, size: i32) -> gtk::Widget
     if let Next::Fetch { attempts } = next {
         fetch(ctx, url, attempts);
     }
-    picture.upcast()
 }
 
 fn show(image: &gtk::Image, bytes: &gtk::glib::Bytes) {
@@ -303,6 +345,35 @@ mod tests {
         let ready = Logo::Ready(gtk::glib::Bytes::from_static(b"png"));
         assert!(!retry_due(Some(&ready), 2));
         assert!(!retry_due(None, 2));
+    }
+
+    /// The dark variant on a dark theme when it is a web address, the
+    /// plain one otherwise; nothing when the one to show is not.
+    #[test]
+    fn picks_the_variant_for_the_theme() {
+        let icon = |url: &str, dark_url: Option<&str>| Icon {
+            url: url.to_owned(),
+            dark_url: dark_url.map(str::to_owned),
+        };
+        let both = icon("https://x.test/light.png", Some("https://x.test/dark.png"));
+        assert_eq!(
+            variant(&both, true).as_deref(),
+            Some("https://x.test/dark.png")
+        );
+        assert_eq!(
+            variant(&both, false).as_deref(),
+            Some("https://x.test/light.png")
+        );
+        let plain = icon("https://x.test/logo.png", None);
+        assert_eq!(variant(&plain, true), variant(&plain, false));
+        let local_dark = icon("https://x.test/logo.png", Some("file:///dark.png"));
+        assert_eq!(
+            variant(&local_dark, true).as_deref(),
+            Some("https://x.test/logo.png")
+        );
+        let dark_only = icon("logo.png", Some("https://x.test/dark.png"));
+        assert_eq!(variant(&dark_only, false), None);
+        assert!(variant(&dark_only, true).is_some());
     }
 
     /// A failed logo is tried again after a minute, then after twice as

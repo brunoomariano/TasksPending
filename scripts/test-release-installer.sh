@@ -282,6 +282,19 @@ test -x "$home/opt/tp/bin/tasks-pending"
 test -L "$home/opt/bin/tasks-pending"
 grep -Fq "PREFIX=$home/opt BIN_DIR=$home/opt/bin INSTALL_LINK=1 RELEASE_BIN=$home/opt/tp/bin" "$home/binary.log"
 
+# A trailing slash on either directory changes nothing: the staging
+# directories still sit beside the release one, not inside it.
+home="$WORK/dirs-slash"
+for _ in 1 2; do
+  run_installer "$home" env TASKS_PENDING_LIB_DIR="$home/opt/tp/" TASKS_PENDING_BIN_DIR="$home/opt/bin/" >/dev/null
+done
+test -x "$home/opt/tp/bin/tasks-pending"
+test -L "$home/opt/bin/tasks-pending"
+for leftover in "$home/opt/tp/.staged" "$home/opt/tp/.previous" "$home/opt/tp.staged" "$home/opt/tp.previous"; do
+  test ! -e "$leftover" || fail "a trailing slash left $leftover behind"
+done
+grep -Fq "BIN_DIR=$home/opt/bin INSTALL_LINK=1 RELEASE_BIN=$home/opt/tp/bin" "$home/binary.log"
+
 # A release directory that holds something else is not replaced.
 home="$WORK/occupied"
 mkdir -p "$home/.local/lib/tasks-pending/photos"
@@ -358,6 +371,13 @@ if grep -q '^path ' "$home/binary.log"; then
 fi
 [[ $output == *"running: sudo pacman -U --noconfirm "* ]] || fail "the command was not shown: $output"
 test ! -e "$home/.local/lib/tasks-pending"
+
+# os-release values may be single-quoted, as the format allows.
+printf "ID='arch'\n" >"$WORK/quoted-os-release"
+home="$WORK/arch-quoted"
+OS_RELEASE="$WORK/quoted-os-release" setsid -w "$WORK/run-installer.sh" "$home" env </dev/null >/dev/null
+grep -Fq 'tasks-pending-bin-x86_64.pkg.tar.zst' "$home/pacman.log" ||
+  fail "a single-quoted ID=arch was not read as Arch"
 
 # With a terminal, pacman asks as usual.
 if command -v script >/dev/null 2>&1; then

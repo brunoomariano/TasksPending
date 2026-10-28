@@ -47,6 +47,16 @@ download() {
     --output "$2" "$1"
 }
 
+# trimmed <path>: the path without trailing slashes, so `dir/` names the
+# same directory as `dir` and its siblings sit beside it.
+trimmed() {
+  path="$1"
+  while [ "$path" != "${path%/}" ] && [ -n "${path%/}" ]; do
+    path="${path%/}"
+  done
+  printf '%s\n' "$path"
+}
+
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
@@ -202,8 +212,8 @@ main() {
   *) fail "TASKS_PENDING_RELEASE_BASE_URL must start with https:// (it is $release_base)" ;;
   esac
   version="${TASKS_PENDING_VERSION:-latest}"
-  bin_dir="${TASKS_PENDING_BIN_DIR:-$HOME/.local/bin}"
-  lib_dir="${TASKS_PENDING_LIB_DIR:-$HOME/.local/lib/tasks-pending}"
+  bin_dir="$(trimmed "${TASKS_PENDING_BIN_DIR:-$HOME/.local/bin}")"
+  lib_dir="$(trimmed "${TASKS_PENDING_LIB_DIR:-$HOME/.local/lib/tasks-pending}")"
   os_release="${TASKS_PENDING_OS_RELEASE:-/etc/os-release}"
 
   case "$version" in
@@ -220,12 +230,12 @@ main() {
   esac
 
   # Arch itself, or a distribution built on it (Omarchy, Manjaro, ...):
-  # os-release is read, never run.
+  # os-release is read, never run. Its values may be quoted either way.
   release_id=""
   release_like=""
   if [ -r "$os_release" ]; then
-    release_id="$(sed -n 's/^ID=//p' "$os_release" | head -n 1 | tr -d '"')"
-    release_like="$(sed -n 's/^ID_LIKE=//p' "$os_release" | head -n 1 | tr -d '"')"
+    release_id="$(sed -n 's/^ID=//p' "$os_release" | head -n 1 | tr -d "\"'")"
+    release_like="$(sed -n 's/^ID_LIKE=//p' "$os_release" | head -n 1 | tr -d "\"'")"
   fi
   arch_based=0
   case " $release_id $release_like " in

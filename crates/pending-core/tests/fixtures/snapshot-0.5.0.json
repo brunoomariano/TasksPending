@@ -1,0 +1,338 @@
+{
+    "generated_at": "2026-09-30T11:30:00Z",
+    "boards": [
+        {
+            "name": "Work",
+            "groups": [
+                {
+                    "source": "GitHub demo",
+                    "icon": {
+                        "url": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github.svg",
+                        "dark_url": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/github-light.svg"
+                    },
+                    "columns": [
+                        {
+                            "name": "Review requested",
+                            "cards": [
+                                {
+                                    "id": "github:review:214",
+                                    "title": "Review the release checklist",
+                                    "body": "acme/dashboard#214 \u00b7 @mara \u00b7 review required \u00b7 checks passing \u00b7 2 comments",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "warning",
+                                    "updated_at": "2026-09-30T11:00:00Z"
+                                },
+                                {
+                                    "id": "github:review:218",
+                                    "title": "Confirm the dashboard empty state",
+                                    "body": "acme/dashboard#218 \u00b7 @leo \u00b7 review required \u00b7 checks pending",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "warning",
+                                    "updated_at": "2026-09-30T09:00:00Z"
+                                }
+                            ]
+                        },
+                        {
+                            "name": "Returned to you",
+                            "cards": [
+                                {
+                                    "id": "github:pull:220",
+                                    "title": "Make the installer explain missing tokens",
+                                    "body": "acme/installer#220 \u00b7 @you \u00b7 changes requested \u00b7 checks failing \u00b7 5 comments",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "warning",
+                                    "updated_at": "2026-09-30T11:00:00Z"
+                                }
+                            ]
+                        },
+                        {
+                            "name": "Ready to merge",
+                            "cards": []
+                        },
+                        {
+                            "name": "Not approved yet",
+                            "cards": [
+                                {
+                                    "id": "github:pull:223",
+                                    "title": "Document the sandbox command",
+                                    "body": "acme/docs#223 \u00b7 @you \u00b7 review required \u00b7 checks passing",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "info",
+                                    "updated_at": "2026-09-30T08:00:00Z"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "source": "Linear demo",
+                    "icon": {
+                        "url": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/linear.svg",
+                        "dark_url": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/linear-dark.svg"
+                    },
+                    "columns": [
+                        {
+                            "name": "In progress",
+                            "cards": [
+                                {
+                                    "id": "linear:ENG-142",
+                                    "title": "ENG-142",
+                                    "body": "Rate limit the export endpoint \u00b7 Platform \u00b7 In Progress \u00b7 due 2026-10-02",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "warning",
+                                    "updated_at": "2026-09-30T10:00:00Z"
+                                }
+                            ]
+                        },
+                        {
+                            "name": "To do",
+                            "cards": [
+                                {
+                                    "id": "linear:ENG-155",
+                                    "title": "ENG-155",
+                                    "body": "Trim the onboarding checklist \u00b7 Growth \u00b7 Todo",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "info",
+                                    "updated_at": "2026-09-30T09:00:00Z"
+                                },
+                                {
+                                    "id": "linear:ENG-151",
+                                    "title": "ENG-151",
+                                    "body": "Add a health page for the importer \u00b7 Platform \u00b7 Todo",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "info",
+                                    "updated_at": "2026-09-30T08:00:00Z"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "source": "Plane demo",
+                    "icon": {
+                        "url": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/plane.svg",
+                        "dark_url": null
+                    },
+                    "columns": [
+                        {
+                            "name": "In review",
+                            "cards": [
+                                {
+                                    "id": "plane:OPS-52",
+                                    "title": "OPS-52",
+                                    "body": "Map the next dashboard source \u00b7 Operations \u00b7 In Review \u00b7 @mara",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "info",
+                                    "updated_at": "2026-09-30T11:00:00Z"
+                                }
+                            ]
+                        },
+                        {
+                            "name": "Assigned to me",
+                            "cards": [
+                                {
+                                    "id": "plane:OPS-38",
+                                    "title": "OPS-38",
+                                    "body": "Prepare the workspace access review \u00b7 Operations \u00b7 In Progress \u00b7 due 2026-10-01",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "warning",
+                                    "updated_at": "2026-09-30T08:00:00Z"
+                                },
+                                {
+                                    "id": "plane:OPS-44",
+                                    "title": "OPS-44",
+                                    "body": "Document the backup handoff \u00b7 Operations \u00b7 Todo",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "info",
+                                    "updated_at": "2026-09-30T09:00:00Z"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Personal",
+            "groups": [
+                {
+                    "source": "Todoist demo",
+                    "icon": {
+                        "url": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/todoist.svg",
+                        "dark_url": null
+                    },
+                    "columns": [
+                        {
+                            "name": "Today",
+                            "cards": [
+                                {
+                                    "id": "todoist:today:1",
+                                    "title": "Send the design review notes",
+                                    "body": "Today - 14:00 - shared with the dashboard team",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "warning",
+                                    "updated_at": "2026-09-30T10:00:00Z"
+                                },
+                                {
+                                    "id": "todoist:today:2",
+                                    "title": "Pick a screenshot for the README",
+                                    "body": "Today - keep the examples clearly simulated",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "info",
+                                    "updated_at": "2026-09-30T11:00:00Z"
+                                }
+                            ]
+                        },
+                        {
+                            "name": "Later",
+                            "cards": [
+                                {
+                                    "id": "todoist:later:1",
+                                    "title": "Organize the next release notes",
+                                    "body": "Friday - release process",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "info",
+                                    "updated_at": "2026-09-30T08:00:00Z"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "source": "Calendar demo",
+                    "icon": {
+                        "url": "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/google-calendar.svg",
+                        "dark_url": null
+                    },
+                    "columns": [
+                        {
+                            "name": "Today",
+                            "cards": [
+                                {
+                                    "id": "calendar:today:1",
+                                    "title": "Project sync",
+                                    "body": "Today - 15:30-16:00 - video call",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "warning",
+                                    "updated_at": "2026-09-30T10:00:00Z"
+                                },
+                                {
+                                    "id": "calendar:today:2",
+                                    "title": "Focus time",
+                                    "body": "Today - 16:30-17:30 - protect this block",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "info",
+                                    "updated_at": "2026-09-30T09:00:00Z"
+                                }
+                            ]
+                        },
+                        {
+                            "name": "Upcoming",
+                            "cards": [
+                                {
+                                    "id": "calendar:upcoming:1",
+                                    "title": "Weekly planning",
+                                    "body": "Tomorrow - 10:00-10:45 - planning room",
+                                    "source": "sandbox",
+                                    "url": null,
+                                    "due_at": null,
+                                    "severity": "info",
+                                    "updated_at": "2026-09-30T08:00:00Z"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ],
+    "sources": [
+        {
+            "name": "GitHub demo",
+            "status": "ready",
+            "last_refresh_at": "2026-09-30T11:28:00Z",
+            "message": null
+        },
+        {
+            "name": "Linear demo",
+            "status": "ready",
+            "last_refresh_at": "2026-09-30T11:28:00Z",
+            "message": null
+        },
+        {
+            "name": "Plane demo",
+            "status": "ready",
+            "last_refresh_at": "2026-09-30T11:28:00Z",
+            "message": null
+        },
+        {
+            "name": "Todoist demo",
+            "status": "ready",
+            "last_refresh_at": "2026-09-30T11:28:00Z",
+            "message": null
+        },
+        {
+            "name": "Calendar demo",
+            "status": "ready",
+            "last_refresh_at": "2026-09-30T11:28:00Z",
+            "message": null
+        }
+    ],
+    "config_error": null,
+    "marked": [
+        "github:review:214"
+    ],
+    "version": "0.5.0",
+    "snoozed": [
+        {
+            "card": {
+                "id": "github:pull:221",
+                "title": "Cache source icons between restarts",
+                "body": "acme/dashboard#221 \u00b7 @you \u00b7 approved \u00b7 checks passing",
+                "source": "sandbox",
+                "url": null,
+                "due_at": null,
+                "severity": "info",
+                "updated_at": "2026-09-30T10:00:00Z"
+            },
+            "source": "GitHub demo",
+            "until": "2099-01-01T00:00:00Z"
+        }
+    ],
+    "changed": [
+        "github:review:214",
+        "github:pull:220",
+        "plane:OPS-52",
+        "todoist:today:2"
+    ]
+}

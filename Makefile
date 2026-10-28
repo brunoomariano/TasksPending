@@ -54,7 +54,8 @@ screenshots: ## Regenerate the README pictures from the sandbox window
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-settings.png --scene settings
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-snoozed.png --scene snoozed
 
-changelog-check: ## Check CHANGELOG.md: one section per version, the current one first
+changelog-check: ## Check CHANGELOG.md (one section per version, newest first) and the check itself
+	./scripts/test-check-changelog.sh
 	./scripts/check-changelog.sh
 
 install-test: ## Check installer behavior without changing the local system

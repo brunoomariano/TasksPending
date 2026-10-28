@@ -400,15 +400,27 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
 }
 
 /// Clicks, keys and scrolling anywhere in the window count as looking;
-/// the pointer merely crossing it does not.
+/// the pointer merely crossing it does not. A click counts once released:
+/// the snapshot read after the look may rebuild the page, which between
+/// press and release would take the pressed button away, and the click
+/// with it. A raw controller sees the release whatever gesture below
+/// claims the click.
 fn watch_activity(ctx: &Rc<Ctx>, window: &adw::ApplicationWindow) {
-    let click = gtk::GestureClick::new();
-    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let release = gtk::EventControllerLegacy::new();
+    release.set_propagation_phase(gtk::PropagationPhase::Capture);
     {
         let ctx = ctx.clone();
-        click.connect_pressed(move |_, _, _, _| ctx.looked());
+        release.connect_event(move |_, event| {
+            if matches!(
+                event.event_type(),
+                gtk::gdk::EventType::ButtonRelease | gtk::gdk::EventType::TouchEnd
+            ) {
+                ctx.looked();
+            }
+            gtk::glib::Propagation::Proceed
+        });
     }
-    window.add_controller(click);
+    window.add_controller(release);
 
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -477,8 +489,9 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
                     if let Some(widgets) = ctx.widgets.borrow().as_ref() {
                         hero::show_note(widgets, &format!("Could not apply the change ({error})"));
                     }
-                    // No snapshot follows a refused change: rebuild the
-                    // page as it was, so the button pressed is usable again.
+                    // A refused change brings no new snapshot of its own:
+                    // rebuild the page as it was, so the button pressed is
+                    // usable again.
                     ctx.redraw(true);
                 }
                 Event::Acted(Ok(())) => {}

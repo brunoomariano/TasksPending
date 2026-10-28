@@ -95,18 +95,17 @@ pub fn view_path(state_dir: &Path) -> PathBuf {
     state_dir.join("tasks-pending").join("app-view.json")
 }
 
-/// `$XDG_STATE_HOME`, or `~/.local/state`; the current directory as a last
-/// resort, when the environment names neither.
-pub fn state_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("XDG_STATE_HOME").filter(|dir| !dir.is_empty()) {
-        return PathBuf::from(dir);
-    }
-    std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .map_or_else(
-            || PathBuf::from("."),
-            |home| PathBuf::from(home).join(".local/state"),
-        )
+/// `$XDG_STATE_HOME`, or `~/.local/state`; `None` when the environment
+/// names neither, and the view is then not remembered (rather than written
+/// into whatever directory the app was started from).
+pub fn state_dir() -> Option<PathBuf> {
+    let absolute = |key: &str| {
+        std::env::var_os(key)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    absolute("XDG_STATE_HOME").or_else(|| absolute("HOME").map(|home| home.join(".local/state")))
 }
 
 /// Adds `key` to `set`, or removes it if it was there.

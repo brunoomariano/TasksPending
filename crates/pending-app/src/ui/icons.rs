@@ -3,38 +3,64 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use gtk4 as gtk;
 use gtk4::prelude::*;
 use libadwaita as adw;
-use pending_core::{Icon, WeatherCondition, is_http_url};
+use pending_core::{Icon, is_http_url};
 
 use super::Ctx;
 
 /// Largest logo fetched; anything bigger is not a logo.
 const MAX_ICON_BYTES: usize = 1024 * 1024;
+/// Longest wait for a logo.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(15);
+/// A logo that could not be fetched is tried again after this long, then
+/// twice as long after each further failure, up to [`RETRY_AT_MOST`].
+const RETRY_AFTER: Duration = Duration::from_secs(60);
+const RETRY_AT_MOST: Duration = Duration::from_secs(60 * 60);
 
-/// Logos by URL: the bytes once fetched, `None` while they are being
-/// fetched or when the fetch failed, and the pictures waiting for them
-/// (the page may be rebuilt while a fetch is in flight).
+/// What is known about one logo.
+enum Logo {
+    Fetching,
+    Ready(gtk::glib::Bytes),
+    /// Not fetched, decoded or small enough, `attempts` times so far; tried
+    /// again when a page built after `retry_at` wants it.
+    Failed {
+        attempts: u32,
+        retry_at: Instant,
+    },
+}
+
+/// Logos by URL, and the pictures waiting for one being fetched (the page
+/// may be rebuilt while a fetch is in flight).
 #[derive(Default)]
 pub struct Cache {
-    bytes: HashMap<String, Option<gtk::glib::Bytes>>,
+    logos: HashMap<String, Logo>,
     waiting: HashMap<String, Vec<gtk::Image>>,
     http: Option<reqwest::Client>,
 }
 
 impl Cache {
-    fn client(&mut self) -> reqwest::Client {
-        self.http
-            .get_or_insert_with(|| {
-                reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(15))
-                    .build()
-                    .unwrap_or_default()
-            })
-            .clone()
+    /// The HTTP client for logos, built once; `None` when the HTTP stack
+    /// cannot be set up at all, in which case no logo is fetched.
+    fn client(&mut self) -> Option<reqwest::Client> {
+        if self.http.is_none() {
+            match reqwest::Client::builder().timeout(FETCH_TIMEOUT).build() {
+                Ok(client) => self.http = Some(client),
+                Err(error) => tracing::warn!(%error, "no HTTP client for logos"),
+            }
+        }
+        self.http.clone()
     }
+}
+
+/// How long to wait before fetching a logo again after `attempts` failures.
+fn retry_delay(attempts: u32) -> Duration {
+    RETRY_AFTER
+        .saturating_mul(1u32 << attempts.min(16))
+        .min(RETRY_AT_MOST)
 }
 
 /// A symbolic icon from the system theme, `size` pixels.
@@ -44,20 +70,16 @@ pub fn symbolic(name: &str, size: i32) -> gtk::Image {
     image
 }
 
-/// The icon name for a weather condition.
-pub fn weather_icon_name(condition: WeatherCondition) -> &'static str {
-    match condition {
-        WeatherCondition::ClearDay => "weather-clear-symbolic",
-        WeatherCondition::ClearNight => "weather-clear-night-symbolic",
-        WeatherCondition::PartlyCloudyDay => "weather-few-clouds-symbolic",
-        WeatherCondition::PartlyCloudyNight => "weather-few-clouds-night-symbolic",
-        WeatherCondition::Cloudy | WeatherCondition::Unknown => "weather-overcast-symbolic",
-        WeatherCondition::Fog => "weather-fog-symbolic",
-        WeatherCondition::Rain => "weather-showers-symbolic",
-        WeatherCondition::Sleet => "weather-showers-scattered-symbolic",
-        WeatherCondition::Snow => "weather-snow-symbolic",
-        WeatherCondition::Thunder => "weather-storm-symbolic",
-    }
+/// What to do for a picture that wants a logo.
+enum Next {
+    Show(gtk::glib::Bytes),
+    /// Being fetched: this picture gets the logo with the others.
+    Wait,
+    /// Failed lately: stay empty until the retry is due.
+    Skip,
+    Fetch {
+        attempts: u32,
+    },
 }
 
 /// The source's logo at `size` pixels, or a generic icon without one. The
@@ -80,11 +102,18 @@ pub fn source_icon(ctx: &Rc<Ctx>, icon: Option<&Icon>, size: i32) -> gtk::Widget
     };
     let picture = gtk::Image::new();
     picture.set_pixel_size(size);
-    let cached = ctx.model.borrow().icons.bytes.get(&url).cloned();
-    match cached {
-        Some(Some(bytes)) => show(&picture, &bytes),
-        // Being fetched: this picture gets the logo with the others.
-        Some(None) => ctx
+    let next = match ctx.model.borrow().icons.logos.get(&url) {
+        Some(Logo::Ready(bytes)) => Next::Show(bytes.clone()),
+        Some(Logo::Fetching) => Next::Wait,
+        Some(Logo::Failed { retry_at, .. }) if Instant::now() < *retry_at => Next::Skip,
+        Some(Logo::Failed { attempts, .. }) => Next::Fetch {
+            attempts: *attempts,
+        },
+        None => Next::Fetch { attempts: 0 },
+    };
+    match next {
+        Next::Show(bytes) => show(&picture, &bytes),
+        Next::Wait => ctx
             .model
             .borrow_mut()
             .icons
@@ -92,7 +121,8 @@ pub fn source_icon(ctx: &Rc<Ctx>, icon: Option<&Icon>, size: i32) -> gtk::Widget
             .entry(url)
             .or_default()
             .push(picture.clone()),
-        None => fetch(ctx, url, picture.clone()),
+        Next::Skip => {}
+        Next::Fetch { attempts } => fetch(ctx, url, picture.clone(), attempts),
     }
     picture.upcast()
 }
@@ -104,55 +134,115 @@ fn show(image: &gtk::Image, bytes: &gtk::glib::Bytes) {
 }
 
 /// Fetches the logo on the runtime and shows it on the GTK thread, on
-/// this picture and on every one that asked for it meanwhile.
-fn fetch(ctx: &Rc<Ctx>, url: String, picture: gtk::Image) {
+/// this picture and on every one that asked for it meanwhile. `attempts`
+/// is how many fetches of it failed before.
+fn fetch(ctx: &Rc<Ctx>, url: String, picture: gtk::Image, attempts: u32) {
     let client = {
         let mut model = ctx.model.borrow_mut();
-        model.icons.bytes.insert(url.clone(), None);
+        let Some(client) = model.icons.client() else {
+            model.icons.logos.insert(url, failed(attempts));
+            return;
+        };
+        model.icons.logos.insert(url.clone(), Logo::Fetching);
         model.icons.waiting.insert(url.clone(), vec![picture]);
-        model.icons.client()
+        client
     };
     let (sender, receiver) = tokio::sync::oneshot::channel::<Option<Vec<u8>>>();
     let request_url = url.clone();
     ctx.runtime_handle.spawn(async move {
-        let bytes = async {
-            let response = match client.get(&request_url).send().await {
-                Ok(response) => response,
-                Err(error) => {
-                    tracing::debug!(url = request_url, %error, "logo not fetched");
-                    return None;
-                }
-            };
-            if !response.status().is_success() {
-                tracing::debug!(url = request_url, status = %response.status(), "logo not served");
-                return None;
-            }
-            let bytes = response.bytes().await.ok()?;
-            (bytes.len() <= MAX_ICON_BYTES).then(|| bytes.to_vec())
-        }
-        .await;
-        let _ = sender.send(bytes);
+        let _ = sender.send(download(&client, &request_url).await);
     });
     let ctx = ctx.clone();
     gtk::glib::spawn_future_local(async move {
-        let Ok(Some(bytes)) = receiver.await else {
-            ctx.model.borrow_mut().icons.waiting.remove(&url);
-            return;
-        };
-        let bytes = gtk::glib::Bytes::from_owned(bytes);
         // Only an image the texture loader accepts is kept.
-        if let Err(error) = gtk::gdk::Texture::from_bytes(&bytes) {
-            tracing::debug!(url, %error, "logo not decoded");
-            ctx.model.borrow_mut().icons.waiting.remove(&url);
-            return;
-        }
-        let waiting = {
-            let mut model = ctx.model.borrow_mut();
-            model.icons.bytes.insert(url.clone(), Some(bytes.clone()));
-            model.icons.waiting.remove(&url).unwrap_or_default()
-        };
-        for picture in waiting {
-            show(&picture, &bytes);
+        let bytes = receiver.await.ok().flatten().and_then(|bytes| {
+            let bytes = gtk::glib::Bytes::from_owned(bytes);
+            match gtk::gdk::Texture::from_bytes(&bytes) {
+                Ok(_) => Some(bytes),
+                Err(error) => {
+                    tracing::debug!(url, %error, "logo not decoded");
+                    None
+                }
+            }
+        });
+        let mut model = ctx.model.borrow_mut();
+        let waiting = model.icons.waiting.remove(&url).unwrap_or_default();
+        match bytes {
+            Some(bytes) => {
+                model.icons.logos.insert(url, Logo::Ready(bytes.clone()));
+                drop(model);
+                for picture in waiting {
+                    show(&picture, &bytes);
+                }
+            }
+            None => {
+                model.icons.logos.insert(url, failed(attempts));
+            }
         }
     });
+}
+
+fn failed(attempts: u32) -> Logo {
+    Logo::Failed {
+        attempts: attempts + 1,
+        retry_at: Instant::now() + retry_delay(attempts),
+    }
+}
+
+/// The logo's bytes, or `None` when it cannot be had or is bigger than
+/// [`MAX_ICON_BYTES`]: the size is checked before and while reading, so a
+/// large or endless body is dropped rather than kept.
+async fn download(client: &reqwest::Client, url: &str) -> Option<Vec<u8>> {
+    let mut response = match client.get(url).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::debug!(url, %error, "logo not fetched");
+            return None;
+        }
+    };
+    if !response.status().is_success() {
+        tracing::debug!(url, status = %response.status(), "logo not served");
+        return None;
+    }
+    let too_big = || tracing::debug!(url, "logo bigger than {MAX_ICON_BYTES} bytes; not kept");
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_ICON_BYTES as u64)
+    {
+        too_big();
+        return None;
+    }
+    let mut bytes = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if bytes.len() + chunk.len() > MAX_ICON_BYTES {
+                    too_big();
+                    return None;
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => return Some(bytes),
+            Err(error) => {
+                tracing::debug!(url, %error, "logo cut short");
+                return None;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failed logo is tried again after a minute, then after twice as
+    /// long each time, and never less often than once an hour.
+    #[test]
+    fn retries_later_each_time_up_to_an_hour() {
+        assert_eq!(retry_delay(0), Duration::from_secs(60));
+        assert_eq!(retry_delay(1), Duration::from_secs(120));
+        assert_eq!(retry_delay(5), Duration::from_secs(32 * 60));
+        assert_eq!(retry_delay(6), RETRY_AT_MOST);
+        assert_eq!(retry_delay(40), RETRY_AT_MOST);
+    }
 }

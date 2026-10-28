@@ -1,11 +1,14 @@
 //! What the window shows, worked out from the snapshot and the view, with
 //! no widgets involved: the groups and stacks to draw, the cards marked as
-//! in progress, and the control strip.
+//! in progress, the control strip, and the words and icon names the
+//! widgets put on screen.
 
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Local, Utc};
-use pending_core::{DashboardSnapshot, Icon, PendingCard, SourceHealth, SourceStatus, is_http_url};
+use pending_core::{
+    DashboardSnapshot, Icon, PendingCard, SourceHealth, SourceStatus, WeatherCondition, is_http_url,
+};
 
 use crate::snooze::until_text;
 use crate::view::{View, column_key, group_key, hide_key};
@@ -71,8 +74,11 @@ pub struct SourceView {
     pub name: String,
     pub icon: Option<Icon>,
     pub boards: String,
-    pub status: SourceStatus,
     pub status_text: &'static str,
+    /// The symbolic icon for the status.
+    pub status_icon: &'static str,
+    /// The CSS class that colours the status.
+    pub status_class: &'static str,
     pub time: String,
     pub message: Option<String>,
 }
@@ -84,6 +90,13 @@ pub struct SnoozedView {
     pub source: String,
     pub icon: Option<Icon>,
     pub until: String,
+}
+
+impl SnoozedView {
+    /// "github · until Thu 8 Oct 08:00": the line under the card.
+    pub fn footer(&self) -> String {
+        format!("{} · {}", self.source, self.until)
+    }
 }
 
 /// The whole page.
@@ -106,14 +119,28 @@ pub fn local_time(at: DateTime<Utc>) -> String {
     at.with_timezone(&Local).format(TIME_FORMAT).to_string()
 }
 
-fn card_view(card: &PendingCard, marked: &HashSet<&str>, changed: &HashSet<&str>) -> CardView {
-    CardView {
-        id: card.id.clone(),
-        title: card.title.clone(),
-        url: card.url.clone().filter(|url| is_http_url(url)),
-        body: card.body.clone(),
-        marked: marked.contains(card.id.as_str()),
-        changed: changed.contains(card.id.as_str()),
+/// The notice over a dashboard kept from before the daemon stopped
+/// answering.
+pub fn stale_notice(error: &str, fetched_at: DateTime<Local>) -> String {
+    format!(
+        "Dashboard unreachable ({error}); showing data from {}",
+        fetched_at.format(TIME_FORMAT)
+    )
+}
+
+/// The icon name for a weather condition.
+pub fn weather_icon_name(condition: WeatherCondition) -> &'static str {
+    match condition {
+        WeatherCondition::ClearDay => "weather-clear-symbolic",
+        WeatherCondition::ClearNight => "weather-clear-night-symbolic",
+        WeatherCondition::PartlyCloudyDay => "weather-few-clouds-symbolic",
+        WeatherCondition::PartlyCloudyNight => "weather-few-clouds-night-symbolic",
+        WeatherCondition::Cloudy | WeatherCondition::Unknown => "weather-overcast-symbolic",
+        WeatherCondition::Fog => "weather-fog-symbolic",
+        WeatherCondition::Rain => "weather-showers-symbolic",
+        WeatherCondition::Sleet => "weather-showers-scattered-symbolic",
+        WeatherCondition::Snow => "weather-snow-symbolic",
+        WeatherCondition::Thunder => "weather-storm-symbolic",
     }
 }
 
@@ -126,10 +153,79 @@ fn status_text(status: SourceStatus) -> &'static str {
     }
 }
 
+fn status_icon(status: SourceStatus) -> &'static str {
+    match status {
+        SourceStatus::Ready => "object-select-symbolic",
+        SourceStatus::Refreshing => "view-refresh-symbolic",
+        SourceStatus::Degraded => "dialog-warning-symbolic",
+        SourceStatus::Failed => "process-stop-symbolic",
+    }
+}
+
+fn status_class(status: SourceStatus) -> &'static str {
+    match status {
+        SourceStatus::Ready => "ready",
+        SourceStatus::Refreshing => "refreshing",
+        SourceStatus::Degraded => "degraded",
+        SourceStatus::Failed => "failed",
+    }
+}
+
+/// The ids the snapshot flags, for building card views.
+struct Flags<'a> {
+    marked: HashSet<&'a str>,
+    changed: HashSet<&'a str>,
+}
+
+impl<'a> Flags<'a> {
+    fn of(snapshot: &'a DashboardSnapshot) -> Self {
+        Self {
+            marked: snapshot.marked.iter().map(String::as_str).collect(),
+            changed: snapshot.changed.iter().map(String::as_str).collect(),
+        }
+    }
+
+    fn card(&self, card: &PendingCard) -> CardView {
+        CardView {
+            id: card.id.clone(),
+            title: card.title.clone(),
+            url: card.url.clone().filter(|url| is_http_url(url)),
+            body: card.body.clone(),
+            marked: self.marked.contains(card.id.as_str()),
+            changed: self.changed.contains(card.id.as_str()),
+        }
+    }
+}
+
 /// The page for `snapshot` as `view` wants it.
 pub fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
-    let marked: HashSet<&str> = snapshot.marked.iter().map(String::as_str).collect();
-    let changed: HashSet<&str> = snapshot.changed.iter().map(String::as_str).collect();
+    let flags = Flags::of(snapshot);
+    let icons: HashMap<&str, Option<Icon>> = snapshot
+        .boards
+        .iter()
+        .flat_map(|board| &board.groups)
+        .map(|group| (group.source.as_str(), group.icon.clone()))
+        .collect();
+    let attention = snapshot.config_error.is_some()
+        || snapshot
+            .sources
+            .iter()
+            .any(|source| matches!(source.status, SourceStatus::Degraded | SourceStatus::Failed));
+
+    Page {
+        now: now(snapshot, &flags),
+        groups: groups(snapshot, view, &flags),
+        sources: sources(snapshot, &icons),
+        snoozed: snoozed(snapshot, &flags, &icons),
+        attention,
+        updated: format!("Updated {}", local_time(snapshot.generated_at)),
+        version: snapshot.version.clone(),
+        config_error: snapshot.config_error.clone(),
+    }
+}
+
+/// The groups the view lets through, in config order whatever the board.
+fn groups(snapshot: &DashboardSnapshot, view: &View, flags: &Flags) -> Vec<GroupView> {
     let health: HashMap<&str, &SourceHealth> = snapshot
         .sources
         .iter()
@@ -142,13 +238,6 @@ pub fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
             .position(|health| health.name == source)
             .unwrap_or(usize::MAX)
     };
-    let icons: HashMap<&str, Option<Icon>> = snapshot
-        .boards
-        .iter()
-        .flat_map(|board| &board.groups)
-        .map(|group| (group.source.as_str(), group.icon.clone()))
-        .collect();
-
     let mut groups: Vec<(usize, GroupView)> = Vec::new();
     for board in &snapshot.boards {
         if view.board.as_deref().is_some_and(|only| only != board.name)
@@ -193,14 +282,17 @@ pub fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
                         column.cards.len().min(COLUMN_LIMIT)
                     };
                     StackView {
-                        changed: column.cards.iter().any(|c| changed.contains(c.id.as_str())),
+                        changed: column
+                            .cards
+                            .iter()
+                            .any(|c| flags.changed.contains(c.id.as_str())),
                         collapsed: view.collapsed.contains(&key),
                         open,
                         count: column.cards.len(),
                         more: column.cards.len() - shown,
                         cards: column.cards[..shown]
                             .iter()
-                            .map(|card| card_view(card, &marked, &changed))
+                            .map(|card| flags.card(card))
                             .collect(),
                         empty_note: column.cards.is_empty().then(|| {
                             source_health.and_then(|h| h.last_refresh_at).map_or_else(
@@ -227,11 +319,13 @@ pub fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
             ));
         }
     }
-    // Config order, whatever the board: `sources` lists them that way.
     groups.sort_by_key(|(index, _)| *index);
+    groups.into_iter().map(|(_, group)| group).collect()
+}
 
-    // The marked cards, in marking order and once each, whatever the
-    // filter: marking is an explicit choice.
+/// The marked cards, in marking order and once each, whatever the filter:
+/// marking is an explicit choice. An id that is on no board is skipped.
+fn now(snapshot: &DashboardSnapshot, flags: &Flags) -> Vec<NowItem> {
     let mut found: HashMap<&str, (&PendingCard, &str, &Option<Icon>)> = HashMap::new();
     for board in &snapshot.boards {
         for group in &board.groups {
@@ -246,17 +340,20 @@ pub fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
             }
         }
     }
-    let now = snapshot
+    snapshot
         .marked
         .iter()
         .filter_map(|id| found.get(id.as_str()))
         .map(|(card, source, icon)| NowItem {
-            card: card_view(card, &marked, &changed),
+            card: flags.card(card),
             source: (*source).to_owned(),
             icon: (*icon).clone(),
         })
-        .collect();
+        .collect()
+}
 
+/// Every source as the Sources dialog lists it, in config order.
+fn sources(snapshot: &DashboardSnapshot, icons: &HashMap<&str, Option<Icon>>) -> Vec<SourceView> {
     let board_of = |source: &str| {
         snapshot
             .boards
@@ -266,52 +363,46 @@ pub fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let sources = snapshot
+    snapshot
         .sources
         .iter()
         .map(|source| SourceView {
             name: source.name.clone(),
             icon: icons.get(source.name.as_str()).cloned().flatten(),
             boards: board_of(&source.name),
-            status: source.status,
             status_text: status_text(source.status),
+            status_icon: status_icon(source.status),
+            status_class: status_class(source.status),
             time: source.last_refresh_at.map_or_else(
                 || "not refreshed yet".to_owned(),
                 |at| format!("last fetch {}", local_time(at)),
             ),
             message: source.message.clone(),
         })
-        .collect();
-    let snoozed = snapshot
+        .collect()
+}
+
+/// The snoozed cards as the Snoozed dialog lists them.
+fn snoozed(
+    snapshot: &DashboardSnapshot,
+    flags: &Flags,
+    icons: &HashMap<&str, Option<Icon>>,
+) -> Vec<SnoozedView> {
+    snapshot
         .snoozed
         .iter()
         .map(|entry| SnoozedView {
-            card: card_view(&entry.card, &marked, &changed),
+            card: flags.card(&entry.card),
             source: entry.source.clone(),
             icon: icons.get(entry.source.as_str()).cloned().flatten(),
             until: until_text(entry.until),
         })
-        .collect();
-    let attention = snapshot.config_error.is_some()
-        || snapshot
-            .sources
-            .iter()
-            .any(|source| matches!(source.status, SourceStatus::Degraded | SourceStatus::Failed));
-
-    Page {
-        now,
-        groups: groups.into_iter().map(|(_, group)| group).collect(),
-        sources,
-        snoozed,
-        attention,
-        updated: format!("Updated {}", local_time(snapshot.generated_at)),
-        version: snapshot.version.clone(),
-        config_error: snapshot.config_error.clone(),
-    }
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone;
     use pending_core::{Board, CardSeverity, Column, Group};
 
     use super::*;
@@ -424,6 +515,24 @@ mod tests {
         );
     }
 
+    /// Only an http(s) URL becomes a link: a source could hand the window
+    /// a `javascript:` or `file:` URL, and the title must not open it.
+    #[test]
+    fn links_only_to_http_urls() {
+        let mut snapshot = snapshot();
+        let cards = &mut snapshot.boards[0].groups[0].columns[0].cards;
+        cards[0].url = Some("javascript:alert(1)".to_owned());
+        cards[1].url = Some("file:///etc/passwd".to_owned());
+        cards[2].url = Some(" HTTPS://example.com/ok ".to_owned());
+        cards[3].url = None;
+        let shown = page(&snapshot, &View::default());
+        let urls: Vec<_> = shown.groups[1].stacks[0].cards[..4]
+            .iter()
+            .map(|card| card.url.as_deref())
+            .collect();
+        assert_eq!(urls, [None, None, Some(" HTTPS://example.com/ok "), None]);
+    }
+
     /// The board filter and hidden items leave groups out; the marked cards
     /// stay in "Now" whatever the filter, in marking order, skipping ids
     /// that are not on the boards.
@@ -465,6 +574,8 @@ mod tests {
         assert_eq!(shown.version, "0.6.0");
         assert_eq!(shown.sources[1].boards, "Work");
         assert_eq!(shown.sources[1].status_text, "Ready");
+        assert_eq!(shown.sources[1].status_icon, "object-select-symbolic");
+        assert_eq!(shown.sources[1].status_class, "ready");
         assert_eq!(shown.sources[1].time, "not refreshed yet");
 
         snapshot.sources[0].status = SourceStatus::Failed;
@@ -477,11 +588,32 @@ mod tests {
         let shown = page(&snapshot, &View::default());
         assert!(shown.attention);
         assert_eq!(shown.sources[0].message.as_deref(), Some("401"));
+        assert_eq!(shown.sources[0].status_icon, "process-stop-symbolic");
+        assert_eq!(shown.sources[0].status_class, "failed");
         assert_eq!(shown.snoozed[0].until, "until it changes");
         assert_eq!(shown.snoozed[0].source, "github");
+        assert_eq!(shown.snoozed[0].footer(), "github · until it changes");
 
         snapshot.sources[0].status = SourceStatus::Ready;
         snapshot.config_error = Some("bad toml".to_owned());
         assert!(page(&snapshot, &View::default()).attention);
+    }
+
+    /// The words and icons that do not depend on the snapshot.
+    #[test]
+    fn names_the_notice_and_the_weather_icons() {
+        let at = Local.with_ymd_and_hms(2026, 9, 28, 10, 30, 0).unwrap();
+        assert_eq!(
+            stale_notice("refused", at),
+            "Dashboard unreachable (refused); showing data from 28 Sep 10:30"
+        );
+        assert_eq!(
+            weather_icon_name(WeatherCondition::ClearNight),
+            "weather-clear-night-symbolic"
+        );
+        assert_eq!(
+            weather_icon_name(WeatherCondition::Unknown),
+            "weather-overcast-symbolic"
+        );
     }
 }

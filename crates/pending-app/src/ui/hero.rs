@@ -10,17 +10,23 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 
 use super::dialogs;
-use super::icons::{symbolic, weather_icon_name};
+use super::icons::symbolic;
 use super::{Ctx, Widgets};
 use crate::backend::Command;
 use crate::clock::{clock_text, date_text, drawing};
-use crate::present::Page;
+use crate::present::{Page, weather_icon_name};
 use crate::view::View;
 
 /// Widest the clock gets.
 const CLOCK_MAX_WIDTH: i32 = 880;
 /// The weather widget is shown only in windows at least this wide.
 pub const WEATHER_MIN_WIDTH: f64 = 1440.0;
+/// The room kept for the weather, so the clock stays centred whether or
+/// not a report is in.
+const WEATHER_SLOT_WIDTH: i32 = 180;
+/// Longest the line saying where the dashboard comes from gets before it
+/// is cut; the whole line is in the tooltip.
+const SOURCE_LINE_CHARS: i32 = 34;
 /// How long a note under the controls stays.
 const NOTE_FOR: Duration = Duration::from_secs(6);
 
@@ -93,7 +99,7 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
     weather.append(&weather_wind);
     let weather_slot = gtk::Box::builder()
         .valign(gtk::Align::Center)
-        .width_request(180)
+        .width_request(WEATHER_SLOT_WIDTH)
         .build();
     weather_slot.append(&weather);
 
@@ -107,8 +113,10 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
     date.set_attributes(Some(&attributes));
     let digits = gtk::DrawingArea::builder().hexpand(true).build();
     digits.add_css_class("clock-digits");
+    // The frame keeps the shape of the clock's text, so the digits fill it.
+    let shape = drawing("00:00:00");
     let frame = gtk::AspectFrame::builder()
-        .ratio(55.0 / 10.0)
+        .ratio(shape.width as f32 / shape.height as f32)
         .obey_child(false)
         .child(&digits)
         .build();
@@ -177,7 +185,7 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
     source_line.set_halign(gtk::Align::Center);
     source_line.set_single_line_mode(true);
     source_line.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    source_line.set_max_width_chars(34);
+    source_line.set_max_width_chars(SOURCE_LINE_CHARS);
     source_line.set_tooltip_text(Some(&source_text));
 
     let controls = gtk::Box::builder()
@@ -287,24 +295,12 @@ fn start_clock(date: gtk::Label, digits: gtk::DrawingArea) {
     tick(date, digits, shown);
 }
 
-/// The controls for the current page: attention on Sources, the refresh
-/// hold, the settings dot, the update line.
+/// The controls for the current page: the refresh hold, the settings dot,
+/// attention on Sources, the update line. The refresh button is settled
+/// whether or not there is a page: a refresh refused while the dashboard
+/// is unavailable must not leave it off.
 pub fn update_controls(ctx: &Rc<Ctx>, widgets: &Widgets, page: Option<&Page>, view: &View) {
     let hero = &widgets.hero;
-    let Some(page) = page else {
-        hero.updated_line.set_visible(false);
-        return;
-    };
-    hero.sources_icon.set_icon_name(Some(if page.attention {
-        "dialog-warning-symbolic"
-    } else {
-        "view-list-symbolic"
-    }));
-    if page.attention {
-        hero.sources_icon.add_css_class("attention");
-    } else {
-        hero.sources_icon.remove_css_class("attention");
-    }
     let hold = ctx.model.borrow().refresh_hold.clone();
     match hold {
         Some((until, text)) if Instant::now() < until => {
@@ -319,6 +315,20 @@ pub fn update_controls(ctx: &Rc<Ctx>, widgets: &Widgets, page: Option<&Page>, vi
     hero.settings_button
         .set_tooltip_text(Some(&view.settings_label()));
     hero.filter_dot.set_visible(view.is_filtering());
+    let Some(page) = page else {
+        hero.updated_line.set_visible(false);
+        return;
+    };
+    hero.sources_icon.set_icon_name(Some(if page.attention {
+        "dialog-warning-symbolic"
+    } else {
+        "view-list-symbolic"
+    }));
+    if page.attention {
+        hero.sources_icon.add_css_class("attention");
+    } else {
+        hero.sources_icon.remove_css_class("attention");
+    }
     hero.updated.set_label(&page.updated);
     hero.version.set_label(&if page.version.is_empty() {
         String::new()

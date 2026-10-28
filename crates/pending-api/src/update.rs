@@ -97,11 +97,11 @@ fn with_causes(error: &dyn std::error::Error) -> String {
     text
 }
 
-/// The latest version seen, shared with the route.
+/// The latest version seen, shared with the route; none when the check is
+/// off, since nothing looks.
 #[derive(Clone, Default)]
 pub struct UpdateCheck {
-    latest: Arc<RwLock<Option<String>>>,
-    looking: bool,
+    latest: Option<Arc<RwLock<Option<String>>>>,
 }
 
 impl UpdateCheck {
@@ -136,8 +136,9 @@ impl UpdateCheck {
     }
 
     /// Whether the check looks at the releases page at all.
-    pub fn is_looking(&self) -> bool {
-        self.looking
+    #[cfg(test)]
+    pub(crate) fn is_looking(&self) -> bool {
+        self.latest.is_some()
     }
 
     /// Looks at `<base>/latest` with `client` on `schedule`, in the
@@ -158,11 +159,10 @@ impl UpdateCheck {
         L: Fn() -> F + Send + 'static,
         F: Future<Output = Result<String, LatestReleaseError>> + Send,
     {
+        let latest: Arc<RwLock<Option<String>>> = Arc::default();
         let check = Self {
-            latest: Arc::default(),
-            looking: true,
+            latest: Some(latest.clone()),
         };
-        let latest = check.latest.clone();
         tokio::spawn(async move {
             let mut due = clock() + schedule.first_after;
             let mut failed_before = false;
@@ -202,9 +202,8 @@ impl UpdateCheck {
     pub fn report(&self, current: &str) -> VersionReport {
         let latest = self
             .latest
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+            .as_ref()
+            .and_then(|latest| latest.read().unwrap_or_else(|e| e.into_inner()).clone());
         VersionReport {
             current: current.to_owned(),
             available: latest.filter(|latest| is_newer(latest, current)),
@@ -212,9 +211,8 @@ impl UpdateCheck {
     }
 }
 
-/// The client for the releases page: https only (also for the redirect's
-/// target), the redirect itself is the answer so none is followed, and a
-/// short wait.
+/// The client for the releases page: https only, no redirect followed,
+/// since the redirect itself is the answer, and a short wait.
 pub fn release_client() -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .https_only(true)
@@ -240,15 +238,7 @@ pub async fn try_latest_release(base: &str) -> Result<String, LatestReleaseError
     find_latest_release(&client, base).await
 }
 
-/// [`latest_release`] with the caller's client.
-pub async fn latest_release_with(client: &reqwest::Client, base: &str) -> Option<String> {
-    find_latest_release(client, base)
-        .await
-        .inspect_err(|error| debug!(%error, "version check failed"))
-        .ok()
-}
-
-/// [`latest_release_with`], saying why no version was found.
+/// [`try_latest_release`] with the caller's client.
 pub async fn find_latest_release(
     client: &reqwest::Client,
     base: &str,
@@ -415,13 +405,16 @@ mod tests {
     /// older one is not news.
     #[test]
     fn reports_only_a_newer_version() {
-        let check = UpdateCheck::off();
+        let latest: Arc<RwLock<Option<String>>> = Arc::default();
+        let check = UpdateCheck {
+            latest: Some(latest.clone()),
+        };
         assert_eq!(check.report("0.6.0").available, None);
-        *check.latest.write().unwrap() = Some("0.6.0".to_owned());
+        *latest.write().unwrap() = Some("0.6.0".to_owned());
         assert_eq!(check.report("0.6.0").available, None);
-        *check.latest.write().unwrap() = Some("0.5.0".to_owned());
+        *latest.write().unwrap() = Some("0.5.0".to_owned());
         assert_eq!(check.report("0.6.0").available, None);
-        *check.latest.write().unwrap() = Some("0.7.0".to_owned());
+        *latest.write().unwrap() = Some("0.7.0".to_owned());
         assert_eq!(
             check.report("0.6.0"),
             VersionReport {
@@ -431,24 +424,28 @@ mod tests {
         );
     }
 
+    fn redirect(to: &'static str) -> axum::response::Response {
+        (
+            StatusCode::FOUND,
+            [(header::LOCATION, HeaderValue::from_static(to))],
+        )
+            .into_response()
+    }
+
     /// A stand-in for the releases pages: `/latest` redirects to 0.7.0 the
-    /// way GitHub does, `/plain/latest` answers without a redirect.
+    /// way GitHub does, `/plain/latest` answers without a redirect and
+    /// `/odd/latest` redirects to the list of releases.
     async fn releases() -> String {
         let router = Router::new()
             .route(
                 "/latest",
-                get(|| async {
-                    (
-                        StatusCode::FOUND,
-                        [(
-                            header::LOCATION,
-                            HeaderValue::from_static("https://github.com/o/r/releases/tag/v0.7.0"),
-                        )],
-                    )
-                        .into_response()
-                }),
+                get(|| async { redirect("https://github.com/o/r/releases/tag/v0.7.0") }),
             )
-            .route("/plain/latest", get(|| async { "no redirect" }));
+            .route("/plain/latest", get(|| async { "no redirect" }))
+            .route(
+                "/odd/latest",
+                get(|| async { redirect("https://github.com/o/r/releases") }),
+            );
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(listener, router).await });
@@ -463,23 +460,29 @@ mod tests {
     }
 
     /// The version comes from the redirect alone; an answer without one,
-    /// or none at all, is no version.
+    /// or one to something that is not a release, is no version, and the
+    /// error says which.
     #[tokio::test]
     async fn reads_the_version_from_the_redirect() {
         let base = releases().await;
         let client = permissive();
-        assert_eq!(
-            latest_release_with(&client, &base).await,
-            Some("0.7.0".to_owned())
-        );
-        assert_eq!(
-            latest_release_with(&client, &format!("{base}/plain")).await,
-            None
-        );
-        assert_eq!(
-            latest_release_with(&client, &format!("{base}/missing")).await,
-            None
-        );
+        let find = |base: String| {
+            let client = client.clone();
+            async move { find_latest_release(&client, &base).await }
+        };
+        assert_eq!(find(base.clone()).await.unwrap(), "0.7.0");
+        assert!(matches!(
+            find(format!("{base}/plain")).await,
+            Err(LatestReleaseError::NoRedirect { status: 200, .. })
+        ));
+        assert!(matches!(
+            find(format!("{base}/missing")).await,
+            Err(LatestReleaseError::NoRedirect { status: 404, .. })
+        ));
+        assert!(matches!(
+            find(format!("{base}/odd")).await,
+            Err(LatestReleaseError::NotAVersion { .. })
+        ));
     }
 
     /// The daemon's own client only talks https: a plain-text releases
@@ -487,6 +490,10 @@ mod tests {
     #[tokio::test]
     async fn only_asks_over_https() {
         let base = releases().await;
+        assert!(matches!(
+            try_latest_release(&base).await,
+            Err(LatestReleaseError::Request { .. })
+        ));
         assert_eq!(latest_release(&base).await, None);
     }
 
@@ -495,14 +502,7 @@ mod tests {
     #[tokio::test]
     async fn looks_in_the_background() {
         let base = releases().await;
-        let check = UpdateCheck::looking(
-            permissive(),
-            base,
-            Schedule {
-                first_after: Duration::ZERO,
-                ..TEST_SCHEDULE
-            },
-        );
+        let check = UpdateCheck::looking(permissive(), base, TEST_SCHEDULE);
         assert!(check.is_looking());
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while check.report("0.6.0").available.is_none() {

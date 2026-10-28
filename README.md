@@ -27,7 +27,7 @@ Every picture here comes from `tasks-pending sandbox`, which shows simulated car
   <img src="docs/assets/tasks-pending-sandbox-light.png" alt="The same board in the light scheme" width="49%">
 </p>
 
-The window follows the system's dark or light scheme with its own palette.
+The window is dark unless the system asks for light, with its own palette either way.
 
 ## Install
 

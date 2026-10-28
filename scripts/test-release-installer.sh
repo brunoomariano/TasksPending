@@ -393,9 +393,13 @@ if command -v script >/dev/null 2>&1; then
 fi
 
 # A distribution built on Arch (ID_LIKE) gets the package too; as root,
-# pacman runs without sudo.
+# pacman runs without sudo, and the per-user setup is left to the user:
+# root's own config and user service would serve nobody.
 printf 'ID=omarchy\nID_LIKE=arch\n' >"$WORK/omarchy-os-release"
 home="$WORK/omarchy"
-OS_RELEASE="$WORK/omarchy-os-release" setsid -w "$WORK/run-installer.sh" "$home" env MOCK_UID=0 </dev/null >/dev/null
+output="$(OS_RELEASE="$WORK/omarchy-os-release" setsid -w "$WORK/run-installer.sh" "$home" env MOCK_UID=0 </dev/null)"
 grep -Eq '^pacman -U --noconfirm .*/tasks-pending-bin-x86_64\.pkg\.tar\.zst$' "$home/pacman.log"
-grep -Fqx 'package setup' "$home/binary.log"
+if grep -q 'setup' "$home/binary.log" 2>/dev/null; then
+  fail "setup ran as root"
+fi
+[[ $output == *"run \`tasks-pending setup\` as the user"* ]] || fail "root was not told what is left: $output"

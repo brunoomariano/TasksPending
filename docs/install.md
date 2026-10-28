@@ -14,7 +14,7 @@ The supported path is one command. It installs the latest release, checks every 
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh
 ```
 
-On Arch Linux, and on distributions built on it (Omarchy, Manjaro: `ID_LIKE=arch` in `/etc/os-release`), it installs the release's pacman package, letting pacman ask as usual when a terminal is there. Elsewhere it unpacks the release bundle under `~/.local/lib/tasks-pending`, after checking that the new executable runs on this machine, and links `~/.local/bin/tasks-pending` to it; it refuses to run as root, since everything it installs is yours. Both end with `tasks-pending setup`:
+On Arch Linux, and on distributions built on it (Omarchy, Manjaro: `ID_LIKE=arch` in `/etc/os-release`), it installs the release's pacman package, letting pacman ask as usual when a terminal is there. Elsewhere it unpacks the release bundle under `~/.local/lib/tasks-pending`, after checking that the new executable runs on this machine, and links `~/.local/bin/tasks-pending` to it; it refuses to run as root, since everything it installs is yours. Run as root, the Arch path installs the package and stops there: `tasks-pending setup` and `tasks-pending upgrade` refuse root too, so run setup as yourself afterwards. Both paths end with `tasks-pending setup`:
 
 - `~/.config/tasks-pending/config.toml` and `env` are created from the examples when missing, and kept as they are otherwise;
 - the launcher caches are refreshed, so **TasksPending** shows up in the app launcher;

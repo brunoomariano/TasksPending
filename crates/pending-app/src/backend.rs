@@ -603,7 +603,8 @@ mod tests {
     }
 
     /// The sandbox serves on a port of its own, and the worker answers a
-    /// poll with its cards and a mark with the snapshot that shows it.
+    /// poll with its cards, and a mark, snooze or wake with the snapshot
+    /// that shows it.
     #[test]
     fn the_sandbox_backend_answers_through_the_worker() {
         let runtime = runtime();
@@ -640,13 +641,36 @@ mod tests {
         let Some(Event::Snapshot(Ok(snapshot))) = runtime.block_on(events.recv()) else {
             panic!("expected the snapshot after the mark");
         };
-        assert_eq!(snapshot.marked, vec![id]);
+        assert_eq!(snapshot.marked, vec![id.clone()]);
+
+        commands
+            .send(Command::Snooze {
+                id: id.clone(),
+                until: None,
+            })
+            .unwrap();
+        assert!(matches!(next(&runtime, &mut events), Event::Acted(Ok(()))));
+        let Event::Snapshot(Ok(snapshot)) = next(&runtime, &mut events) else {
+            panic!("expected the snapshot after the snooze");
+        };
+        assert!(snapshot.snoozed.iter().any(|entry| entry.card.id == id));
+
+        commands.send(Command::Wake { id: id.clone() }).unwrap();
+        assert!(matches!(next(&runtime, &mut events), Event::Acted(Ok(()))));
+        let Event::Snapshot(Ok(snapshot)) = next(&runtime, &mut events) else {
+            panic!("expected the snapshot after the wake");
+        };
+        assert!(snapshot.snoozed.is_empty());
 
         commands.send(Command::Weather).unwrap();
         let Some(Event::Weather(Some(report))) = runtime.block_on(events.recv()) else {
             panic!("expected the sample weather");
         };
         assert_eq!(report.place, "Recife");
+
+        commands.send(Command::Version).unwrap();
+        let update = next(&runtime, &mut events);
+        assert!(matches!(update, Event::Update(_)), "{update:?}");
     }
 
     /// A daemon answering at the address is used as it is: nothing is

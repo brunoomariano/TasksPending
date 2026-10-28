@@ -14,7 +14,8 @@ use pending_core::api::VersionReport;
 use pending_core::release::{is_newer, process_var, release_base_url, version_from_release_url};
 use tracing::{debug, info, warn};
 
-/// Set to anything to skip the check (e.g. offline machines, tests).
+/// Set to any value but a blank one, e.g. `1`, to skip the check (offline
+/// machines, tests). Blank reads as unset, as for the releases location.
 pub const DISABLE_VARIABLE: &str = "TASKS_PENDING_NO_VERSION_CHECK";
 /// How long after the daemon starts the first look happens.
 const FIRST_CHECK_AFTER: Duration = Duration::from_secs(30);
@@ -118,7 +119,7 @@ impl UpdateCheck {
 
     /// [`start`](Self::start) reading the environment through `var`.
     pub fn start_in(var: &dyn Fn(&str) -> Option<String>) -> Self {
-        if var(DISABLE_VARIABLE).is_some() {
+        if var(DISABLE_VARIABLE).is_some_and(|value| !value.trim().is_empty()) {
             debug!("version check disabled by {DISABLE_VARIABLE}");
             return Self::off();
         }
@@ -517,16 +518,37 @@ mod tests {
         assert_eq!(check.report("0.7.0").available, None);
     }
 
-    /// `TASKS_PENDING_NO_VERSION_CHECK` set to anything, or a releases
-    /// location that is not https, means no look at all.
+    /// An environment holding `pairs`, with the releases location on
+    /// loopback unless `pairs` sets one, so a look never leaves the machine.
+    fn env(pairs: &[(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        let mut pairs = pairs.to_vec();
+        pairs.push((BASE_URL_VARIABLE, "https://127.0.0.1:9/releases"));
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+        }
+    }
+
+    /// Scenario: the env file says `TASKS_PENDING_NO_VERSION_CHECK=1`, or
+    /// names a releases location that is not https. The daemon never looks.
     #[tokio::test]
     async fn stays_off_when_told_or_when_the_location_is_unsafe() {
-        let disabled = |name: &str| (name == DISABLE_VARIABLE).then(String::new);
-        assert!(!UpdateCheck::start_in(&disabled).is_looking());
-        let plain = |name: &str| (name == BASE_URL_VARIABLE).then(|| "http://x.test".to_owned());
+        assert!(!UpdateCheck::start_in(&env(&[(DISABLE_VARIABLE, "1")])).is_looking());
+        let plain = env(&[(BASE_URL_VARIABLE, "http://x.test")]);
         assert!(!UpdateCheck::start_in(&plain).is_looking());
         assert!(!UpdateCheck::off().is_looking());
+    }
+
+    /// Scenario: the env file keeps `TASKS_PENDING_NO_VERSION_CHECK=` with
+    /// no value, a line to fill in later. Blank reads as unset, as it does
+    /// for the releases location, so the daemon still looks.
+    #[tokio::test]
+    async fn a_blank_switch_leaves_the_check_on() {
         // The first look is half a minute away: the test ends before it.
-        assert!(UpdateCheck::start_in(&|_| None).is_looking());
+        assert!(UpdateCheck::start_in(&env(&[])).is_looking());
+        assert!(UpdateCheck::start_in(&env(&[(DISABLE_VARIABLE, "")])).is_looking());
+        assert!(UpdateCheck::start_in(&env(&[(DISABLE_VARIABLE, " ")])).is_looking());
     }
 }

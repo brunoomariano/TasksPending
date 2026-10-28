@@ -245,4 +245,67 @@ mod tests {
         assert_eq!(retry_delay(6), RETRY_AT_MOST);
         assert_eq!(retry_delay(40), RETRY_AT_MOST);
     }
+
+    /// A logo server on a loopback port: each path is answered with the
+    /// raw response `answer` gives for it.
+    fn serve(answer: fn(&str) -> Vec<u8>) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut head = Vec::new();
+                let mut byte = [0; 1];
+                while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                    head.push(byte[0]);
+                }
+                let head = String::from_utf8_lossy(&head).into_owned();
+                let path = head.split_whitespace().nth(1).unwrap_or("").to_owned();
+                // The app may hang up once it has seen enough.
+                let _ = stream.write_all(&answer(&path));
+            }
+        });
+        url
+    }
+
+    /// A body of `size` bytes, saying how long it is when `declared`, and
+    /// otherwise running until the connection closes.
+    fn body(size: usize, declared: bool) -> Vec<u8> {
+        let length = if declared {
+            format!("content-length: {size}\r\n")
+        } else {
+            String::new()
+        };
+        let mut response =
+            format!("HTTP/1.1 200 OK\r\n{length}connection: close\r\n\r\n").into_bytes();
+        response.resize(response.len() + size, b'x');
+        response
+    }
+
+    /// A logo is kept up to [`MAX_ICON_BYTES`]: one that says it is bigger
+    /// is not read, and one that does not say is dropped once it grows past.
+    #[test]
+    fn keeps_no_logo_bigger_than_the_cap() {
+        let url = serve(|path| match path {
+            "/declared" => body(MAX_ICON_BYTES + 1, true),
+            "/streamed" => body(MAX_ICON_BYTES + 1, false),
+            "/limit" => body(MAX_ICON_BYTES, false),
+            _ => body(5, true),
+        });
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        // Lengths, so a failure does not print a megabyte.
+        let fetch = |path: &str| {
+            runtime
+                .block_on(download(&client, &format!("{url}{path}")))
+                .map(|bytes| bytes.len())
+        };
+        assert_eq!(fetch("/declared"), None);
+        assert_eq!(fetch("/streamed"), None);
+        assert_eq!(fetch("/limit"), Some(MAX_ICON_BYTES));
+        assert_eq!(fetch("/small"), Some(5));
+    }
 }

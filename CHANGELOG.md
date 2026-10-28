@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Dependabot no longer opens pull requests in this repository. A daily workflow keeps one issue labelled `dependabot` per package with open alerts, listing each advisory, its severity and the release that fixes it; the issue is edited as the alerts change and closed once none is open.
+
 ## 0.6.0
 
 TasksPending is now a native Linux window. The web page and the terminal dashboard are gone, and so are the macOS and aarch64 builds: the release is Linux x86_64, GTK4 and libadwaita.

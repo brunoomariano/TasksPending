@@ -1,0 +1,32 @@
+name: Dependabot issues
+
+# Dependabot opens no pull requests here (its security updates are off in
+# the repository settings). This keeps one issue per package with open
+# Dependabot alerts instead: see scripts/dependabot-issues.sh. A schedule
+# runs on the default branch only.
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: dependabot-issues
+  cancel-in-progress: false
+
+# vulnerability-alerts reads the Dependabot alerts; actionlint does not know
+# the scope yet (see .github/actionlint.yaml).
+permissions:
+  contents: read
+  issues: write
+  vulnerability-alerts: read
+
+jobs:
+  issues:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Keep the issues in step with the alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/dependabot-issues.sh "$GITHUB_REPOSITORY"

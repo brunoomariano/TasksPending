@@ -153,10 +153,11 @@ pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, state: &ViewState, page: Optio
         .build();
     board.add_css_class("board");
     for group in &page.groups {
+        // Not focusable itself, but focus goes into it: `can-focus` off
+        // would keep the keyboard from every card inside.
         let child = gtk::FlowBoxChild::builder()
             .child(&group_widget(ctx, group))
             .focusable(false)
-            .can_focus(false)
             .valign(gtk::Align::Start)
             .build();
         board.insert(&child, -1);
@@ -194,7 +195,6 @@ fn now_section(ctx: &Rc<Ctx>, items: &[NowItem]) -> gtk::Box {
         let child = gtk::FlowBoxChild::builder()
             .child(&card)
             .focusable(false)
-            .can_focus(false)
             .build();
         cards.insert(&child, -1);
     }

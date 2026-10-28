@@ -11,6 +11,7 @@ use pending_core::{
 };
 
 use crate::snooze::until_text;
+use crate::state::ViewState;
 use crate::view::{View, column_key, group_key, hide_key};
 
 /// Cards a stack shows before "show more".
@@ -112,6 +113,44 @@ pub struct Page {
     pub updated: String,
     pub version: String,
     pub config_error: Option<String>,
+}
+
+/// What stands above the board, or instead of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Notice {
+    /// Nothing has answered yet.
+    Loading,
+    /// The daemon did not answer and there is no dashboard to show: why.
+    Unavailable(String),
+    /// The daemon stopped answering; the dashboard is from earlier.
+    Stale(String),
+}
+
+/// What the page under the hero draws. The window rebuilds the page only
+/// when this changes, so a fetch that changed nothing on it (only the
+/// sources' fetch times, say) keeps the focus and the reading position.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoardView {
+    pub notice: Option<Notice>,
+    pub now: Vec<NowItem>,
+    pub groups: Vec<GroupView>,
+}
+
+/// The board for `state`, whose snapshot `page` was worked out from.
+pub fn board_view(state: &ViewState, page: Option<&Page>) -> BoardView {
+    let notice = match state {
+        ViewState::Loading => Some(Notice::Loading),
+        ViewState::Unavailable { error } => Some(Notice::Unavailable(error.clone())),
+        ViewState::Stale {
+            error, fetched_at, ..
+        } => Some(Notice::Stale(stale_notice(error, *fetched_at))),
+        ViewState::Ready { .. } => None,
+    };
+    BoardView {
+        notice,
+        now: page.map(|page| page.now.clone()).unwrap_or_default(),
+        groups: page.map(|page| page.groups.clone()).unwrap_or_default(),
+    }
 }
 
 /// `at` in local time, as written on the page.
@@ -597,6 +636,79 @@ mod tests {
         snapshot.sources[0].status = SourceStatus::Ready;
         snapshot.config_error = Some("bad toml".to_owned());
         assert!(page(&snapshot, &View::default()).attention);
+    }
+
+    fn drawn(state: &ViewState, view: &View) -> BoardView {
+        board_view(state, state.snapshot().map(|s| page(s, view)).as_ref())
+    }
+
+    /// A fetch that only moved the snapshot's time and the sources' fetch
+    /// times draws the same board, so the page is not rebuilt; it is when
+    /// an empty stack on show says when its source was fetched, or when a
+    /// card or the daemon's answer changed.
+    #[test]
+    fn draws_the_same_board_until_something_on_it_changes() {
+        let now = Local::now();
+        let first = ViewState::Loading.next(Ok(snapshot()), now);
+        let mut fetched = snapshot();
+        fetched.generated_at = Utc::now();
+        for source in &mut fetched.sources {
+            source.last_refresh_at = Some(Utc::now());
+        }
+        let later = ViewState::Loading.next(Ok(fetched), now);
+        assert_eq!(
+            drawn(&first, &View::default()),
+            drawn(&later, &View::default())
+        );
+
+        let mut view = View::default();
+        view.expanded.insert("Work/github".to_owned());
+        assert_ne!(drawn(&first, &view), drawn(&later, &view));
+
+        let mut unmarked = snapshot();
+        unmarked.marked.clear();
+        let unmarked = ViewState::Loading.next(Ok(unmarked), now);
+        assert_ne!(
+            drawn(&first, &View::default()),
+            drawn(&unmarked, &View::default())
+        );
+        let stale = first.clone().next(Err("down".to_owned()), now);
+        assert_ne!(
+            drawn(&first, &View::default()),
+            drawn(&stale, &View::default())
+        );
+    }
+
+    /// Loading and an unreachable daemon stand instead of the board; a
+    /// stale dashboard keeps its cards under the notice.
+    #[test]
+    fn notices_before_and_over_the_board() {
+        let at = Local.with_ymd_and_hms(2026, 9, 28, 10, 30, 0).unwrap();
+        let view = View::default();
+        let loading = drawn(&ViewState::Loading, &view);
+        assert_eq!(loading.notice, Some(Notice::Loading));
+        assert!(loading.groups.is_empty() && loading.now.is_empty());
+
+        let unavailable = ViewState::Loading.next(Err("refused".to_owned()), at);
+        let unavailable = drawn(&unavailable, &view);
+        assert_eq!(
+            unavailable.notice,
+            Some(Notice::Unavailable("refused".to_owned()))
+        );
+        assert!(unavailable.groups.is_empty());
+
+        let stale = ViewState::Loading
+            .next(Ok(snapshot()), at)
+            .next(Err("refused".to_owned()), at);
+        let stale = drawn(&stale, &view);
+        assert_eq!(
+            stale.notice,
+            Some(Notice::Stale(
+                "Dashboard unreachable (refused); showing data from 28 Sep 10:30".to_owned()
+            ))
+        );
+        assert_eq!(stale.groups.len(), 2);
+        assert_eq!(stale.now.len(), 2);
     }
 
     /// The words and icons that do not depend on the snapshot.

@@ -46,6 +46,10 @@ enum Install {
     Bundle,
     /// By the package manager, under `/usr`.
     Package,
+    /// Where the release directory's executable goes, but in a directory
+    /// that does not hold a release: `TASKS_PENDING_LIB_DIR` names an
+    /// install prefix, such as `~/.local`.
+    NotRelease(PathBuf),
     /// Somewhere else (`/usr/local`, a prefix of your own, a checkout).
     Other(PathBuf),
 }
@@ -115,8 +119,12 @@ fn installed_from(exe: &Path, lib_dir: &Path) -> Install {
     let exe = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
     let released = release_executable(lib_dir);
     let released = released.canonicalize().unwrap_or(released);
-    if exe == released && is_release_dir(lib_dir) {
-        Install::Bundle
+    if exe == released {
+        if is_release_dir(lib_dir) {
+            Install::Bundle
+        } else {
+            Install::NotRelease(lib_dir.to_path_buf())
+        }
     } else if exe.starts_with("/usr") && !exe.starts_with("/usr/local") {
         Install::Package
     } else {
@@ -362,6 +370,10 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         Install::Bundle => {}
         Install::Package => anyhow::bail!(
             "this tasks-pending was installed by the package manager; upgrade it with pacman, or with the release installer"
+        ),
+        Install::NotRelease(dir) => anyhow::bail!(
+            "{} does not hold a TasksPending release (its executable, scripts/install.sh and CHANGELOG.md, and no share/): TASKS_PENDING_LIB_DIR names where the release is unpacked, not an install prefix",
+            dir.display()
         ),
         Install::Other(path) => anyhow::bail!(
             "{} is not {} (the release directory's executable); upgrade the way it was installed (make install / make deploy), or run the release installer",
@@ -667,10 +679,10 @@ echo 'tasks-pending 0.5.0'
         );
         fs::create_dir_all(prefix.join("share/applications")).unwrap();
         fs::write(prefix.join("share/applications/other.desktop"), "keep").unwrap();
-        assert!(matches!(
+        assert_eq!(
             installed_from(&release_executable(&prefix), &prefix),
-            Install::Other(_)
-        ));
+            Install::NotRelease(prefix.clone())
+        );
 
         let archive = fake_archive(&scratch, Some("0.6.1"), 0);
         let error = install(&scratch, &archive, "0.6.1")

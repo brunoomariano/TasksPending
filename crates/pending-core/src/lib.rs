@@ -1,3 +1,4 @@
+pub mod api;
 pub mod config;
 pub mod due;
 pub mod model;
@@ -18,6 +19,6 @@ pub use model::{
 };
 pub use sample::{SampleSource, sample_snapshot};
 pub use sandbox::sandbox_snapshot;
-pub use snapshot::{SourceOutcome, SourceReport, build_snapshot};
+pub use snapshot::{SourceOutcome, SourceReport, build_snapshot, is_http_url};
 pub use source::{BoxFuture, PendingSource, SourceBatch, SourceError, SourceItem};
 pub use weather::{WeatherAnswer, WeatherCondition, WeatherReport};

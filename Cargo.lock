@@ -1564,6 +1564,7 @@ dependencies = [
 name = "pending-client"
 version = "0.6.0"
 dependencies = [
+ "axum",
  "chrono",
  "pending-api",
  "pending-core",

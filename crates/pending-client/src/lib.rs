@@ -5,9 +5,13 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use pending_core::api::DASHBOARD_HEADER;
 use pending_core::{DashboardSnapshot, WeatherAnswer, WeatherReport};
 use reqwest::{StatusCode, Url};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+pub use pending_core::api::{Health, VersionReport};
 
 /// Where `tasks-pending serve` listens by default.
 pub const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:61000";
@@ -16,8 +20,9 @@ pub const DEFAULT_DAEMON_URL: &str = "http://127.0.0.1:61000";
 /// generous; it only ends a request the daemon will never answer.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Header the daemon requires on state-changing requests.
-const DASHBOARD_HEADER: (&str, &str) = ("x-requested-with", "tasks-pending");
+/// The wait reported for a refresh the daemon refused without saying for
+/// how long: short, so the window tries again soon rather than never.
+const COOLDOWN_FALLBACK_SECS: u64 = 1;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -54,23 +59,6 @@ impl From<reqwest::Error> for Error {
     }
 }
 
-/// What `GET /healthz` answers.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-pub struct Health {
-    pub status: String,
-    /// The daemon's version, e.g. `0.6.0`.
-    pub version: String,
-}
-
-/// What `GET /api/v1/version` answers.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-pub struct VersionReport {
-    /// The daemon's version.
-    pub current: String,
-    /// A newer published version, when the daemon has seen one.
-    pub available: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 struct Wait {
     retry_after_secs: Option<u64>,
@@ -99,6 +87,12 @@ pub struct Client {
 impl Client {
     /// A client for the daemon at `base`, e.g. [`DEFAULT_DAEMON_URL`].
     pub fn new(base: &str) -> Result<Self, Error> {
+        Self::with_timeout(base, REQUEST_TIMEOUT)
+    }
+
+    /// [`Client::new`] giving up on an answer after `timeout` instead of
+    /// [`REQUEST_TIMEOUT`].
+    pub fn with_timeout(base: &str, timeout: Duration) -> Result<Self, Error> {
         let url = Url::parse(base.trim()).map_err(|_| Error::NotLocal(base.to_owned()))?;
         let local = url.scheme() == "http"
             && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"));
@@ -106,7 +100,7 @@ impl Client {
             return Err(Error::NotLocal(base.to_owned()));
         }
         let http = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
+            .timeout(timeout)
             // Loopback never goes through a proxy, whatever the environment
             // says.
             .no_proxy()
@@ -114,19 +108,14 @@ impl Client {
         Ok(Self { base: url, http })
     }
 
-    /// The daemon's address.
-    pub fn base(&self) -> &Url {
-        &self.base
-    }
-
     fn url(&self, path: &str) -> Url {
         // `base` is a valid http URL and `path` is one of ours.
         self.base.join(path).expect("api path")
     }
 
-    /// Whether a daemon answers, and which version it runs.
-    pub async fn health(&self) -> Result<Health, Error> {
-        let response = self.http.get(self.url("/healthz")).send().await?;
+    /// `GET path`, read as `T`.
+    async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
+        let response = self.http.get(self.url(path)).send().await?;
         let status = response.status();
         if !status.is_success() {
             return Err(Error::Status(status.as_u16()));
@@ -134,14 +123,14 @@ impl Client {
         Ok(response.json().await?)
     }
 
+    /// Whether a daemon answers, and which version it runs.
+    pub async fn health(&self) -> Result<Health, Error> {
+        self.get_json("/healthz").await
+    }
+
     /// The dashboard as the daemon has it now.
     pub async fn snapshot(&self) -> Result<DashboardSnapshot, Error> {
-        let response = self.http.get(self.url("/api/v1/snapshot")).send().await?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(Error::Status(status.as_u16()));
-        }
-        Ok(response.json().await?)
+        self.get_json("/api/v1/snapshot").await
     }
 
     /// Asks the daemon to refresh every source now. The sources answer in
@@ -160,7 +149,7 @@ impl Client {
                 .await
                 .ok()
                 .and_then(|wait| wait.retry_after_secs)
-                .unwrap_or(1);
+                .unwrap_or(COOLDOWN_FALLBACK_SECS);
             return Err(Error::Cooldown(wait));
         }
         Self::done(status)
@@ -222,22 +211,12 @@ impl Client {
 
     /// The daemon's version, and a newer published one when it knows of it.
     pub async fn version(&self) -> Result<VersionReport, Error> {
-        let response = self.http.get(self.url("/api/v1/version")).send().await?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(Error::Status(status.as_u16()));
-        }
-        Ok(response.json().await?)
+        self.get_json("/api/v1/version").await
     }
 
     /// The weather beside the clock, or `None` when there is none to show.
     pub async fn weather(&self) -> Result<Option<WeatherReport>, Error> {
-        let response = self.http.get(self.url("/api/v1/weather")).send().await?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(Error::Status(status.as_u16()));
-        }
-        let answer: WeatherAnswer = response.json().await?;
+        let answer: WeatherAnswer = self.get_json("/api/v1/weather").await?;
         Ok(answer.report().cloned())
     }
 
@@ -252,20 +231,23 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
+    use axum::routing::get;
     use chrono::Duration as ChronoDuration;
     use tokio::net::TcpListener;
 
     use super::*;
 
-    /// The sandbox API on a port of its own, and a client for it.
-    async fn sandbox() -> Client {
+    /// `router` on a port of its own, and a client for it.
+    async fn serve(router: pending_api::Router) -> Client {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        tokio::spawn(pending_api::serve_router(
-            listener,
-            pending_api::sandbox_app(),
-        ));
+        tokio::spawn(pending_api::serve_router(listener, router));
         Client::new(&format!("http://{address}")).unwrap()
+    }
+
+    /// The sandbox API on a port of its own, and a client for it.
+    async fn sandbox() -> Client {
+        serve(pending_api::sandbox_app()).await
     }
 
     fn first_card_id(snapshot: &DashboardSnapshot) -> String {
@@ -353,14 +335,20 @@ mod tests {
         client.look().await.unwrap();
     }
 
-    /// The sandbox weather is the fixed sample, and its version report
-    /// names the daemon version with nothing newer.
+    /// The sandbox's version report names the daemon version with nothing
+    /// newer.
     #[tokio::test]
-    async fn reads_the_weather() {
+    async fn reads_the_version_report() {
         let client = sandbox().await;
         let version = client.version().await.unwrap();
         assert_eq!(version.current, env!("CARGO_PKG_VERSION"));
         assert_eq!(version.available, None);
+    }
+
+    /// The sandbox weather is the fixed sample.
+    #[tokio::test]
+    async fn reads_the_weather() {
+        let client = sandbox().await;
         let report = client.weather().await.unwrap().unwrap();
         assert_eq!(report.place, "Recife");
         assert_eq!(report.temperature, "29°C");
@@ -378,5 +366,36 @@ mod tests {
         drop(listener);
         let client = Client::new(&format!("http://{address}")).unwrap();
         assert!(matches!(client.health().await, Err(Error::Transport(_))));
+    }
+
+    /// A daemon that takes the connection but never answers is given up on
+    /// after the timeout.
+    #[tokio::test]
+    async fn gives_up_on_a_daemon_that_never_answers() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            // Keep every connection open without answering.
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        let client =
+            Client::with_timeout(&format!("http://{address}"), Duration::from_millis(200)).unwrap();
+        assert!(matches!(client.health().await, Err(Error::Timeout)));
+    }
+
+    /// An answer that is not what this version expects is reported as
+    /// such, and a daemon without the version route (0.5.0) answers it with
+    /// a status, not a hang or a panic.
+    #[tokio::test]
+    async fn reports_answers_it_does_not_understand() {
+        let client = serve(
+            pending_api::Router::new().route("/api/v1/snapshot", get(|| async { "not json" })),
+        )
+        .await;
+        assert!(matches!(client.snapshot().await, Err(Error::Shape(_))));
+        assert!(matches!(client.version().await, Err(Error::Status(404))));
     }
 }

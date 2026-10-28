@@ -22,7 +22,7 @@ pub fn release_base_url(repository: &str) -> String {
 /// The version a release page URL points at: `.../releases/tag/v0.6.1`
 /// gives `0.6.1`. That is where `<releases>/latest` redirects.
 pub fn version_from_release_url(url: &str) -> Option<String> {
-    let tag = url.trim_end_matches('/').rsplit('/').next()?;
+    let tag = url.trim().trim_end_matches('/').rsplit('/').next()?;
     let version = tag.strip_prefix('v').unwrap_or(tag);
     parse_version(version).map(|_| version.to_owned())
 }

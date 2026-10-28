@@ -50,13 +50,27 @@ impl From<reqwest::Error> for Error {
         if error.is_timeout() {
             Self::Timeout
         } else if error.is_decode() {
-            Self::Shape(error.to_string())
+            Self::Shape(describe(error))
         } else {
-            // Without the URL: it is the same for every request and would
-            // only make the message longer.
-            Self::Transport(error.without_url().to_string())
+            Self::Transport(describe(error))
         }
     }
+}
+
+/// The error and every cause under it: reqwest's own text only names the
+/// kind ("error sending request"), the reason is in the causes. Without the
+/// URL, which is the same for every request and would only make the
+/// message longer.
+fn describe(error: reqwest::Error) -> String {
+    let error = error.without_url();
+    let mut text = error.to_string();
+    let mut cause = std::error::Error::source(&error);
+    while let Some(inner) = cause {
+        text.push_str(": ");
+        text.push_str(&inner.to_string());
+        cause = inner.source();
+    }
+    text
 }
 
 #[derive(Debug, Serialize)]
@@ -371,14 +385,20 @@ mod tests {
         );
     }
 
-    /// With nothing listening, the error says so instead of hanging.
+    /// With nothing listening, the error says so instead of hanging, and
+    /// names why: the window shows this text when it cannot use a daemon.
     #[tokio::test]
     async fn reports_a_missing_daemon() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         drop(listener);
         let client = Client::new(&format!("http://{address}")).unwrap();
-        assert!(matches!(client.health().await, Err(Error::Transport(_))));
+        match client.health().await {
+            Err(Error::Transport(message)) => {
+                assert!(message.contains("Connection refused"), "{message}")
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// A daemon that takes the connection but never answers is given up on
@@ -453,7 +473,12 @@ mod tests {
             pending_api::Router::new().route("/api/v1/snapshot", get(|| async { "not json" })),
         )
         .await;
-        assert!(matches!(client.snapshot().await, Err(Error::Shape(_))));
+        match client.snapshot().await {
+            Err(Error::Shape(message)) => {
+                assert!(message.contains("at line 1 column"), "{message}")
+            }
+            other => panic!("{other:?}"),
+        }
         assert!(matches!(client.version().await, Err(Error::Status(404))));
     }
 }

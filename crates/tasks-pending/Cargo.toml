@@ -18,6 +18,7 @@ pending-api = { path = "../pending-api" }
 pending-app = { path = "../pending-app" }
 pending-client = { path = "../pending-client" }
 pending-core = { path = "../pending-core" }
+pending-runtime = { path = "../pending-runtime" }
 reqwest.workspace = true
 sha2.workspace = true
 tokio.workspace = true

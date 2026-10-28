@@ -24,7 +24,7 @@ On Arch Linux, and on distributions built on it (Omarchy, Manjaro: `ID_LIKE=arch
 
 Run the same command to update, or `tasks-pending upgrade` (see "Update and uninstall"). Your configuration, tokens and service override stay untouched. With the example configuration, the dashboard starts with the built-in sample source.
 
-The installer reads a few optional variables: `TASKS_PENDING_VERSION` (a release to install instead of the latest, e.g. `0.6.0`), `TASKS_PENDING_LIB_DIR` and `TASKS_PENDING_BIN_DIR` (where the bundle and the link go), `TASKS_PENDING_REPOSITORY` (another GitHub repository, `owner/name`) and `TASKS_PENDING_RELEASE_BASE_URL` (another releases location, `https://` only). The same variables drive `tasks-pending upgrade`.
+The installer reads a few optional variables: `TASKS_PENDING_VERSION` (a release to install instead of the latest, e.g. `0.6.0`), `TASKS_PENDING_LIB_DIR` and `TASKS_PENDING_BIN_DIR` (where the bundle and the link go; the desktop entry and icons stay under `~/.local/share`, where launchers look), `TASKS_PENDING_REPOSITORY` (another GitHub repository, `owner/name`) and `TASKS_PENDING_RELEASE_BASE_URL` (another releases location, `https://` only). The same variables drive `tasks-pending upgrade`.
 
 About the checksums: each asset's `.sha256` is published beside it, on the same release page, so the check proves that the download arrived whole, not who built it. Whoever controls the releases location controls both, which is why only https origins you trust belong in `TASKS_PENDING_RELEASE_BASE_URL`. Signing the checksums (or publishing GitHub artifact attestations) is the planned next step; until then, the trust is in GitHub and in the repository's protected branches.
 

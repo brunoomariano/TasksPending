@@ -197,19 +197,21 @@ install_bundle() {
   say "installed $("$bin_dir/tasks-pending" --version 2>/dev/null || echo tasks-pending) to $lib_dir"
 }
 
-# retire_user_install <bin-dir> <lib-dir> <package-executable>: a release
-# installed earlier for this user (the bundle, before the package path
-# covered distributions built on Arch, or `make install`) would shadow the
-# package: its unit in ~/.config/systemd/user wins over the package's, so
-# the old daemon would go on running, and its executable and launcher
-# entry come first. This stops that service and removes what that install
-# put down, and only that: the config, the tokens, the service's drop-ins
-# and anything else stay. A unit that runs something else is the user's
-# own, and is kept. A drop-in that ran the retired executable (one for
-# another port, say) would apply to the package's unit and start nothing:
-# it runs the package's executable instead.
+# retire_user_install <bin-dir> <lib-dir> <package-executable> <work-dir>:
+# a release installed earlier for this user (the bundle, before the
+# package path covered distributions built on Arch, or `make install`)
+# would shadow the package: its unit in ~/.config/systemd/user wins over
+# the package's, so the old daemon would go on running, and its executable
+# and launcher entry come first. This stops that service and removes what
+# that install put down, and only that: the config, the tokens, the
+# service's drop-ins and anything else stay. A unit that runs something
+# else is the user's own, and is kept. A drop-in that runs an executable no
+# longer there (retired now, or gone before; one for another port, say)
+# would apply to the package's unit and start nothing: it runs the
+# package's executable instead, written through so its mode and a link to
+# it stay.
 retire_user_install() {
-  bin_dir="$1" lib_dir="$2" executable="$3"
+  bin_dir="$1" lib_dir="$2" executable="$3" work="$4"
   exe="$bin_dir/tasks-pending"
   share="$HOME/.local/share"
   units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -242,13 +244,24 @@ retire_user_install() {
   if [ "$exe_retired" -eq 1 ]; then
     rm -f "$exe"
     retired="$retired $exe"
+  fi
+  if [ ! -e "$exe" ] && [ ! -L "$exe" ]; then
     for conf in "$units/tasks-pending.service.d"/*.conf; do
-      if [ -f "$conf" ] && grep -Fq "ExecStart=$exe " "$conf"; then
-        OLD="ExecStart=$exe " NEW="ExecStart=$executable " awk '
-          index($0, ENVIRON["OLD"]) == 1 { $0 = ENVIRON["NEW"] substr($0, length(ENVIRON["OLD"]) + 1) }
-          { print }
-        ' "$conf" >"$conf.new"
-        mv "$conf.new" "$conf"
+      [ -f "$conf" ] || continue
+      # awk exits 0 only when it rewrote a line, indented or not.
+      if OLD="ExecStart=$exe " NEW="ExecStart=$executable " awk '
+        {
+          line = $0
+          sub(/^[ \t]+/, "", line)
+          if (index(line, ENVIRON["OLD"]) == 1) {
+            $0 = substr($0, 1, length($0) - length(line)) ENVIRON["NEW"] substr(line, length(ENVIRON["OLD"]) + 1)
+            changed = 1
+          }
+          print
+        }
+        END { exit !changed }
+      ' "$conf" >"$work/drop-in"; then
+        cat "$work/drop-in" >"$conf"
         say "note: $conf ran $exe; it now runs $executable"
       fi
     done
@@ -311,7 +324,7 @@ install_arch_package() {
     say "installed the package; now run \`tasks-pending setup\` as the user who will use TasksPending"
     return
   fi
-  retire_user_install "$bin_dir" "$lib_dir" "$executable"
+  retire_user_install "$bin_dir" "$lib_dir" "$executable" "$work"
   "$executable" setup
 }
 

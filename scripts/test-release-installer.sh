@@ -449,22 +449,37 @@ fi
 # keep running. The installer retires what that install put down, stops
 # its service first, and leaves the config, the tokens, the service's
 # drop-ins and anything else alone. A drop-in that ran the retired
-# executable (one for another port) would start nothing: it runs the
-# package's instead.
+# executable (one for another port, kept in a dotfiles repository and
+# indented) would start nothing: it runs the package's instead, written
+# through the link and keeping its mode. One that only mentions it, in a
+# comment, is not changed.
 seed_user_install() {
   local home=$1 units="$1/.config/systemd/user"
   mkdir -p "$home/.local/bin" "$units/default.target.wants" "$units/tasks-pending.service.d" \
-    "$home/.config/tasks-pending" "$home/.local/share/applications"
+    "$home/.config/tasks-pending" "$home/.local/share/applications" "$home/dotfiles"
   printf '[Unit]\nDescription=TasksPending dashboard API\n[Service]\nExecStart=%s serve --listen 127.0.0.1:61000\n' \
     "$home/.local/bin/tasks-pending" >"$units/tasks-pending.service"
   ln -s "$units/tasks-pending.service" "$units/default.target.wants/tasks-pending.service"
-  printf '[Service]\nEnvironment=RUST_LOG=debug\n' >"$units/tasks-pending.service.d/override.conf"
-  printf '[Service]\nExecStart=\nExecStart=%s serve --listen 127.0.0.1:8090\n' \
-    "$home/.local/bin/tasks-pending" >"$units/tasks-pending.service.d/port.conf"
+  printf '[Service]\n# ExecStart=%s serve was the default\nEnvironment=RUST_LOG=debug\n' \
+    "$home/.local/bin/tasks-pending" >"$units/tasks-pending.service.d/override.conf"
+  printf '[Service]\nExecStart=\n  ExecStart=%s serve --listen 127.0.0.1:8090\n' \
+    "$home/.local/bin/tasks-pending" >"$home/dotfiles/port.conf"
+  chmod 600 "$home/dotfiles/port.conf"
+  ln -s "$home/dotfiles/port.conf" "$units/tasks-pending.service.d/port.conf"
   printf '[sources]\n' >"$home/.config/tasks-pending/config.toml"
   printf 'GITHUB_TOKEN=mine\n' >"$home/.config/tasks-pending/env"
   printf '#!/bin/sh\n' >"$home/.local/bin/other-tool"
   printf '[Desktop Entry]\nExec=other\n' >"$home/.local/share/applications/other.desktop"
+}
+check_drop_in_rewritten() {
+  local home=$1 output=$2 conf="$1/.config/systemd/user/tasks-pending.service.d/port.conf"
+  grep -Fqx "  ExecStart=$PACKAGE_EXE serve --listen 127.0.0.1:8090" "$conf" ||
+    fail "the drop-in still runs the old executable: $(cat "$conf")"
+  grep -Fqx 'ExecStart=' "$conf" || fail "the drop-in's reset was dropped"
+  test -L "$conf" || fail "the link to the drop-in was replaced by a file"
+  [[ $(stat -c %a "$home/dotfiles/port.conf") == 600 ]] || fail "the drop-in's mode changed"
+  [[ $output == *"port.conf ran $home/.local/bin/tasks-pending; it now runs $PACKAGE_EXE"* ]] ||
+    fail "the rewritten drop-in was not reported: $output"
 }
 check_user_install_retired() {
   local home=$1 output=$2 units="$1/.config/systemd/user"
@@ -481,13 +496,12 @@ check_user_install_retired() {
     test -e "$kept" || fail "$kept was removed"
   done
   grep -Fqx 'GITHUB_TOKEN=mine' "$home/.config/tasks-pending/env" || fail "the tokens were touched"
-  grep -Fqx 'Environment=RUST_LOG=debug' "$units/tasks-pending.service.d/override.conf" ||
-    fail "a drop-in that runs nothing retired was changed"
-  grep -Fqx "ExecStart=$PACKAGE_EXE serve --listen 127.0.0.1:8090" "$units/tasks-pending.service.d/port.conf" ||
-    fail "the drop-in still runs the retired executable: $(cat "$units/tasks-pending.service.d/port.conf")"
-  grep -Fqx 'ExecStart=' "$units/tasks-pending.service.d/port.conf" || fail "the drop-in's reset was dropped"
-  [[ $output == *"port.conf ran $home/.local/bin/tasks-pending; it now runs $PACKAGE_EXE"* ]] ||
-    fail "the rewritten drop-in was not reported: $output"
+  grep -Fqx "# ExecStart=$home/.local/bin/tasks-pending serve was the default" \
+    "$units/tasks-pending.service.d/override.conf" || fail "a drop-in that runs nothing retired was changed"
+  if [[ $output == *"override.conf ran"* ]]; then
+    fail "a drop-in left as it was is reported as rewritten: $output"
+  fi
+  check_drop_in_rewritten "$home" "$output"
   grep -Fqx 'package setup' "$home/binary.log" || fail "the package's setup did not run"
   [[ $output == *"retired"* ]] || fail "the retirement was not reported: $output"
 }
@@ -543,6 +557,17 @@ done
 if [[ $output == *"omarchy-webapp-remove"* ]]; then
   fail "a web app that is not there was mentioned"
 fi
+
+# A drop-in left behind by an install already gone (`make uninstall`)
+# runs nothing either, and is pointed at the package's too.
+home="$WORK/arch-gone"
+mkdir -p "$home/.config/systemd/user/tasks-pending.service.d" "$home/dotfiles"
+printf '[Service]\nExecStart=\n  ExecStart=%s serve --listen 127.0.0.1:8090\n' \
+  "$home/.local/bin/tasks-pending" >"$home/dotfiles/port.conf"
+chmod 600 "$home/dotfiles/port.conf"
+ln -s "$home/dotfiles/port.conf" "$home/.config/systemd/user/tasks-pending.service.d/port.conf"
+output="$(OS_RELEASE="$WORK/omarchy-os-release" setsid -w "$WORK/run-installer.sh" "$home" env </dev/null)"
+check_drop_in_rewritten "$home" "$output"
 
 # The release directory is removed only when it holds a release: an
 # install prefix named there stays whole.

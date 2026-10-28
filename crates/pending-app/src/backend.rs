@@ -594,12 +594,14 @@ mod tests {
         assert_eq!(fake.count("GET /api/v1/snapshot"), 0);
     }
 
-    /// A port nothing listens on.
-    fn free_port(runtime: &Runtime) -> String {
-        let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
-        let address = listener.local_addr().unwrap();
-        drop(listener);
-        format!("http://{address}")
+    /// An address where no daemon answers: every connection is closed
+    /// unanswered. Kept by the test, unlike a port let go, which another
+    /// test running alongside could take.
+    fn no_daemon() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || listener.incoming().for_each(drop));
+        url
     }
 
     /// The sandbox serves on a port of its own, and the worker answers a
@@ -715,7 +717,7 @@ mod tests {
             &runtime,
             Options {
                 config: Some(scratch.sample_config()),
-                daemon: Some(free_port(&runtime)),
+                daemon: Some(no_daemon()),
                 ..Options::default()
             },
             scratch.env(),

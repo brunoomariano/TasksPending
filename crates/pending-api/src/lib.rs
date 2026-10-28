@@ -568,7 +568,14 @@ mod tests {
     #[tokio::test]
     async fn serve_router_refuses_a_non_loopback_listener() {
         let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
-        let error = serve_router(listener, Router::new()).await.unwrap_err();
+        // Served instead of refused, it would never return.
+        let error = tokio::time::timeout(
+            Duration::from_secs(5),
+            serve_router(listener, Router::new()),
+        )
+        .await
+        .expect("served on a listener open to the network")
+        .unwrap_err();
         assert!(
             error.to_string().contains("has no authentication"),
             "{error}"

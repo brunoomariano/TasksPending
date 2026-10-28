@@ -324,7 +324,6 @@ fn flow_child(widget: &impl IsA<gtk::Widget>) -> gtk::FlowBoxChild {
     gtk::FlowBoxChild::builder()
         .child(widget)
         .focusable(false)
-        .can_focus(false)
         .build()
 }
 

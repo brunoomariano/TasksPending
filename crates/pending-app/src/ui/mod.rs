@@ -23,7 +23,9 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::activity::LookThrottle;
 use crate::backend::{self, Command, Event, spawn_worker};
-use crate::present::{BoardView, Page, board_view, lasting, page, refreshed};
+use crate::present::{
+    BoardView, Page, Timer, auto_refresh_every, board_view, lasting, on_timer, page, refreshed,
+};
 use crate::state::ViewState;
 use crate::theme;
 use crate::view::View;
@@ -484,29 +486,20 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
 /// window is shown; the weather every [`WEATHER_INTERVAL`].
 fn schedule_polling(ctx: &Rc<Ctx>) {
     ctx.send(Command::Poll);
-    {
-        let ctx = ctx.clone();
-        gtk::glib::timeout_add_local(POLL_INTERVAL, move || {
-            if !is_hidden(&ctx) {
-                ctx.send(Command::Poll);
-            }
-            gtk::glib::ControlFlow::Continue
-        });
-    }
-    {
-        let ctx = ctx.clone();
-        gtk::glib::timeout_add_local(WEATHER_INTERVAL, move || {
-            if !is_hidden(&ctx) {
-                ctx.send(Command::Weather);
-            }
-            gtk::glib::ControlFlow::Continue
-        });
-    }
+    repeat(ctx, POLL_INTERVAL, Timer::Poll);
+    repeat(ctx, WEATHER_INTERVAL, Timer::Weather);
+    repeat(ctx, UPDATE_INTERVAL, Timer::Version);
+}
+
+/// Fires `timer` every `interval`, sending what it asks of the daemon.
+fn repeat(ctx: &Rc<Ctx>, interval: Duration, timer: Timer) -> gtk::glib::SourceId {
     let ctx = ctx.clone();
-    gtk::glib::timeout_add_local(UPDATE_INTERVAL, move || {
-        ctx.send(Command::Version);
+    gtk::glib::timeout_add_local(interval, move || {
+        if let Some(command) = on_timer(timer, is_hidden(&ctx)) {
+            ctx.send(command);
+        }
         gtk::glib::ControlFlow::Continue
-    });
+    })
 }
 
 /// Refreshes every source at the interval the settings ask for, while the
@@ -519,18 +512,10 @@ fn schedule_auto_refresh(ctx: &Rc<Ctx>) {
         }
         model.view.auto_refresh_minutes
     };
-    if minutes == 0 {
+    let Some(interval) = auto_refresh_every(minutes) else {
         return;
-    }
-    let timer = {
-        let ctx = ctx.clone();
-        gtk::glib::timeout_add_local(Duration::from_secs(u64::from(minutes) * 60), move || {
-            if !is_hidden(&ctx) {
-                ctx.send(Command::Refresh { manual: false });
-            }
-            gtk::glib::ControlFlow::Continue
-        })
     };
+    let timer = repeat(ctx, interval, Timer::AutoRefresh);
     ctx.model.borrow_mut().auto_refresh = Some(timer);
 }
 

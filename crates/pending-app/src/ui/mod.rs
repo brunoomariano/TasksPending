@@ -362,7 +362,7 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
         hero::NARROW_MAX_WIDTH,
         adw::LengthUnit::Px,
     ));
-    narrow.add_setter(&hero.weather_slot, "visible", Some(&false.to_value()));
+    narrow.add_setter(&hero.weather.slot, "visible", Some(&false.to_value()));
     window.add_breakpoint(narrow);
     watch_activity(ctx, &window);
     {

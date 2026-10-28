@@ -18,6 +18,8 @@ use pending_runtime::config;
 const SERVICE: &str = "tasks-pending.service";
 /// How long to wait for the daemon after starting it.
 const DAEMON_WAIT: Duration = Duration::from_secs(20);
+/// How often to look while waiting.
+const DAEMON_POLL: Duration = Duration::from_millis(250);
 
 const CONFIG_EXAMPLE: &str = include_str!("../../../config.example.toml");
 const ENV_EXAMPLE: &str = include_str!("../../../packaging/env.example");
@@ -123,6 +125,70 @@ fn systemctl(args: &[&str]) -> anyhow::Result<bool> {
         .status()
         .with_context(|| format!("running systemctl {}", args.join(" ")))?;
     Ok(status.success())
+}
+
+/// Whether a systemd user manager is there to run the daemon.
+#[derive(Debug, PartialEq, Eq)]
+enum UserManager {
+    /// No systemctl: no systemd here.
+    Missing,
+    /// systemctl is there, but no user manager answers it.
+    Unreachable,
+    Running,
+}
+
+/// Asks `systemctl` (run with the given arguments, saying whether it
+/// succeeded) whether a user manager answers.
+fn user_manager(systemctl: impl Fn(&[&str]) -> std::io::Result<bool>) -> UserManager {
+    match systemctl(&["--user", "show-environment"]) {
+        Err(_) => UserManager::Missing,
+        Ok(false) => UserManager::Unreachable,
+        Ok(true) => UserManager::Running,
+    }
+}
+
+/// `systemctl` with its output silenced, saying whether it succeeded.
+fn quiet_systemctl(args: &[&str]) -> std::io::Result<bool> {
+    Command::new("systemctl")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+}
+
+/// What setup reports once the service was started or restarted, from
+/// the daemon's answer at `url` (its version, or why there was none). It
+/// must answer, and as this release (`own`): anything else means the new
+/// daemon is not the one running.
+fn judge_answer(answer: Result<String, String>, own: &str, url: &str) -> anyhow::Result<String> {
+    match answer {
+        Ok(version) if version == own => Ok(format!(
+            "daemon {version} answering at {url}; open the window with `tasks-pending` or from the launcher"
+        )),
+        Ok(version) => anyhow::bail!(
+            "the daemon answering at {url} is {version}, not {own}: another tasks-pending holds that address, or {SERVICE} runs another executable; see `systemctl --user status tasks-pending`"
+        ),
+        Err(error) => anyhow::bail!(
+            "{SERVICE} did not answer at {url} within {} s ({error}); see `systemctl --user status tasks-pending` and `journalctl --user -u tasks-pending`",
+            DAEMON_WAIT.as_secs()
+        ),
+    }
+}
+
+/// The daemon's version once it answers at `url`, or why it did not
+/// within [`DAEMON_WAIT`].
+async fn wait_for_daemon(url: &str) -> Result<String, String> {
+    let client = Client::new(url).map_err(|error| error.to_string())?;
+    let deadline = Instant::now() + DAEMON_WAIT;
+    loop {
+        match client.health().await {
+            Ok(health) => return Ok(health.version),
+            Err(_) if Instant::now() < deadline => tokio::time::sleep(DAEMON_POLL).await,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
 }
 
 fn service_is_active() -> anyhow::Result<bool> {
@@ -241,16 +307,22 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         println!("daemon left alone (--no-start)");
         return Ok(());
     }
-    if Command::new("systemctl")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_err()
-    {
-        anyhow::bail!(
-            "systemctl is required to run the daemon as a user service; start `tasks-pending serve` yourself"
-        );
+    // Without a user manager there is no service to start: the files are
+    // in place, and the daemon is the user's to run.
+    match user_manager(quiet_systemctl) {
+        UserManager::Running => {}
+        UserManager::Missing => {
+            println!(
+                "systemctl not found, so no user service: run `tasks-pending serve` yourself, then open the window"
+            );
+            return Ok(());
+        }
+        UserManager::Unreachable => {
+            println!(
+                "no systemd user manager answers here, so the daemon was not started: run `tasks-pending setup` again from your desktop session, or `tasks-pending serve` yourself"
+            );
+            return Ok(());
+        }
     }
     let active = service_is_active()?;
     for step in service_plan(active) {
@@ -272,33 +344,8 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         .enable_all()
         .build()
         .context("starting async runtime")?;
-    let health = runtime.block_on(async {
-        let client = Client::new(&url)?;
-        let deadline = Instant::now() + DAEMON_WAIT;
-        loop {
-            match client.health().await {
-                Ok(health) => return Ok(health),
-                Err(_) if Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                }
-                Err(error) => return Err(anyhow::anyhow!(error)),
-            }
-        }
-    });
-    match health {
-        Ok(health) => println!(
-            "daemon {} answering at {url}; open the window with `tasks-pending` or from the launcher",
-            health.version
-        ),
-        // The service runs but does not answer where expected: say so
-        // and leave it running, rather than fail a setup that worked.
-        Err(error) if service_is_active()? => println!(
-            "{SERVICE} is active but did not answer at {url} ({error}); if it listens elsewhere, open the window with `tasks-pending --daemon <url>`; see `journalctl --user -u tasks-pending`"
-        ),
-        Err(error) => anyhow::bail!(
-            "{SERVICE} is not running: no answer at {url} ({error}); see `journalctl --user -u tasks-pending`"
-        ),
-    }
+    let answer = runtime.block_on(wait_for_daemon(&url));
+    println!("{}", judge_answer(answer, env!("CARGO_PKG_VERSION"), &url)?);
     Ok(())
 }
 
@@ -340,6 +387,54 @@ mod tests {
             service_plan(false)[1],
             vec!["--user", "enable", "--now", "tasks-pending.service"]
         );
+    }
+
+    /// Without systemctl, or without a user manager to answer it (a
+    /// container, an ssh session), there is no service to start: setup
+    /// says so and leaves the daemon to the user instead of failing.
+    #[test]
+    fn tells_whether_a_user_manager_runs() {
+        let missing = |_: &[&str]| Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert_eq!(user_manager(missing), UserManager::Missing);
+        assert_eq!(
+            user_manager(|_: &[&str]| Ok(false)),
+            UserManager::Unreachable
+        );
+        let asked = std::cell::RefCell::new(Vec::new());
+        let running = |args: &[&str]| {
+            asked.borrow_mut().push(args.join(" "));
+            Ok(true)
+        };
+        assert_eq!(user_manager(running), UserManager::Running);
+        assert_eq!(asked.into_inner(), ["--user show-environment"]);
+    }
+
+    /// Once the service is started, the daemon must answer, and as this
+    /// release: an old daemon still holding the address, or one that never
+    /// answers, fails setup, and with it an upgrade, which then puts the
+    /// previous release back.
+    #[test]
+    fn fails_unless_this_release_answers() {
+        let url = "http://127.0.0.1:61000";
+        let fine = judge_answer(Ok("0.6.0".to_owned()), "0.6.0", url).unwrap();
+        assert!(
+            fine.contains("daemon 0.6.0 answering at http://127.0.0.1:61000"),
+            "{fine}"
+        );
+
+        let old = judge_answer(Ok("0.5.0".to_owned()), "0.6.0", url)
+            .unwrap_err()
+            .to_string();
+        assert!(old.contains("is 0.5.0, not 0.6.0"), "{old}");
+
+        let silent = judge_answer(Err("connection refused".to_owned()), "0.6.0", url)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            silent.contains("did not answer at http://127.0.0.1:61000"),
+            "{silent}"
+        );
+        assert!(silent.contains("connection refused"), "{silent}");
     }
 
     /// The daemon's address is read from the unit as systemctl shows it,

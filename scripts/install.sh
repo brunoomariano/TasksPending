@@ -16,14 +16,17 @@
 # file goes to DESTDIR/PREFIX/lib/systemd/user instead of your home.
 #
 # From an unpacked release bundle (no Cargo.toml) nothing is built: the
-# bundle's executable is installed. INSTALL_LINK=1 links PREFIX/bin to it
-# instead of copying, so `tasks-pending upgrade` can swap the bundle.
+# bundle's executable is installed. INSTALL_LINK=1 links the executable
+# instead of copying it, so `tasks-pending upgrade` can swap the bundle.
+# BIN_DIR puts the executable (and what points at it) somewhere other than
+# PREFIX/bin; the release installer passes TASKS_PENDING_BIN_DIR through it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PREFIX="${PREFIX:-$HOME/.local}"
 DESTDIR="${DESTDIR:-}"
-BIN="$DESTDIR$PREFIX/bin"
+BIN_DIR="${BIN_DIR:-$PREFIX/bin}"
+BIN="$DESTDIR$BIN_DIR"
 SHARE="$DESTDIR$PREFIX/share/tasks-pending"
 APPS="$DESTDIR$PREFIX/share/applications"
 ICONS="$DESTDIR$PREFIX/share/icons/hicolor"
@@ -93,10 +96,10 @@ install -m 0644 "$ROOT/config.example.toml" "$SHARE/config.example.toml"
 install -m 0644 "$ROOT/packaging/env.example" "$SHARE/env.example"
 install -m 0644 "$ROOT/packaging/icons/tasks-pending.svg" "$ICONS/scalable/apps/$APP_ID.svg"
 install -m 0644 "$ROOT/packaging/icons/tasks-pending.png" "$ICONS/256x256/apps/$APP_ID.png"
-sed "s|@BINDIR@|$PREFIX/bin|g" "$ROOT/packaging/applications/$APP_ID.desktop" \
+sed "s|@BINDIR@|$BIN_DIR|g" "$ROOT/packaging/applications/$APP_ID.desktop" \
   >"$APPS/$APP_ID.desktop"
 chmod 0644 "$APPS/$APP_ID.desktop"
-sed "s|@BINDIR@|$PREFIX/bin|g" "$ROOT/packaging/systemd/tasks-pending.service" \
+sed "s|@BINDIR@|$BIN_DIR|g" "$ROOT/packaging/systemd/tasks-pending.service" \
   >"$UNIT_DIR/tasks-pending.service"
 chmod 0644 "$UNIT_DIR/tasks-pending.service"
 
@@ -122,10 +125,10 @@ Next steps (see docs/install.md):
               cp -n $SHARE/config.example.toml ~/.config/tasks-pending/config.toml
   2. Tokens:  cp -n $SHARE/env.example ~/.config/tasks-pending/env &&
               chmod 600 ~/.config/tasks-pending/env   (then fill it in)
-  3. Daemon:  $PREFIX/bin/tasks-pending setup
-  4. Open:    $PREFIX/bin/tasks-pending  (or TasksPending in the app launcher)
+  3. Daemon:  $BIN_DIR/tasks-pending setup
+  4. Open:    $BIN_DIR/tasks-pending  (or TasksPending in the app launcher)
 EOT
 case ":$PATH:" in
-*":$PREFIX/bin:"*) ;;
-*) echo "Note: $PREFIX/bin is not on your PATH." ;;
+*":$BIN_DIR:"*) ;;
+*) echo "Note: $BIN_DIR is not on your PATH." ;;
 esac

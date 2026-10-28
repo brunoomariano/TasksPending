@@ -58,32 +58,10 @@ impl ViewState {
             (Err(error), Self::Loading | Self::Unavailable { .. }) => Self::Unavailable { error },
         }
     }
-
-    /// Identity of what is on screen: everything but the snapshot's
-    /// timestamp, so a refresh that changed nothing does not redraw.
-    pub fn key(&self) -> String {
-        match self {
-            Self::Loading => "loading".to_owned(),
-            Self::Unavailable { error } => format!("unavailable:{error}"),
-            Self::Ready { snapshot, .. } | Self::Stale { snapshot, .. } => {
-                let error = match self {
-                    Self::Stale { error, .. } => error.as_str(),
-                    _ => "",
-                };
-                let mut shown = snapshot.clone();
-                shown.generated_at = DateTime::UNIX_EPOCH;
-                format!(
-                    "{error}:{}",
-                    serde_json::to_string(&shown).unwrap_or_default()
-                )
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
     use pending_core::sandbox_snapshot;
 
     use super::*;
@@ -116,24 +94,5 @@ mod tests {
         assert_eq!(*fetched_at, now);
         assert_eq!(error, "timed out");
         assert_eq!(state.snapshot(), Some(&sandbox_snapshot()));
-    }
-
-    /// Two snapshots that differ only by their timestamp draw the same.
-    #[test]
-    fn the_key_ignores_the_generation_time() {
-        let now = Local::now();
-        let first = ViewState::Loading.next(Ok(sandbox_snapshot()), now);
-        let mut later = sandbox_snapshot();
-        later.generated_at = Utc::now();
-        let second = ViewState::Loading.next(Ok(later), now);
-        assert_eq!(first.key(), second.key());
-
-        let mut changed = sandbox_snapshot();
-        changed.marked.push("x".to_owned());
-        assert_ne!(first.key(), ViewState::Loading.next(Ok(changed), now).key());
-        assert_ne!(
-            first.key(),
-            first.clone().next(Err("down".to_owned()), now).key()
-        );
     }
 }

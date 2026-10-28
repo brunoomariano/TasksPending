@@ -57,7 +57,7 @@ Visual style: simple and quiet, described in `crates/pending-app/DESIGN.md` (rea
   - `docs/operations.md` (kind table and section);
   - `config.example.toml`;
   - `docs/install.md` (tokens table).
-- **Model change (`pending-core` types):** struct literals in `pending-api`, `pending-client` and `pending-app` tests usually need the new field. The API's JSON is the contract the window reads; keep it backwards compatible (`#[serde(default)]`) because a window may talk to an older daemon.
+- **Model change (`pending-core` types):** struct literals in `pending-api`, `pending-client` and `pending-app` tests usually need the new field. The API's JSON is the contract the window reads; keep it backwards compatible (`#[serde(default)]`) because a window may talk to an older daemon. The types both sides share (`Health`, `VersionReport`, the dashboard header, the refresh cooldown) live in `pending-core::api`, not in the daemon or the client.
 - **Per-stack option for every kind:** `StackConfig` (pending-core), then `SourceSpec` / `SourceReport` if the snapshot needs it.
 - **State the user changes from the window (marks, snoozes):** the store in `pending-runtime` (`marks.rs`, `snoozes.rs`, `looks.rs`, all on `store.rs`), the `Dashboard` trait, a route in `pending-api` guarded by the dashboard header, a method in `pending-client`, a `Command` in `pending-app`'s backend, and the snapshot field the window reads. Window-only choices go in `View` instead.
 - **New window setting:**

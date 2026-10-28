@@ -29,6 +29,9 @@ cmp "$ARTIFACTS/tasks-pending-bin-$VERSION-$PKGREL-x86_64.pkg.tar.zst" \
 (
   cd "$ARTIFACTS"
   sha256sum -c tasks-pending-bin-x86_64.pkg.tar.zst.sha256
+  # The versioned package is published with its checksum too, like the
+  # versioned bundle, for a pinned install checked by hand.
+  sha256sum -c "tasks-pending-bin-$VERSION-$PKGREL-x86_64.pkg.tar.zst.sha256"
   sha256sum -c tasks-pending-install.sh.sha256
   sha256sum -c SHA256SUMS
 )

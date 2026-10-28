@@ -162,13 +162,43 @@ fn daemon_url() -> String {
 }
 
 /// Runs a desktop helper if it exists; its failure is not ours.
-fn best_effort(program: &str, args: &[&str]) {
+fn best_effort(program: &str, args: &[String]) {
     let _ = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+}
+
+/// The launcher caches to refresh under `data` (`XDG_DATA_HOME`), as the
+/// helper and its arguments: the desktop database when there is an
+/// applications directory, and the icon cache only when there is one. A
+/// new icon cache would hide icons added later, since GTK trusts it while
+/// the theme directory's own time is unchanged; without one GTK reads the
+/// directories themselves.
+fn cache_refreshes(data: &Path) -> Vec<(&'static str, Vec<String>)> {
+    let mut refreshes = Vec::new();
+    let applications = data.join("applications");
+    if applications.is_dir() {
+        refreshes.push((
+            "update-desktop-database",
+            vec![applications.to_string_lossy().into_owned()],
+        ));
+    }
+    let icons = data.join("icons/hicolor");
+    if icons.join("icon-theme.cache").is_file() {
+        refreshes.push((
+            "gtk-update-icon-cache",
+            vec![
+                "-q".to_owned(),
+                "-t".to_owned(),
+                "-f".to_owned(),
+                icons.to_string_lossy().into_owned(),
+            ],
+        ));
+    }
+    refreshes
 }
 
 fn data_home() -> Option<PathBuf> {
@@ -202,19 +232,8 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 
     // Launchers read these caches; refreshing them is polite, not required.
     if let Some(data) = data_home() {
-        let applications = data.join("applications");
-        if applications.is_dir() {
-            best_effort(
-                "update-desktop-database",
-                &[&applications.to_string_lossy()],
-            );
-        }
-        let icons = data.join("icons/hicolor");
-        if icons.is_dir() {
-            best_effort(
-                "gtk-update-icon-cache",
-                &["-q", "-t", "-f", &icons.to_string_lossy()],
-            );
+        for (program, args) in cache_refreshes(&data) {
+            best_effort(program, &args);
         }
     }
 
@@ -358,6 +377,36 @@ mod tests {
         let owner = std::os::unix::fs::MetadataExt::uid(&fs::metadata(&file).unwrap());
         let _ = fs::remove_file(&file);
         assert_eq!(effective_uid().unwrap(), owner);
+    }
+
+    /// The desktop database is refreshed when there is one to refresh. An
+    /// icon cache is only ever refreshed, never created: GTK trusts a
+    /// cache while the theme directory's own time is unchanged, so a new
+    /// one would hide icons added later to a size directory, while without
+    /// one GTK reads the directories.
+    #[test]
+    fn refreshes_only_the_caches_that_exist() {
+        let data =
+            std::env::temp_dir().join(format!("tasks-pending-caches-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&data);
+        fs::create_dir_all(data.join("icons/hicolor/256x256/apps")).unwrap();
+        assert!(
+            cache_refreshes(&data).is_empty(),
+            "{:?}",
+            cache_refreshes(&data)
+        );
+
+        fs::create_dir_all(data.join("applications")).unwrap();
+        fs::write(data.join("icons/hicolor/icon-theme.cache"), "").unwrap();
+        let programs: Vec<&str> = cache_refreshes(&data)
+            .into_iter()
+            .map(|(program, _)| program)
+            .collect();
+        assert_eq!(
+            programs,
+            ["update-desktop-database", "gtk-update-icon-cache"]
+        );
+        let _ = fs::remove_dir_all(&data);
     }
 
     fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {

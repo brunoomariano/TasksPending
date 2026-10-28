@@ -222,16 +222,9 @@ pub fn release_client() -> reqwest::Result<reqwest::Client> {
         .build()
 }
 
-/// The version `<base>/latest` redirects to, from the redirect alone: no
-/// body, no API, no token. `base` is the releases URL prefix.
-pub async fn latest_release(base: &str) -> Option<String> {
-    try_latest_release(base)
-        .await
-        .inspect_err(|error| debug!(%error, "version check failed"))
-        .ok()
-}
-
-/// [`latest_release`], saying why no version was found.
+/// The version `<base>/latest` redirects to, from the redirect alone (no
+/// body, no API, no token), or why there is none. `base` is the releases
+/// URL prefix.
 pub async fn try_latest_release(base: &str) -> Result<String, LatestReleaseError> {
     let client =
         release_client().map_err(|error| LatestReleaseError::Client(with_causes(&error)))?;
@@ -494,7 +487,6 @@ mod tests {
             try_latest_release(&base).await,
             Err(LatestReleaseError::Request { .. })
         ));
-        assert_eq!(latest_release(&base).await, None);
     }
 
     /// The background look reads the page on its schedule and the report

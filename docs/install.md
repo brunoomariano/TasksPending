@@ -14,15 +14,19 @@ The supported path is one command. It installs the latest release, checks every 
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh
 ```
 
-On Arch Linux it installs the release's pacman package. Elsewhere it unpacks the release bundle under `~/.local/lib/tasks-pending` and links `~/.local/bin/tasks-pending` to it. Both end with `tasks-pending setup`:
+On Arch Linux, and on distributions built on it (Omarchy, Manjaro: `ID_LIKE=arch` in `/etc/os-release`), it installs the release's pacman package, letting pacman ask as usual when a terminal is there. Elsewhere it unpacks the release bundle under `~/.local/lib/tasks-pending`, after checking that the new executable runs on this machine, and links `~/.local/bin/tasks-pending` to it; it refuses to run as root, since everything it installs is yours. Both end with `tasks-pending setup`:
 
 - `~/.config/tasks-pending/config.toml` and `env` are created from the examples when missing, and kept as they are otherwise;
 - the launcher caches are refreshed, so **TasksPending** shows up in the app launcher;
-- the user service is started, or restarted when it was running, and the installer waits until the daemon answers.
+- the user service is started, or restarted when it was running, and the installer waits until the daemon answers where the unit says it listens.
+
+`tasks-pending setup --no-start` does the first two and leaves the daemon alone, for a machine without systemd or to fill in the env file first.
 
 Run the same command to update, or `tasks-pending upgrade` (see "Update and uninstall"). Your configuration, tokens and service override stay untouched. With the example configuration, the dashboard starts with the built-in sample source.
 
-The installer reads a few optional variables: `TASKS_PENDING_VERSION` (a release to install instead of the latest, e.g. `0.6.0`), `TASKS_PENDING_LIB_DIR` and `TASKS_PENDING_BIN_DIR` (where the bundle and the link go), and `TASKS_PENDING_RELEASE_BASE_URL` (another releases location; its checksums are trusted, so point it only at an origin you trust). The same variables drive `tasks-pending upgrade`.
+The installer reads a few optional variables: `TASKS_PENDING_VERSION` (a release to install instead of the latest, e.g. `0.6.0`), `TASKS_PENDING_LIB_DIR` and `TASKS_PENDING_BIN_DIR` (where the bundle and the link go), `TASKS_PENDING_REPOSITORY` (another GitHub repository, `owner/name`) and `TASKS_PENDING_RELEASE_BASE_URL` (another releases location, `https://` only). The same variables drive `tasks-pending upgrade`.
+
+About the checksums: each asset's `.sha256` is published beside it, on the same release page, so the check proves that the download arrived whole, not who built it. Whoever controls the releases location controls both, which is why only https origins you trust belong in `TASKS_PENDING_RELEASE_BASE_URL`. Signing the checksums (or publishing GitHub artifact attestations) is the planned next step; until then, the trust is in GitHub and in the repository's protected branches.
 
 ### Manual options
 
@@ -158,14 +162,14 @@ systemctl --user edit tasks-pending
 tasks-pending --daemon http://127.0.0.1:8090
 ```
 
-For a local install, replace `/usr/bin` with the absolute path to your own `tasks-pending` executable.
+For a local install, replace `/usr/bin` with the absolute path to your own `tasks-pending` executable. `tasks-pending setup` reads the port from the unit as systemd shows it, so it waits for the daemon where it listens; when the service is active but does not answer there, it says so and leaves it running.
 
 ## 6. Update and uninstall
 
-- `tasks-pending upgrade` (installed by the release installer): reads the latest release, downloads its bundle and checksum, verifies it, swaps it under `~/.local/lib/tasks-pending` and restarts the daemon. `--check` only says whether a newer release exists; `--version 0.6.1` installs that one. Once a day the daemon looks at the latest release too, and the window shows `vX.Y.Z available` next to its version when there is one (`TASKS_PENDING_NO_VERSION_CHECK=1` in the env file turns that off).
+- `tasks-pending upgrade` (installed by the release installer): reads the latest release, downloads its bundle and checksum over https, verifies it, runs the new executable once to be sure it works on this machine, swaps it under `~/.local/lib/tasks-pending` and restarts the daemon; if the install does not finish, the previous release is put back. `--check` only says whether a newer release exists; `--version 0.6.1` (or `TASKS_PENDING_VERSION`) installs that one, and the installer's other variables apply too. Once a day the daemon looks at the latest release too, and the window shows `vX.Y.Z available` next to its version when there is one (`TASKS_PENDING_NO_VERSION_CHECK=1` in the env file turns that off).
 - Arch: `sudo pacman -U` the new package, then `tasks-pending setup`.
 - Bundle or source: run the new bundle's `./scripts/install.sh --start` (or `make deploy`) again.
-- Uninstall: `./scripts/install.sh --uninstall` or `make uninstall` (stops and removes the service, the launcher entry and the executable; your config, env file and cache stay). Arch: `sudo pacman -R tasks-pending-bin`.
+- Uninstall: `./scripts/install.sh --uninstall` or `make uninstall` (stops and removes the service, the launcher entry and the executable or its link; your config, env file and cache stay, and so does the release directory of a release install, `~/.local/lib/tasks-pending`, which you remove by hand). Arch: `sudo pacman -R tasks-pending-bin`.
 
 The last successful data of each source is cached in `$XDG_STATE_HOME/tasks-pending/` (`~/.local/state/tasks-pending/`), so the window has cards right after a restart. The window's own choices (board filter, collapsed stacks, hidden items, auto-refresh) are in `app-view.json` there.
 
@@ -178,4 +182,4 @@ The last successful data of each source is cached in `$XDG_STATE_HOME/tasks-pend
 - **No weather beside the clock on Omarchy**: the widget needs `omarchy-weather-status` to work for the daemon. Run it in a terminal first: it fails when offline or when the place is unknown (`omarchy-weather-location --set <name>`). The systemd service's PATH includes `/usr/share/omarchy/bin` and `~/.local/share/omarchy/bin`; a service file installed before that keeps the old PATH until you install again. A failure is retried after a minute, and the widget is hidden in windows narrower than 1440 px.
 - **Google Calendar fails in the daemon**: the service must run inside your desktop session (it does when started with `systemctl --user` after login).
 - **Config errors**: the **Sources** dialog shows the message, naming the file, source and stack.
-- **`tasks-pending upgrade` refuses**: it only upgrades installs made by the release installer (under `~/.local/lib/tasks-pending`); a package install upgrades with pacman, a source install with `make deploy`.
+- **`tasks-pending upgrade` refuses**: it only upgrades the executable the release installer linked, `~/.local/lib/tasks-pending/bin/tasks-pending`; a package install upgrades with pacman, a source install with `make deploy`.

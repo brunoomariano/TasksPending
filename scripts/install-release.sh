@@ -128,11 +128,19 @@ run_bundle_installer() {
     "$2/scripts/install.sh" --start
 }
 
+# is_release_dir <dir>: <dir> holds an unpacked release (its executable,
+# installer and changelog, and no share/), not an install prefix that only
+# has a bin/tasks-pending. Only such a directory is ever replaced or removed.
+is_release_dir() {
+  [ -x "$1/bin/tasks-pending" ] && [ -f "$1/scripts/install.sh" ] &&
+    [ -f "$1/CHANGELOG.md" ] && [ ! -e "$1/share" ]
+}
+
 install_bundle() {
   base="$1" work="$2" bin_dir="$3" lib_dir="$4"
   [ "$(id -u)" -ne 0 ] ||
     fail "run this as the user who will use TasksPending, not as root: it installs under your home and starts a user service"
-  if [ -e "$lib_dir" ] && [ ! -x "$lib_dir/bin/tasks-pending" ]; then
+  if [ -e "$lib_dir" ] && ! is_release_dir "$lib_dir"; then
     fail "refusing to replace $lib_dir: it does not hold a TasksPending release (TASKS_PENDING_LIB_DIR names where the release is unpacked)"
   fi
   asset="tasks-pending-x86_64-unknown-linux-gnu.tar.gz"
@@ -229,7 +237,7 @@ retire_user_install() {
     rm -f "$exe"
     retired="$retired $exe"
   fi
-  if [ -x "$lib_dir/bin/tasks-pending" ]; then
+  if is_release_dir "$lib_dir"; then
     rm -rf "${lib_dir:?}"
     retired="$retired $lib_dir"
   fi

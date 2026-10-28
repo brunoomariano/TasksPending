@@ -56,6 +56,7 @@ esac
 mkdir -p "$BIN_DIR"
 ln -sfn "$RELEASE_BIN/tasks-pending" "$BIN_DIR/tasks-pending"
 EOF2
+  : >"$bundle/CHANGELOG.md"
   chmod +x "$bundle/bin/tasks-pending" "$bundle/scripts/install.sh"
   tar -C "$WORK/build" -czf "$FIXTURES/$ASSET" "${bundle##*/}"
   (
@@ -328,6 +329,18 @@ mkdir -p "$home/.local/lib/tasks-pending/photos"
 expect_failure "occupied directory" "does not hold a TasksPending release" run_installer "$home" env
 test -d "$home/.local/lib/tasks-pending/photos"
 
+# Nor is an install prefix named as the release directory, though it has
+# a bin/tasks-pending: a release holds its installer and changelog, and
+# no share/.
+home="$WORK/prefix"
+mkdir -p "$home/opt/bin" "$home/opt/share/applications"
+printf '#!/bin/sh\n' >"$home/opt/bin/tasks-pending"
+chmod +x "$home/opt/bin/tasks-pending"
+: >"$home/opt/share/applications/other.desktop"
+expect_failure "install prefix" "does not hold a TasksPending release" \
+  run_installer "$home" env TASKS_PENDING_LIB_DIR="$home/opt"
+test -e "$home/opt/share/applications/other.desktop" || fail "the prefix was replaced"
+
 # A checksum that does not match, or that names another asset, stops the
 # install before anything is unpacked.
 home="$WORK/mismatch"
@@ -493,13 +506,15 @@ test -e "$home/.local/share/applications/TasksPending.desktop" || fail "the web 
 home="$WORK/arch-from-bundle"
 seed_user_install "$home"
 lib="$home/.local/lib/tasks-pending"
-mkdir -p "$lib/bin" "$home/.local/share/tasks-pending" \
+mkdir -p "$lib/bin" "$lib/scripts" "$home/.local/share/tasks-pending" \
   "$home/.local/share/icons/hicolor/scalable/apps" "$home/.local/share/icons/hicolor/256x256/apps"
 cat >"$lib/bin/tasks-pending" <<'EOF2'
 #!/bin/sh
 [ "$1" = --version ] && echo "tasks-pending 0.6.0"
 EOF2
-chmod +x "$lib/bin/tasks-pending"
+printf '#!/bin/sh\n' >"$lib/scripts/install.sh"
+: >"$lib/CHANGELOG.md"
+chmod +x "$lib/bin/tasks-pending" "$lib/scripts/install.sh"
 ln -s "$lib/bin/tasks-pending" "$home/.local/bin/tasks-pending"
 : >"$home/.local/share/tasks-pending/env.example"
 app_id=io.github.brunoomariano.TasksPending
@@ -517,6 +532,18 @@ done
 if [[ $output == *"omarchy-webapp-remove"* ]]; then
   fail "a web app that is not there was mentioned"
 fi
+
+# The release directory is removed only when it holds a release: an
+# install prefix named there stays whole.
+home="$WORK/arch-prefix"
+mkdir -p "$home/opt/bin" "$home/opt/share/doc"
+printf '#!/bin/sh\n' >"$home/opt/bin/tasks-pending"
+chmod +x "$home/opt/bin/tasks-pending"
+: >"$home/opt/share/doc/keep"
+OS_RELEASE="$WORK/omarchy-os-release" setsid -w "$WORK/run-installer.sh" "$home" env \
+  TASKS_PENDING_LIB_DIR="$home/opt" </dev/null >/dev/null
+test -e "$home/opt/share/doc/keep" || fail "the prefix named as the release directory was removed"
+test -x "$home/opt/bin/tasks-pending" || fail "the prefix's executable was removed"
 
 # A unit of the user's own, which runs something else, is not removed,
 # but the installer says it overrides the package's.

@@ -22,9 +22,9 @@ Both paths end with `tasks-pending setup`:
 
 - `~/.config/tasks-pending/config.toml` and `env` are created from the examples when missing, and kept as they are otherwise;
 - the launcher caches are refreshed, so **TasksPending** shows up in the app launcher;
-- the user service is started, or restarted when it was running, and the installer waits until the daemon answers where the unit says it listens.
+- the user service is started, or restarted when it was running, and setup waits up to 20 seconds for the daemon to answer where the unit says it listens. It fails when the daemon does not answer, or answers as another version (an old daemon still holding the address), so an upgrade puts the previous release back.
 
-`tasks-pending setup --no-start` does the first two and leaves the daemon alone, for a machine without systemd or to fill in the env file first.
+Without systemd, or without a user manager to reach (a container, an ssh session), setup does the first two, says so and leaves the daemon to you: run `tasks-pending serve` yourself. `tasks-pending setup --no-start` does the same on purpose, to fill in the env file first.
 
 Run the same command to update, or `tasks-pending upgrade` (see "Update and uninstall"). Your configuration, tokens and service override stay untouched. With the example configuration, the dashboard starts with the built-in sample source.
 
@@ -166,7 +166,7 @@ systemctl --user edit tasks-pending
 tasks-pending --daemon http://127.0.0.1:8090
 ```
 
-For a local install, replace `/usr/bin` with the absolute path to your own `tasks-pending` executable. `tasks-pending setup` reads the port from the unit as systemd shows it, so it waits for the daemon where it listens; when the service is active but does not answer there, it says so and leaves it running.
+For a local install, replace `/usr/bin` with the absolute path to your own `tasks-pending` executable. `tasks-pending setup` reads the port from the unit as systemd shows it, so it waits for the daemon where it listens, and fails when the daemon does not answer there.
 
 ## 6. Update and uninstall
 

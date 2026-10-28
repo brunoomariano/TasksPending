@@ -149,7 +149,7 @@ A small dot before a card's title means the item changed since you last looked, 
 
 The window reads `/api/v1/snapshot` every 15 seconds while it is not suspended and redraws only when something changed, keeping the scroll position. If the daemon stops answering after a successful load, the last cards stay on screen under a notice. The Refresh button calls `POST /api/v1/refresh` and reads the snapshot again two seconds later. A change that the daemon refuses (a mark that could not be saved, a snooze in the past) shows for a few seconds under the controls.
 
-The window follows the system's dark or light scheme, with its own palette either way, the system's interface font, and the symbolic icons of the icon theme.
+The window is dark unless the system asks for light, with its own palette either way, the system's interface font, and the symbolic icons of the icon theme.
 
 ## HTTP Endpoints
 

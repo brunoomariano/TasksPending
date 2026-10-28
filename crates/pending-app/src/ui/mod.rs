@@ -252,9 +252,9 @@ pub fn run(
             window.present();
             return;
         }
-        if let Some((_, crate::Scene::Light)) = &screenshot {
-            adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
-        }
+        adw::StyleManager::default().set_color_scheme(theme::color_scheme(
+            screenshot.as_ref().map(|(_, scene)| *scene),
+        ));
         load_stylesheet();
         build_window(app, &ctx);
         if let Some(events) = events.borrow_mut().take() {

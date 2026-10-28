@@ -2,6 +2,10 @@
 //! asks), written into the stylesheet GTK loads. GTK CSS has no variables
 //! on every version the app runs on, so the tokens are filled in here.
 
+use libadwaita::ColorScheme;
+
+use crate::Scene;
+
 /// The colours of one scheme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette {
@@ -65,6 +69,16 @@ pub const LIGHT: Palette = Palette {
     shadow: "rgba(16, 24, 40, 0.18)",
 };
 
+/// The scheme the window asks for: dark unless the system prefers light
+/// (libadwaita's own default is the other way round), and light for the
+/// light screenshot whatever the system says.
+pub fn color_scheme(screenshot: Option<Scene>) -> ColorScheme {
+    match screenshot {
+        Some(Scene::Light) => ColorScheme::ForceLight,
+        _ => ColorScheme::PreferDark,
+    }
+}
+
 const TEMPLATE: &str = include_str!("style.css");
 
 /// The stylesheet for `palette`.
@@ -111,5 +125,14 @@ mod tests {
         assert_ne!(dark, light);
         assert!(dark.contains(DARK.accent));
         assert!(light.contains(LIGHT.accent));
+    }
+
+    /// Dark is the default: light only when the system prefers it, which
+    /// libadwaita works out from "prefer dark", or for the light picture.
+    #[test]
+    fn opens_dark_unless_asked_for_light() {
+        assert_eq!(color_scheme(None), ColorScheme::PreferDark);
+        assert_eq!(color_scheme(Some(Scene::Board)), ColorScheme::PreferDark);
+        assert_eq!(color_scheme(Some(Scene::Light)), ColorScheme::ForceLight);
     }
 }

@@ -84,11 +84,12 @@ pub struct PendingCard {
     /// soonest first.
     #[serde(default)]
     pub due_at: Option<DateTime<Utc>>,
+    #[serde(deserialize_with = "severity_from_any_daemon")]
     pub severity: CardSeverity,
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CardSeverity {
     Info,
@@ -96,16 +97,18 @@ pub enum CardSeverity {
     Critical,
 }
 
-/// A severity a newer daemon added reads as [`CardSeverity::Info`], so a
-/// window left open across an upgrade keeps reading the snapshot.
-impl<'de> Deserialize<'de> for CardSeverity {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(match String::deserialize(deserializer)?.as_str() {
-            "warning" => Self::Warning,
-            "critical" => Self::Critical,
-            _ => Self::Info,
-        })
-    }
+/// A card's severity as a daemon sent it: one a newer daemon added reads
+/// as [`CardSeverity::Info`], so a window left open across an upgrade
+/// keeps reading the snapshot. Only the snapshot is this lenient; a stack's
+/// `severity` in the config must be one of the three.
+fn severity_from_any_daemon<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<CardSeverity, D::Error> {
+    Ok(match String::deserialize(deserializer)?.as_str() {
+        "warning" => CardSeverity::Warning,
+        "critical" => CardSeverity::Critical,
+        _ => CardSeverity::Info,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,9 +198,32 @@ mod tests {
     /// know. The card still reads, as the plainest severity.
     #[test]
     fn an_unknown_card_severity_reads_as_info() {
-        let read = |text: &str| serde_json::from_str::<CardSeverity>(text).unwrap();
-        assert_eq!(read(r#""urgent""#), CardSeverity::Info);
-        assert_eq!(read(r#""info""#), CardSeverity::Info);
-        assert_eq!(read(r#""warning""#), CardSeverity::Warning);
+        let read = |severity: &str| {
+            let card = serde_json::json!({
+                "id": "a", "title": "t", "body": "", "source": "s", "url": null,
+                "severity": severity, "updated_at": "2026-10-28T00:00:00Z",
+            });
+            serde_json::from_value::<PendingCard>(card)
+                .unwrap()
+                .severity
+        };
+        assert_eq!(read("urgent"), CardSeverity::Info);
+        assert_eq!(read("info"), CardSeverity::Info);
+        assert_eq!(read("warning"), CardSeverity::Warning);
+        assert_eq!(read("critical"), CardSeverity::Critical);
+    }
+
+    /// Scenario: a stack in the config asks for a severity with a typo. The
+    /// config is refused when it loads, naming the value, instead of the
+    /// stack quietly using the plainest severity.
+    #[test]
+    fn a_misspelled_severity_is_refused() {
+        let error = serde_json::from_str::<CardSeverity>(r#""critcal""#).unwrap_err();
+        assert!(error.to_string().contains("critcal"), "{error}");
+        assert!(serde_json::from_str::<CardSeverity>(r#""Warning""#).is_err());
+        assert_eq!(
+            serde_json::from_str::<CardSeverity>(r#""critical""#).unwrap(),
+            CardSeverity::Critical
+        );
     }
 }

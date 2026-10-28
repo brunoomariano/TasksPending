@@ -36,13 +36,26 @@ const NOTE_FOR: Duration = Duration::from_secs(6);
 
 pub struct Hero {
     pub root: gtk::CenterBox,
+    pub weather: Weather,
+    controls: Controls,
+}
+
+/// The weather at the start: icon and temperature, then place and wind,
+/// shown once a report is read.
+pub struct Weather {
     /// Hidden in narrow windows, whatever the weather.
-    pub weather_slot: gtk::Box,
-    weather: gtk::Box,
-    weather_icon: gtk::Image,
-    weather_temperature: gtk::Label,
-    weather_place: gtk::Label,
-    weather_wind: gtk::Label,
+    pub slot: gtk::Box,
+    report: gtk::Box,
+    icon: gtk::Image,
+    temperature: gtk::Label,
+    place: gtk::Label,
+    wind: gtk::Label,
+}
+
+/// The controls at the end: the buttons, the line saying when the
+/// dashboard was read, a passing note, and where the dashboard comes from.
+struct Controls {
+    root: gtk::Box,
     sources_icon: gtk::Image,
     refresh_button: gtk::Button,
     refresh_label: gtk::Label,
@@ -83,31 +96,57 @@ fn control_button(
 }
 
 pub fn build(ctx: &Rc<Ctx>) -> Hero {
-    // Weather: icon and temperature, then place and wind.
-    let weather_icon = symbolic("weather-overcast-symbolic", size::WEATHER);
-    let weather_temperature = label("", &["weather-temperature"]);
-    let now = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    now.append(&weather_icon);
-    now.append(&weather_temperature);
-    let weather_place = label("", &["weather-details"]);
-    let weather_wind = label("", &["weather-details"]);
-    let weather = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(2)
-        .valign(gtk::Align::Center)
-        .visible(false)
-        .build();
-    weather.add_css_class("weather");
-    weather.append(&now);
-    weather.append(&weather_place);
-    weather.append(&weather_wind);
-    let weather_slot = gtk::Box::builder()
-        .valign(gtk::Align::Center)
-        .width_request(WEATHER_SLOT_WIDTH)
-        .build();
-    weather_slot.append(&weather);
+    let weather = Weather::new();
+    let controls = Controls::new(ctx);
+    let root = gtk::CenterBox::builder().build();
+    root.add_css_class("hero");
+    root.set_start_widget(Some(&weather.slot));
+    root.set_center_widget(Some(&clock()));
+    root.set_end_widget(Some(&controls.root));
+    Hero {
+        root,
+        weather,
+        controls,
+    }
+}
 
-    // The clock, scaling with the window up to a width.
+impl Weather {
+    fn new() -> Self {
+        let icon = symbolic("weather-overcast-symbolic", size::WEATHER);
+        let temperature = label("", &["weather-temperature"]);
+        let now = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        now.append(&icon);
+        now.append(&temperature);
+        let place = label("", &["weather-details"]);
+        let wind = label("", &["weather-details"]);
+        let report = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .valign(gtk::Align::Center)
+            .visible(false)
+            .build();
+        report.add_css_class("weather");
+        report.append(&now);
+        report.append(&place);
+        report.append(&wind);
+        let slot = gtk::Box::builder()
+            .valign(gtk::Align::Center)
+            .width_request(WEATHER_SLOT_WIDTH)
+            .build();
+        slot.append(&report);
+        Weather {
+            slot,
+            report,
+            icon,
+            temperature,
+            place,
+            wind,
+        }
+    }
+}
+
+/// The date over the clock, scaling with the window up to a width.
+fn clock() -> adw::Clamp {
     let date = label("", &["clock-date"]);
     date.set_halign(gtk::Align::Center);
     let attributes = gtk::pango::AttrList::new();
@@ -134,120 +173,124 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
         .hexpand(true)
         .build();
     start_clock(date, digits);
+    clamp
+}
 
-    // The controls, with the last update below them.
-    let (sources_button, sources_icon, _) = control_button("view-list-symbolic", "Sources", &[]);
-    let (refresh_button, _, refresh_label) =
-        control_button("view-refresh-symbolic", "Refresh", &["primary"]);
+impl Controls {
+    fn new(ctx: &Rc<Ctx>) -> Self {
+        let (sources_button, sources_icon, _) =
+            control_button("view-list-symbolic", "Sources", &[]);
+        let (refresh_button, _, refresh_label) =
+            control_button("view-refresh-symbolic", "Refresh", &["primary"]);
+        let (settings_button, filter_dot) = settings_button();
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        actions.append(&sources_button);
+        actions.append(&refresh_button);
+        actions.append(&settings_button);
+
+        let updated = label("", &[]);
+        updated.set_single_line_mode(true);
+        let version = label("", &[]);
+        let snoozed_button = gtk::Button::builder().visible(false).build();
+        snoozed_button.add_css_class("quiet-link");
+        let update = label("", &[]);
+        update.set_visible(false);
+        update.set_tooltip_text(Some(UPDATE_TOOLTIP));
+        let updated_line = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(6)
+            .halign(gtk::Align::Center)
+            .visible(false)
+            .build();
+        updated_line.add_css_class("updated");
+        updated_line.append(&symbolic("alarm-symbolic", size::SMALL));
+        updated_line.append(&updated);
+        updated_line.append(&version);
+        updated_line.append(&snoozed_button);
+        updated_line.append(&update);
+        let note = label("", &["updated"]);
+        note.set_halign(gtk::Align::Center);
+        note.set_visible(false);
+
+        let root = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(8)
+            .valign(gtk::Align::Center)
+            .halign(gtk::Align::Center)
+            .build();
+        root.add_css_class("controls");
+        root.append(&actions);
+        root.append(&updated_line);
+        root.append(&note);
+        root.append(&source_line(ctx));
+
+        {
+            let ctx = ctx.clone();
+            sources_button.connect_clicked(move |_| dialogs::show_sources(&ctx));
+        }
+        {
+            let ctx = ctx.clone();
+            settings_button.connect_clicked(move |_| dialogs::show_settings(&ctx));
+        }
+        {
+            let ctx = ctx.clone();
+            snoozed_button.connect_clicked(move |_| dialogs::show_snoozed(&ctx));
+        }
+        {
+            let ctx = ctx.clone();
+            refresh_button.connect_clicked(move |button| {
+                button.set_sensitive(false);
+                ctx.send(Command::Refresh { manual: true });
+            });
+        }
+
+        Controls {
+            root,
+            sources_icon,
+            refresh_button,
+            refresh_label,
+            settings_button,
+            filter_dot,
+            updated_line,
+            updated,
+            version,
+            snoozed_button,
+            update,
+            note,
+        }
+    }
+}
+
+/// The settings button, and the dot it wears while the view hides
+/// something.
+fn settings_button() -> (gtk::Button, gtk::Box) {
     let filter_dot = gtk::Box::builder()
         .valign(gtk::Align::Start)
         .halign(gtk::Align::End)
         .visible(false)
         .build();
     filter_dot.add_css_class("filter-dot");
-    let settings_icon = symbolic("emblem-system-symbolic", size::CONTROL);
-    let settings_overlay = gtk::Overlay::builder().child(&settings_icon).build();
-    settings_overlay.add_overlay(&filter_dot);
-    let settings_button = gtk::Button::builder().child(&settings_overlay).build();
-    settings_button.add_css_class("control");
-    settings_button.add_css_class("icon-only");
-    settings_button.set_tooltip_text(Some("Settings"));
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    actions.append(&sources_button);
-    actions.append(&refresh_button);
-    actions.append(&settings_button);
+    let icon = symbolic("emblem-system-symbolic", size::CONTROL);
+    let overlay = gtk::Overlay::builder().child(&icon).build();
+    overlay.add_overlay(&filter_dot);
+    let button = gtk::Button::builder().child(&overlay).build();
+    button.add_css_class("control");
+    button.add_css_class("icon-only");
+    button.set_tooltip_text(Some("Settings"));
+    (button, filter_dot)
+}
 
-    let updated = label("", &[]);
-    updated.set_single_line_mode(true);
-    let version = label("", &[]);
-    let snoozed_button = gtk::Button::builder().visible(false).build();
-    snoozed_button.add_css_class("quiet-link");
-    let updated_line = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(6)
-        .halign(gtk::Align::Center)
-        .visible(false)
-        .build();
-    updated_line.add_css_class("updated");
-    updated_line.append(&symbolic("alarm-symbolic", size::SMALL));
-    updated_line.append(&updated);
-    updated_line.append(&version);
-    updated_line.append(&snoozed_button);
-    let update = label("", &[]);
-    update.set_visible(false);
-    update.set_tooltip_text(Some(UPDATE_TOOLTIP));
-    updated_line.append(&update);
-    let note = label("", &["updated"]);
-    note.set_halign(gtk::Align::Center);
-    note.set_visible(false);
-    // Where the dashboard comes from, kept short so the clock keeps its
-    // room; the whole line is in the tooltip.
-    let source_text = ctx.model.borrow().source_line.clone();
-    let source_line = label(&source_text, &["updated"]);
-    source_line.set_halign(gtk::Align::Center);
-    source_line.set_single_line_mode(true);
-    source_line.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    source_line.set_max_width_chars(SOURCE_LINE_CHARS);
-    source_line.set_tooltip_text(Some(&source_text));
-
-    let controls = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(8)
-        .valign(gtk::Align::Center)
-        .halign(gtk::Align::Center)
-        .build();
-    controls.add_css_class("controls");
-    controls.append(&actions);
-    controls.append(&updated_line);
-    controls.append(&note);
-    controls.append(&source_line);
-
-    let root = gtk::CenterBox::builder().build();
-    root.add_css_class("hero");
-    root.set_start_widget(Some(&weather_slot));
-    root.set_center_widget(Some(&clamp));
-    root.set_end_widget(Some(&controls));
-
-    {
-        let ctx = ctx.clone();
-        sources_button.connect_clicked(move |_| dialogs::show_sources(&ctx));
-    }
-    {
-        let ctx = ctx.clone();
-        settings_button.connect_clicked(move |_| dialogs::show_settings(&ctx));
-    }
-    {
-        let ctx = ctx.clone();
-        snoozed_button.connect_clicked(move |_| dialogs::show_snoozed(&ctx));
-    }
-    {
-        let ctx = ctx.clone();
-        refresh_button.connect_clicked(move |button| {
-            button.set_sensitive(false);
-            ctx.send(Command::Refresh { manual: true });
-        });
-    }
-
-    Hero {
-        root,
-        weather_slot,
-        weather,
-        weather_icon,
-        weather_temperature,
-        weather_place,
-        weather_wind,
-        sources_icon,
-        refresh_button,
-        refresh_label,
-        settings_button,
-        filter_dot,
-        updated_line,
-        updated,
-        version,
-        snoozed_button,
-        update,
-        note,
-    }
+/// Where the dashboard comes from, kept short so the clock keeps its room;
+/// the whole line is in the tooltip.
+fn source_line(ctx: &Rc<Ctx>) -> gtk::Label {
+    let text = ctx.model.borrow().source_line.clone();
+    let line = label(&text, &["updated"]);
+    line.set_halign(gtk::Align::Center);
+    line.set_single_line_mode(true);
+    line.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    line.set_max_width_chars(SOURCE_LINE_CHARS);
+    line.set_tooltip_text(Some(&text));
+    line
 }
 
 /// Keeps the date and the clock current, redrawing on each new second.
@@ -302,67 +345,73 @@ fn start_clock(date: gtk::Label, digits: gtk::DrawingArea) {
 /// whether or not there is a page: a refresh refused while the dashboard
 /// is unavailable must not leave it off.
 pub fn update_controls(ctx: &Rc<Ctx>, widgets: &Widgets, page: Option<&Page>, view: &View) {
-    let hero = &widgets.hero;
+    let controls = &widgets.hero.controls;
     let (label, enabled) = refresh_button(ctx.model.borrow().refresh_hold.as_ref(), Instant::now());
-    hero.refresh_button.set_sensitive(enabled);
-    hero.refresh_label.set_label(&label);
-    hero.settings_button
+    controls.refresh_button.set_sensitive(enabled);
+    controls.refresh_label.set_label(&label);
+    controls
+        .settings_button
         .set_tooltip_text(Some(&view.settings_label()));
-    hero.filter_dot.set_visible(view.is_filtering());
+    controls.filter_dot.set_visible(view.is_filtering());
     let Some(page) = page else {
-        hero.updated_line.set_visible(false);
+        controls.updated_line.set_visible(false);
         return;
     };
-    hero.sources_icon.set_icon_name(Some(if page.attention {
+    controls.sources_icon.set_icon_name(Some(if page.attention {
         "dialog-warning-symbolic"
     } else {
         "view-list-symbolic"
     }));
     if page.attention {
-        hero.sources_icon.add_css_class("attention");
+        controls.sources_icon.add_css_class("attention");
     } else {
-        hero.sources_icon.remove_css_class("attention");
+        controls.sources_icon.remove_css_class("attention");
     }
-    hero.updated.set_label(&page.updated);
-    hero.version
+    controls.updated.set_label(&page.updated);
+    controls
+        .version
         .set_label(page.version_line.as_deref().unwrap_or_default());
-    hero.version.set_visible(page.version_line.is_some());
-    hero.snoozed_button
+    controls.version.set_visible(page.version_line.is_some());
+    controls
+        .snoozed_button
         .set_label(page.snoozed_line.as_deref().unwrap_or_default());
-    hero.snoozed_button.set_visible(page.snoozed_line.is_some());
+    controls
+        .snoozed_button
+        .set_visible(page.snoozed_line.is_some());
     let update = ctx.model.borrow().update.clone();
     match update {
         Some(version) => {
-            hero.update.set_label(&update_line(&version));
-            hero.update.set_visible(true);
+            controls.update.set_label(&update_line(&version));
+            controls.update.set_visible(true);
         }
-        None => hero.update.set_visible(false),
+        None => controls.update.set_visible(false),
     }
-    hero.updated_line.set_visible(true);
+    controls.updated_line.set_visible(true);
 }
 
 /// Shows or hides the weather widget for the report in the model.
 pub fn update_weather(ctx: &Rc<Ctx>, widgets: &Widgets) {
-    let hero = &widgets.hero;
+    let weather = &widgets.hero.weather;
     let report = ctx.model.borrow().weather.clone();
     let Some(report) = report else {
-        hero.weather.set_visible(false);
+        weather.report.set_visible(false);
         return;
     };
-    hero.weather_icon
+    weather
+        .icon
         .set_icon_name(Some(weather_icon_name(report.condition)));
-    hero.weather_icon
+    weather
+        .icon
         .set_tooltip_text(Some(report.condition.label()));
-    hero.weather_temperature.set_label(&report.temperature);
-    hero.weather_place.set_label(&report.place);
-    hero.weather_wind
-        .set_label(&format!("Wind {}", report.wind));
-    hero.weather.set_visible(true);
+    weather.temperature.set_label(&report.temperature);
+    weather.place.set_label(&report.place);
+    weather.wind.set_label(&format!("Wind {}", report.wind));
+    weather.report.set_visible(true);
 }
 
 /// A short note under the controls, e.g. why a change was refused.
 pub fn show_note(widgets: &Widgets, text: &str) {
-    let note = widgets.hero.note.clone();
+    let note = widgets.hero.controls.note.clone();
     note.set_label(text);
     note.set_visible(true);
     gtk::glib::timeout_add_local_once(NOTE_FOR, move || note.set_visible(false));

@@ -220,7 +220,9 @@ pub fn build_snapshot(
     }
 }
 
-pub(crate) fn is_http_url(url: &str) -> bool {
+/// Whether `url` is an `http://` or `https://` address: the only kind a
+/// card may link to, and the only kind the window opens or fetches.
+pub fn is_http_url(url: &str) -> bool {
     let lower = url.trim_start().to_ascii_lowercase();
     lower.starts_with("https://") || lower.starts_with("http://")
 }

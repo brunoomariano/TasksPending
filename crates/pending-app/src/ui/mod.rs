@@ -15,6 +15,7 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use pending_core::WeatherReport;
+use pending_core::api::REFRESH_COOLDOWN;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -29,9 +30,6 @@ use crate::view::{View, state_dir, view_path};
 const POLL_INTERVAL: Duration = Duration::from_secs(15);
 /// How often the weather is read; the daemon keeps it for as long.
 const WEATHER_INTERVAL: Duration = Duration::from_secs(10 * 60);
-/// Matches the daemon's cooldown; the button comes back even if nothing
-/// changed.
-const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
 /// How often the window asks whether a newer version was published; the
 /// daemon itself looks once a day.
 const UPDATE_INTERVAL: Duration = Duration::from_secs(60 * 60);

@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Local, Utc};
-use pending_core::{DashboardSnapshot, Icon, PendingCard, SourceHealth, SourceStatus};
+use pending_core::{DashboardSnapshot, Icon, PendingCard, SourceHealth, SourceStatus, is_http_url};
 
 use crate::snooze::until_text;
 use crate::view::{View, column_key, group_key, hide_key};
@@ -104,10 +104,6 @@ pub struct Page {
 /// `at` in local time, as written on the page.
 pub fn local_time(at: DateTime<Utc>) -> String {
     at.with_timezone(&Local).format(TIME_FORMAT).to_string()
-}
-
-fn is_http_url(value: &str) -> bool {
-    value.starts_with("https://") || value.starts_with("http://")
 }
 
 fn card_view(card: &PendingCard, marked: &HashSet<&str>, changed: &HashSet<&str>) -> CardView {

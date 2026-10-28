@@ -7,7 +7,7 @@ use std::rc::Rc;
 use gtk4 as gtk;
 use gtk4::prelude::*;
 use libadwaita as adw;
-use pending_core::{Icon, WeatherCondition};
+use pending_core::{Icon, WeatherCondition, is_http_url};
 
 use super::Ctx;
 
@@ -58,10 +58,6 @@ pub fn weather_icon_name(condition: WeatherCondition) -> &'static str {
         WeatherCondition::Snow => "weather-snow-symbolic",
         WeatherCondition::Thunder => "weather-storm-symbolic",
     }
-}
-
-fn is_http_url(value: &str) -> bool {
-    value.starts_with("https://") || value.starts_with("http://")
 }
 
 /// The source's logo at `size` pixels, or a generic icon without one. The

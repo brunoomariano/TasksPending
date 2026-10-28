@@ -194,7 +194,7 @@ fn fetch(ctx: &Rc<Ctx>, url: String, attempts: u32) {
             None => {
                 model.icons.logos.insert(url.clone(), failed(attempts));
                 drop(model);
-                retry_later(&ctx, url, retry_delay(attempts));
+                retry_later(&ctx, url, retry_delay(attempts), attempts + 1);
             }
         }
     });
@@ -202,37 +202,35 @@ fn fetch(ctx: &Rc<Ctx>, url: String, attempts: u32) {
 
 /// Fetches `url` again after `delay`, when a picture still on screen waits
 /// for it: a logo missed while the network was down shows up without the
-/// page having to be rebuilt.
-fn retry_later(ctx: &Rc<Ctx>, url: String, delay: Duration) {
+/// page having to be rebuilt. `failures` is how many fetches had failed
+/// when the timer was set.
+fn retry_later(ctx: &Rc<Ctx>, url: String, delay: Duration, failures: u32) {
     let ctx = Rc::downgrade(ctx);
     gtk::glib::timeout_add_local_once(delay, move || {
         let Some(ctx) = ctx.upgrade() else {
             return;
         };
-        let attempts = {
+        {
             let mut model = ctx.model.borrow_mut();
-            let Some(attempts) = retry_due(model.icons.logos.get(&url), Instant::now()) else {
+            if !retry_due(model.icons.logos.get(&url), failures) {
                 return;
-            };
+            }
             let waiting = model.icons.waiting.entry(url.clone()).or_default();
             waiting.retain(|picture| picture.upgrade().is_some_and(|p| p.parent().is_some()));
             if waiting.is_empty() {
                 return;
             }
-            attempts
-        };
-        fetch(&ctx, url, attempts);
+        }
+        fetch(&ctx, url, failures);
     });
 }
 
-/// The failed attempts so far when a fetch of this logo is due at `now`;
-/// `None` when it is fetched, being fetched, or failed again since the
-/// timer was set (that failure's own timer is the one due).
-fn retry_due(logo: Option<&Logo>, now: Instant) -> Option<u32> {
-    match logo {
-        Some(Logo::Failed { attempts, retry_at }) if now >= *retry_at => Some(*attempts),
-        _ => None,
-    }
+/// Whether the timer set after the logo's `failures`th failed fetch is
+/// still the one due: not when the logo is in, being fetched, or failed
+/// again since (that failure's own timer is the one due). The count says
+/// so, not the clock, which GLib keeps to the millisecond.
+fn retry_due(logo: Option<&Logo>, failures: u32) -> bool {
+    matches!(logo, Some(Logo::Failed { attempts, .. }) if *attempts == failures)
 }
 
 fn failed(attempts: u32) -> Logo {
@@ -289,25 +287,22 @@ mod tests {
     use super::*;
 
     /// Scenario: a logo failed while the network was down and its retry
-    /// comes due. It is fetched again for the pictures waiting; a timer
-    /// left from an earlier failure does nothing before the latest
-    /// failure's retry is due, and nothing happens once the logo is in.
+    /// comes due. It is fetched again for the pictures waiting, even when
+    /// the timer fires a hair before `retry_at` (GLib counts in
+    /// milliseconds); a timer left from an earlier failure does nothing,
+    /// and nothing happens once the logo is in or being fetched.
     #[test]
     fn retries_a_failed_logo_only_when_due() {
-        let now = Instant::now();
-        let failed_at = |retry_at| Logo::Failed {
-            attempts: 2,
-            retry_at,
+        let failed = |attempts| Logo::Failed {
+            attempts,
+            retry_at: Instant::now() + Duration::from_millis(1),
         };
-        assert_eq!(retry_due(Some(&failed_at(now)), now), Some(2));
-        assert_eq!(
-            retry_due(Some(&failed_at(now + Duration::from_secs(60))), now),
-            None
-        );
-        assert_eq!(retry_due(Some(&Logo::Fetching), now), None);
+        assert!(retry_due(Some(&failed(2)), 2));
+        assert!(!retry_due(Some(&failed(3)), 2), "it failed again since");
+        assert!(!retry_due(Some(&Logo::Fetching), 2));
         let ready = Logo::Ready(gtk::glib::Bytes::from_static(b"png"));
-        assert_eq!(retry_due(Some(&ready), now), None);
-        assert_eq!(retry_due(None, now), None);
+        assert!(!retry_due(Some(&ready), 2));
+        assert!(!retry_due(None, 2));
     }
 
     /// A failed logo is tried again after a minute, then after twice as

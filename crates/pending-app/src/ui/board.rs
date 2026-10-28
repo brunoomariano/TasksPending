@@ -424,9 +424,13 @@ fn snooze_button(ctx: &Rc<Ctx>, id: &str) -> gtk::MenuButton {
         let button = gtk::Button::with_label(label);
         let ctx = ctx.clone();
         let id = id.to_owned();
-        let popover = popover.clone();
+        // Weakly: the button lives inside the popover, and a strong
+        // reference would keep both alive after the page is rebuilt.
+        let popover = popover.downgrade();
         button.connect_clicked(move |_| {
-            popover.popdown();
+            if let Some(popover) = popover.upgrade() {
+                popover.popdown();
+            }
             ctx.send(Command::Snooze {
                 id: id.clone(),
                 until: until(choice, &Local::now()).map(|at| at.with_timezone(&Utc)),

@@ -88,12 +88,24 @@ pub struct PendingCard {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CardSeverity {
     Info,
     Warning,
     Critical,
+}
+
+/// A severity a newer daemon added reads as [`CardSeverity::Info`], so a
+/// window left open across an upgrade keeps reading the snapshot.
+impl<'de> Deserialize<'de> for CardSeverity {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(deserializer)?.as_str() {
+            "warning" => Self::Warning,
+            "critical" => Self::Critical,
+            _ => Self::Info,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,13 +116,27 @@ pub struct SourceHealth {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceStatus {
     Ready,
     Refreshing,
     Degraded,
     Failed,
+}
+
+/// A status a newer daemon added reads as [`SourceStatus::Degraded`]:
+/// neither ready nor failed, so the source asks for a look, and a window
+/// left open across an upgrade keeps reading the snapshot.
+impl<'de> Deserialize<'de> for SourceStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(deserializer)?.as_str() {
+            "ready" => Self::Ready,
+            "refreshing" => Self::Refreshing,
+            "failed" => Self::Failed,
+            _ => Self::Degraded,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -147,5 +173,31 @@ mod tests {
     fn severity_serializes_as_lowercase() {
         let value = serde_json::to_value(CardSeverity::Critical).expect("serialize severity");
         assert_eq!(value, serde_json::json!("critical"));
+    }
+
+    /// Scenario: the window is left open while `tasks-pending upgrade`
+    /// starts a newer daemon, which reports a source status this version
+    /// does not know. The window still reads the snapshot and shows that
+    /// source as degraded rather than losing the whole dashboard.
+    #[test]
+    fn an_unknown_source_status_reads_as_degraded() {
+        let read = |text: &str| serde_json::from_str::<SourceStatus>(text).unwrap();
+        assert_eq!(read(r#""paused""#), SourceStatus::Degraded);
+        assert_eq!(read(r#""degraded""#), SourceStatus::Degraded);
+        assert_eq!(read(r#""failed""#), SourceStatus::Failed);
+        assert_eq!(
+            serde_json::to_value(SourceStatus::Degraded).unwrap(),
+            serde_json::json!("degraded")
+        );
+    }
+
+    /// Scenario: a newer daemon sends a card severity this version does not
+    /// know. The card still reads, as the plainest severity.
+    #[test]
+    fn an_unknown_card_severity_reads_as_info() {
+        let read = |text: &str| serde_json::from_str::<CardSeverity>(text).unwrap();
+        assert_eq!(read(r#""urgent""#), CardSeverity::Info);
+        assert_eq!(read(r#""info""#), CardSeverity::Info);
+        assert_eq!(read(r#""warning""#), CardSeverity::Warning);
     }
 }

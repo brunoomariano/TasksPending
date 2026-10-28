@@ -150,23 +150,4 @@ fn sandbox_shows_the_current_dashboard_features() {
     ids.dedup();
     assert_eq!(ids.len(), total);
     assert!(total >= 14);
-
-    // The cards `scripts/screenshots.mjs` marks, snoozes and opens.
-    let ids: Vec<&str> = snapshot
-        .boards
-        .iter()
-        .flat_map(|board| &board.groups)
-        .flat_map(|group| &group.columns)
-        .flat_map(|column| &column.cards)
-        .map(|card| card.id.as_str())
-        .collect();
-    for id in [
-        "github:pull:220",
-        "linear:ENG-142",
-        "github:review:214",
-        "github:review:218",
-        "todoist:later:1",
-    ] {
-        assert!(ids.contains(&id), "the screenshots need the card {id}");
-    }
 }

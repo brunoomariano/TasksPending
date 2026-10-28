@@ -190,7 +190,7 @@ jobs:
             echo "  curl --proto '=https' --tlsv1.2 -fsSL https://github.com/$GITHUB_REPOSITORY/releases/latest/download/tasks-pending-install.sh | sh"
             echo '  ```'
             echo
-            echo "- The installer checks every download against its published checksum, then runs \`tasks-pending setup\`: the desktop entry, the user service and the daemon."
+            echo "- The installer checks every download against its published checksum, installs the release with its desktop entry and user service (the package, on Arch), then runs \`tasks-pending setup\`: the config files and the daemon."
             echo "- Already installed? \`tasks-pending upgrade\` fetches this release the same way."
             echo "- Then follow [docs/install.md](https://github.com/$GITHUB_REPOSITORY/blob/v$VERSION/docs/install.md) to configure sources and tokens."
             echo

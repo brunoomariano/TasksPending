@@ -11,7 +11,7 @@ use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
 use pending_core::api::VersionReport;
-use pending_core::release::{is_newer, process_var, release_base_url, version_from_release_url};
+use pending_core::release::{is_newer, release_base_url, version_from_release_url};
 use tracing::{debug, info, warn};
 
 /// Set to any value but a blank one, e.g. `1`, to skip the check (offline
@@ -111,13 +111,8 @@ impl UpdateCheck {
     }
 
     /// Starts looking in the background, unless [`DISABLE_VARIABLE`] is
-    /// set or the releases location in the environment is not usable.
+    /// set or the releases location is not usable, both read through `var`.
     /// Needs a Tokio runtime.
-    pub fn start() -> Self {
-        Self::start_in(&process_var)
-    }
-
-    /// [`start`](Self::start) reading the environment through `var`.
     pub fn start_in(var: &dyn Fn(&str) -> Option<String>) -> Self {
         if var(DISABLE_VARIABLE).is_some_and(|value| !value.trim().is_empty()) {
             debug!("version check disabled by {DISABLE_VARIABLE}");

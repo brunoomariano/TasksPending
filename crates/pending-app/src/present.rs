@@ -15,7 +15,7 @@ use pending_core::{
 use crate::backend::Refusal;
 use crate::snooze::until_text;
 use crate::state::ViewState;
-use crate::view::{View, column_key, group_key, hide_key};
+use crate::view::{AUTO_REFRESH_CHOICES, View, column_key, group_key, hide_key};
 
 /// Cards a stack shows before "show more".
 pub const COLUMN_LIMIT: usize = 5;
@@ -47,6 +47,8 @@ pub struct StackView {
     pub cards: Vec<CardView>,
     /// Cards not shown because the stack is not open.
     pub more: usize,
+    /// The button that shows the rest or fewer, when there is one.
+    pub more_label: Option<String>,
     /// What to say instead of cards when there are none.
     pub empty_note: Option<String>,
 }
@@ -61,7 +63,49 @@ pub struct GroupView {
     pub expanded: bool,
     /// Stacks without cards, shown or not.
     pub empty: usize,
+    /// The button that shows or hides them, when there are some.
+    pub empty_toggle: Option<EmptyToggle>,
     pub stacks: Vec<StackView>,
+}
+
+/// The button at the end of a group's header for its empty stacks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmptyToggle {
+    pub icon: &'static str,
+    pub label: String,
+    pub tooltip: &'static str,
+}
+
+impl EmptyToggle {
+    fn new(empty: usize, expanded: bool) -> Option<Self> {
+        (empty > 0).then(|| {
+            if expanded {
+                Self {
+                    icon: "view-conceal-symbolic",
+                    label: "hide empty".to_owned(),
+                    tooltip: "Hide empty stacks",
+                }
+            } else {
+                Self {
+                    icon: "view-reveal-symbolic",
+                    label: format!("{empty} empty"),
+                    tooltip: "Show empty stacks",
+                }
+            }
+        })
+    }
+}
+
+/// What a stack's "more" button says: the rest to show, or fewer once it
+/// shows them all; none when every card fits.
+fn more_label(count: usize, more: usize, open: bool) -> Option<String> {
+    if more > 0 {
+        Some(format!("Show {more} more"))
+    } else if open && count > COLUMN_LIMIT {
+        Some("Show less".to_owned())
+    } else {
+        None
+    }
 }
 
 /// A card marked as in progress, with where it comes from.
@@ -115,7 +159,129 @@ pub struct Page {
     /// "Updated 28 Sep 10:30".
     pub updated: String,
     pub version: String,
+    /// "· v0.6.0", when the daemon says which version it runs.
+    pub version_line: Option<String>,
+    /// "· 2 snoozed", when any card is.
+    pub snoozed_line: Option<String>,
     pub config_error: Option<String>,
+}
+
+/// "· v0.7.0 available": a newer published `version`.
+pub fn update_line(version: &str) -> String {
+    format!("· v{version} available")
+}
+
+/// A pill in Settings: what it says, what it sets, and whether it is the
+/// one in effect.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Choice<T> {
+    pub label: String,
+    pub value: T,
+    pub active: bool,
+}
+
+/// Settings' board filter: every board, or one of them.
+pub fn board_choices(snapshot: &DashboardSnapshot, view: &View) -> Vec<Choice<Option<String>>> {
+    std::iter::once(("All".to_owned(), None))
+        .chain(
+            snapshot
+                .boards
+                .iter()
+                .map(|board| (board.name.clone(), Some(board.name.clone()))),
+        )
+        .map(|(label, value)| Choice {
+            active: view.board == value,
+            label,
+            value,
+        })
+        .collect()
+}
+
+/// Settings' auto-refresh intervals, in minutes.
+pub fn interval_choices(view: &View) -> Vec<Choice<u32>> {
+    AUTO_REFRESH_CHOICES
+        .into_iter()
+        .map(|minutes| Choice {
+            label: if minutes == 0 {
+                "Off".to_owned()
+            } else {
+                format!("{minutes} min")
+            },
+            value: minutes,
+            active: view.auto_refresh_minutes == minutes,
+        })
+        .collect()
+}
+
+/// A show/hide switch in Settings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SwitchView {
+    pub label: String,
+    /// Its entry in the view's hidden set (see [`hide_key`]).
+    pub key: String,
+    pub on: bool,
+    /// A board or group above it is hidden: the switch is greyed out and
+    /// keeps its own setting for when that comes back.
+    pub inherited: bool,
+}
+
+/// A board's switch, then its groups'.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoardSwitches {
+    pub board: SwitchView,
+    pub groups: Vec<GroupSwitches>,
+}
+
+/// A group's switch, with its logo, then its stacks'.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupSwitches {
+    pub group: SwitchView,
+    pub icon: Option<Icon>,
+    pub stacks: Vec<SwitchView>,
+}
+
+/// Every board, group and stack that Settings can show or hide.
+pub fn switches(snapshot: &DashboardSnapshot, view: &View) -> Vec<BoardSwitches> {
+    let switch = |label: &str, key: String, inherited: bool| SwitchView {
+        label: label.to_owned(),
+        on: !view.hidden.contains(&key),
+        key,
+        inherited,
+    };
+    snapshot
+        .boards
+        .iter()
+        .map(|board| {
+            let board_switch = switch(&board.name, hide_key::board(&board.name), false);
+            let board_off = !board_switch.on;
+            let groups = board
+                .groups
+                .iter()
+                .map(|group| {
+                    let key = hide_key::group(&board.name, &group.source);
+                    let group_switch = switch(&group.source, key, board_off);
+                    let off = board_off || !group_switch.on;
+                    GroupSwitches {
+                        stacks: group
+                            .columns
+                            .iter()
+                            .map(|column| {
+                                let key =
+                                    hide_key::column(&board.name, &group.source, &column.name);
+                                switch(&column.name, key, off)
+                            })
+                            .collect(),
+                        group: group_switch,
+                        icon: group.icon.clone(),
+                    }
+                })
+                .collect();
+            BoardSwitches {
+                board: board_switch,
+                groups,
+            }
+        })
+        .collect()
 }
 
 /// What stands above the board, or instead of it.
@@ -316,6 +482,9 @@ pub fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
         attention,
         updated: format!("Updated {}", local_time(snapshot.generated_at)),
         version: snapshot.version.clone(),
+        version_line: (!snapshot.version.is_empty()).then(|| format!("· v{}", snapshot.version)),
+        snoozed_line: (!snapshot.snoozed.is_empty())
+            .then(|| format!("· {} snoozed", snapshot.snoozed.len())),
         config_error: snapshot.config_error.clone(),
     }
 }
@@ -386,6 +555,11 @@ fn groups(snapshot: &DashboardSnapshot, view: &View, flags: &Flags) -> Vec<Group
                         open,
                         count: column.cards.len(),
                         more: column.cards.len() - shown,
+                        more_label: more_label(
+                            column.cards.len(),
+                            column.cards.len() - shown,
+                            open,
+                        ),
                         cards: column.cards[..shown]
                             .iter()
                             .map(|card| flags.card(card))
@@ -410,6 +584,7 @@ fn groups(snapshot: &DashboardSnapshot, view: &View, flags: &Flags) -> Vec<Group
                     icon: group.icon.clone(),
                     expanded,
                     empty,
+                    empty_toggle: EmptyToggle::new(empty, expanded),
                     stacks,
                 },
             ));
@@ -823,6 +998,106 @@ mod tests {
         assert_eq!(refresh_button(None, now), ("Refresh".to_owned(), true));
         assert_eq!(lasting(Some(hold.clone()), now), Some(hold.clone()));
         assert_eq!(lasting(Some(hold), ended), None);
+    }
+
+    /// What the group header's toggle and a stack's "more" button say.
+    #[test]
+    fn labels_the_toggles() {
+        let shown = page(&snapshot(), &View::default());
+        let github = &shown.groups[1];
+        assert_eq!(
+            github.empty_toggle,
+            Some(EmptyToggle {
+                icon: "view-reveal-symbolic",
+                label: "1 empty".to_owned(),
+                tooltip: "Show empty stacks",
+            })
+        );
+        assert_eq!(shown.groups[0].empty_toggle, None, "jira has none");
+        assert_eq!(github.stacks[0].more_label.as_deref(), Some("Show 2 more"));
+        assert_eq!(shown.groups[0].stacks[0].more_label, None);
+
+        let mut view = View::default();
+        view.expanded.insert("Work/github".to_owned());
+        view.open_columns.insert("Work/github/Review".to_owned());
+        let shown = page(&snapshot(), &view);
+        let github = &shown.groups[1];
+        let toggle = github.empty_toggle.as_ref().unwrap();
+        assert_eq!(
+            (toggle.icon, toggle.label.as_str(), toggle.tooltip),
+            ("view-conceal-symbolic", "hide empty", "Hide empty stacks")
+        );
+        assert_eq!(github.stacks[0].more_label.as_deref(), Some("Show less"));
+    }
+
+    /// The line under the controls: the version, the snoozed count, and a
+    /// newer version when there is one.
+    #[test]
+    fn writes_the_status_line() {
+        let mut snapshot = snapshot();
+        let shown = page(&snapshot, &View::default());
+        assert_eq!(shown.version_line.as_deref(), Some("· v0.6.0"));
+        assert_eq!(shown.snoozed_line, None);
+        snapshot.version.clear();
+        snapshot.snoozed.push(pending_core::SnoozedCard {
+            card: card("gh:9", "Later"),
+            source: "github".to_owned(),
+            until: None,
+        });
+        let shown = page(&snapshot, &View::default());
+        assert_eq!(shown.version_line, None);
+        assert_eq!(shown.snoozed_line.as_deref(), Some("· 1 snoozed"));
+        assert_eq!(update_line("0.7.0"), "· v0.7.0 available");
+    }
+
+    /// Settings offers every board and every interval, the one in effect
+    /// marked; a switch under a hidden board or group is greyed out and
+    /// keeps its own setting.
+    #[test]
+    fn lays_out_the_settings() {
+        let mut view = View {
+            board: Some("Work".to_owned()),
+            ..View::default()
+        };
+        let boards: Vec<_> = board_choices(&snapshot(), &view)
+            .into_iter()
+            .map(|c| (c.label, c.value, c.active))
+            .collect();
+        assert_eq!(
+            boards,
+            [
+                ("All".to_owned(), None, false),
+                ("Work".to_owned(), Some("Work".to_owned()), true),
+                ("Personal".to_owned(), Some("Personal".to_owned()), false),
+            ]
+        );
+        let intervals: Vec<_> = interval_choices(&view)
+            .into_iter()
+            .map(|c| (c.label, c.value, c.active))
+            .collect();
+        assert_eq!(intervals[0], ("Off".to_owned(), 0, false));
+        assert_eq!(intervals[1], ("1 min".to_owned(), 1, true));
+        assert_eq!(intervals.len(), 5);
+
+        view.hidden.insert(hide_key::board("Work"));
+        view.hidden
+            .insert(hide_key::column("Work", "github", "Drafts"));
+        let tree = switches(&snapshot(), &view);
+        let work = &tree[0];
+        assert_eq!(work.board.label, "Work");
+        assert!(!work.board.on && !work.board.inherited);
+        let github = &work.groups[0];
+        assert_eq!(github.group.key, hide_key::group("Work", "github"));
+        assert!(github.group.on && github.group.inherited);
+        let stacks: Vec<_> = github
+            .stacks
+            .iter()
+            .map(|s| (s.label.as_str(), s.on, s.inherited))
+            .collect();
+        assert_eq!(stacks, [("Review", true, true), ("Drafts", false, true)]);
+        let personal = &tree[1].groups[0];
+        assert!(personal.icon.is_some());
+        assert!(!personal.stacks[0].inherited);
     }
 
     /// The words and icons that do not depend on the snapshot.

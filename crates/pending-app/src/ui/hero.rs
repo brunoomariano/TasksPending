@@ -14,7 +14,7 @@ use super::icons::symbolic;
 use super::{Ctx, Widgets};
 use crate::backend::Command;
 use crate::clock::{clock_text, date_text, drawing};
-use crate::present::{Page, refresh_button, weather_icon_name};
+use crate::present::{Page, refresh_button, update_line, weather_icon_name};
 use crate::view::View;
 
 /// Widest the clock gets.
@@ -326,20 +326,16 @@ pub fn update_controls(ctx: &Rc<Ctx>, widgets: &Widgets, page: Option<&Page>, vi
         hero.sources_icon.remove_css_class("attention");
     }
     hero.updated.set_label(&page.updated);
-    hero.version.set_label(&if page.version.is_empty() {
-        String::new()
-    } else {
-        format!("· v{}", page.version)
-    });
-    hero.version.set_visible(!page.version.is_empty());
-    let snoozed = page.snoozed.len();
-    hero.snoozed_button.set_visible(snoozed > 0);
+    hero.version
+        .set_label(page.version_line.as_deref().unwrap_or_default());
+    hero.version.set_visible(page.version_line.is_some());
     hero.snoozed_button
-        .set_label(&format!("· {snoozed} snoozed"));
+        .set_label(page.snoozed_line.as_deref().unwrap_or_default());
+    hero.snoozed_button.set_visible(page.snoozed_line.is_some());
     let update = ctx.model.borrow().update.clone();
     match update {
         Some(version) => {
-            hero.update.set_label(&format!("· v{version} available"));
+            hero.update.set_label(&update_line(&version));
             hero.update.set_visible(true);
         }
         None => hero.update.set_visible(false),

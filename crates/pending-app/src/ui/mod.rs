@@ -353,7 +353,7 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
     // clock keeps its room.
     let narrow = adw::Breakpoint::new(adw::BreakpointCondition::new_length(
         adw::BreakpointConditionLengthType::MaxWidth,
-        hero::WEATHER_MIN_WIDTH,
+        hero::NARROW_MAX_WIDTH,
         adw::LengthUnit::Px,
     ));
     narrow.add_setter(&hero.weather_slot, "visible", Some(&false.to_value()));
@@ -615,4 +615,18 @@ fn capture(window: &adw::ApplicationWindow, path: &std::path::Path) -> anyhow::R
     let texture = renderer.render_texture(&node, None);
     texture.save_to_png(path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The window opens wide enough for the weather: the breakpoint that
+    /// hides it counts its own width in, so it must end below the
+    /// narrowest width that shows the weather.
+    #[test]
+    fn opens_wide_enough_for_the_weather() {
+        const { assert!(DEFAULT_WIDTH as f64 >= hero::WEATHER_MIN_WIDTH) };
+        const { assert!(hero::NARROW_MAX_WIDTH < hero::WEATHER_MIN_WIDTH) };
+    }
 }

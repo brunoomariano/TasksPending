@@ -21,6 +21,10 @@ use crate::view::View;
 const CLOCK_MAX_WIDTH: i32 = 880;
 /// The weather widget is shown only in windows at least this wide.
 pub const WEATHER_MIN_WIDTH: f64 = 1440.0;
+/// The widest window that hides the weather. A breakpoint's `max-width`
+/// counts its own width in, so it ends a pixel below
+/// [`WEATHER_MIN_WIDTH`].
+pub const NARROW_MAX_WIDTH: f64 = WEATHER_MIN_WIDTH - 1.0;
 /// The room kept for the weather, so the clock stays centred whether or
 /// not a report is in.
 const WEATHER_SLOT_WIDTH: i32 = 180;

@@ -8,7 +8,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use pending_runtime::config::state_dir;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Intervals offered in Settings, in minutes; 0 is off.
 pub const AUTO_REFRESH_CHOICES: [u32; 5] = [0, 1, 5, 15, 30];
@@ -47,12 +49,33 @@ impl Default for View {
 
 impl View {
     /// The view saved at `path`, or the default when there is none or it
-    /// cannot be read. An interval that is not offered becomes the default.
+    /// cannot be read. Each setting is read on its own, so one that is not
+    /// understood falls back to its default without taking the others
+    /// along; so does an interval that is not offered.
     pub fn load(path: &Path) -> Self {
-        let Ok(text) = fs::read_to_string(path) else {
-            return Self::default();
+        let mut view = Self::default();
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return view,
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "remembered view not read");
+                return view;
+            }
         };
-        let mut view: Self = serde_json::from_str(&text).unwrap_or_default();
+        let saved: serde_json::Map<String, Value> = match serde_json::from_str(&text) {
+            Ok(saved) => saved,
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "remembered view not understood");
+                return view;
+            }
+        };
+        let saved = Saved { path, saved };
+        saved.read("board", &mut view.board);
+        saved.read("expanded", &mut view.expanded);
+        saved.read("open_columns", &mut view.open_columns);
+        saved.read("collapsed", &mut view.collapsed);
+        saved.read("hidden", &mut view.hidden);
+        saved.read("auto_refresh_minutes", &mut view.auto_refresh_minutes);
         if !AUTO_REFRESH_CHOICES.contains(&view.auto_refresh_minutes) {
             view.auto_refresh_minutes = DEFAULT_AUTO_REFRESH_MINUTES;
         }
@@ -60,13 +83,18 @@ impl View {
     }
 
     /// Writes the view to `path`, creating its directory. A failure is
-    /// ignored: the view just isn't remembered.
+    /// logged, and the view is then remembered only while the window is
+    /// open.
     pub fn save(&self, path: &Path) {
-        if let Some(dir) = path.parent() {
-            let _ = fs::create_dir_all(dir);
-        }
-        if let Ok(text) = serde_json::to_string_pretty(self) {
-            let _ = fs::write(path, text);
+        let written = path
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| {
+                let text = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+                fs::write(path, text)
+            });
+        if let Err(error) = written {
+            tracing::warn!(path = %path.display(), %error, "view not remembered");
         }
     }
 
@@ -88,6 +116,31 @@ impl View {
             "Settings".to_owned()
         } else {
             format!("Settings ({})", changes.join(", "))
+        }
+    }
+}
+
+/// The settings in a saved view file, by name.
+struct Saved<'a> {
+    path: &'a Path,
+    saved: serde_json::Map<String, Value>,
+}
+
+impl Saved<'_> {
+    /// Sets `into` from the setting `name` when it is there and understood;
+    /// otherwise leaves it as it is, saying why when it was there.
+    fn read<T: DeserializeOwned>(&self, name: &str, into: &mut T) {
+        let Some(value) = self.saved.get(name) else {
+            return;
+        };
+        match T::deserialize(value) {
+            Ok(read) => *into = read,
+            Err(error) => tracing::warn!(
+                path = %self.path.display(),
+                setting = name,
+                %error,
+                "remembered setting not understood"
+            ),
         }
     }
 }
@@ -154,7 +207,11 @@ mod tests {
             auto_refresh_minutes: 15,
             ..View::default()
         };
+        // Every setting, so one that loading forgets fails here.
         view.collapsed.insert("Work/github/Drafts".to_owned());
+        view.expanded.insert("Work/github".to_owned());
+        view.open_columns.insert("Work/github/Review".to_owned());
+        view.hidden.insert("board:Personal".to_owned());
         view.save(&path);
         assert_eq!(View::load(&path), view);
 
@@ -169,6 +226,27 @@ mod tests {
 
         fs::write(&path, "not json").unwrap();
         assert_eq!(View::load(&path), View::default());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A setting that cannot be read costs only itself: it falls back to
+    /// its default, and the others are kept.
+    #[test]
+    fn keeps_the_settings_it_understands() {
+        let dir = temp_path("tolerant");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app-view.json");
+        fs::write(
+            &path,
+            r#"{"board": "Work", "hidden": 5, "auto_refresh_minutes": "often",
+                "collapsed": ["Work/github/Drafts"], "later": true}"#,
+        )
+        .unwrap();
+        let view = View::load(&path);
+        assert_eq!(view.board.as_deref(), Some("Work"));
+        assert!(view.hidden.is_empty());
+        assert_eq!(view.auto_refresh_minutes, DEFAULT_AUTO_REFRESH_MINUTES);
+        assert!(view.collapsed.contains("Work/github/Drafts"));
         let _ = fs::remove_dir_all(&dir);
     }
 

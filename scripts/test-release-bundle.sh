@@ -23,6 +23,14 @@ cleanup() {
 trap cleanup EXIT
 
 test -f "$ARCHIVE"
+# Every member is a plain file or a directory: the installers refuse
+# anything else, so a link in the bundle would make every install fail.
+tar -tzvf "$ARCHIVE" >"$WORK/members"
+if odd="$(cut -c1 "$WORK/members" | grep -v '^[-d]$')"; then
+  echo "the archive holds members that are not plain files or directories ($odd):" >&2
+  grep -v '^[-d]' "$WORK/members" >&2
+  exit 1
+fi
 tar -xzf "$ARCHIVE" -C "$WORK"
 BUNDLE="$WORK/$NAME"
 

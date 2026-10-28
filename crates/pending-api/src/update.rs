@@ -164,22 +164,27 @@ impl UpdateCheck {
             latest: Some(latest.clone()),
         };
         tokio::spawn(async move {
-            let mut due = clock() + schedule.first_after;
+            let mut wait = schedule.first_after;
+            let mut due = clock() + wait;
             let mut failed_before = false;
             loop {
                 // Wall time decides, in short sleeps: time spent suspended
-                // counts, which a monotonic sleep until `due` would not.
-                if let Ok(left) = due.duration_since(clock())
+                // counts, which a monotonic sleep until `due` would not. A
+                // clock set back would put `due` off by as much, so it is
+                // never further away than its wait.
+                let now = clock();
+                due = due.min(now + wait);
+                if let Ok(left) = due.duration_since(now)
                     && !left.is_zero()
                 {
                     tokio::time::sleep(left.min(schedule.wake_every)).await;
                     continue;
                 }
-                due = match look().await {
+                wait = match look().await {
                     Ok(version) => {
                         *latest.write().unwrap_or_else(|e| e.into_inner()) = Some(version);
                         failed_before = false;
-                        clock() + schedule.every
+                        schedule.every
                     }
                     Err(error) => {
                         // Once at info, so a wrong releases location shows
@@ -190,9 +195,10 @@ impl UpdateCheck {
                             info!(%error, "version check failed; looking again in an hour");
                         }
                         failed_before = true;
-                        clock() + schedule.retry_after
+                        schedule.retry_after
                     }
                 };
+                due = clock() + wait;
             }
         });
         check
@@ -297,11 +303,13 @@ mod tests {
 
     /// Wall time for the schedule tests: it follows Tokio's paused clock,
     /// plus whatever a test adds to stand for the machine being suspended
-    /// (wall time passes, the monotonic clock does not).
+    /// (wall time passes, the monotonic clock does not), minus whatever it
+    /// takes away to stand for a clock set back.
     #[derive(Clone)]
     struct Wall {
         start: tokio::time::Instant,
         suspended: Arc<Mutex<Duration>>,
+        set_back: Arc<Mutex<Duration>>,
     }
 
     impl Wall {
@@ -309,6 +317,7 @@ mod tests {
             Self {
                 start: tokio::time::Instant::now(),
                 suspended: Arc::default(),
+                set_back: Arc::default(),
             }
         }
 
@@ -319,11 +328,16 @@ mod tests {
                     + Duration::from_secs(1_800_000_000)
                     + wall.start.elapsed()
                     + *wall.suspended.lock().unwrap()
+                    - *wall.set_back.lock().unwrap()
             })
         }
 
         fn suspend(&self, how_long: Duration) {
             *self.suspended.lock().unwrap() += how_long;
+        }
+
+        fn set_back(&self, how_long: Duration) {
+            *self.set_back.lock().unwrap() += how_long;
         }
     }
 
@@ -392,6 +406,24 @@ mod tests {
             2,
             "the next one is a day away"
         );
+    }
+
+    /// Scenario: the clock was a month ahead at the first look and is then
+    /// put right. The next look still comes a day after the first, not a
+    /// month and a day.
+    #[tokio::test(start_paused = true)]
+    async fn a_clock_set_back_does_not_put_off_the_next_look() {
+        let looks = Arc::new(AtomicUsize::new(0));
+        let wall = Wall::new();
+        let _check =
+            UpdateCheck::looking_with(look_failing(0, looks.clone()), TEST_SCHEDULE, wall.clock());
+
+        tokio::time::sleep(MINUTE).await;
+        assert_eq!(looks.load(Ordering::SeqCst), 1);
+
+        wall.set_back(30 * 24 * HOUR);
+        tokio::time::sleep(24 * HOUR + WAKE_EVERY).await;
+        assert_eq!(looks.load(Ordering::SeqCst), 2);
     }
 
     /// Nothing is reported until a newer version was seen; the same or an

@@ -202,6 +202,12 @@ install_arch_package() {
   # `tasks-pending` on PATH points at.
   executable="$(pacman -Qlq tasks-pending-bin | grep -m 1 '/bin/tasks-pending$' || true)"
   [ -n "$executable" ] && [ -x "$executable" ] || fail "the package installed no tasks-pending executable"
+  # setup writes the config and starts a user service: as root that would
+  # be root's, serving nobody.
+  if [ "$(id -u)" -eq 0 ]; then
+    say "installed the package; now run \`tasks-pending setup\` as the user who will use TasksPending"
+    return
+  fi
   "$executable" setup
 }
 

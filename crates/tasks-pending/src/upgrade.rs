@@ -283,6 +283,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    crate::setup::refuse_root("upgrade")?;
     let layout = Layout::from_env()?;
     let lib_dir = &layout.lib_dir;
     let exe = std::env::current_exe().context("finding the running executable")?;

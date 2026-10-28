@@ -24,7 +24,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::activity::LookThrottle;
 use crate::backend::{self, Command, Event, spawn_worker};
-use crate::present::{Page, page};
+use crate::present::{BoardView, Page, board_view, page};
 use crate::state::ViewState;
 use crate::theme;
 use crate::view::{View, state_dir, view_path};
@@ -48,9 +48,9 @@ pub struct Model {
     /// Where the view is remembered; `None` when the environment names no
     /// state directory, and it then lasts as long as the window.
     view_path: Option<PathBuf>,
-    /// The key of the state last drawn, so an unchanged snapshot does not
-    /// rebuild the page.
-    drawn: String,
+    /// The board last drawn, so a snapshot that changed nothing on it does
+    /// not rebuild the page.
+    drawn: Option<BoardView>,
     /// While set, the Refresh button stays off with this label.
     pub refresh_hold: Option<(Instant, String)>,
     pub weather: Option<WeatherReport>,
@@ -109,17 +109,18 @@ impl Ctx {
         let Some(widgets) = widgets.as_ref() else {
             return;
         };
-        let (key, state, view) = {
+        let (state, view) = {
             let model = self.model.borrow();
-            (model.state.key(), model.state.clone(), model.view.clone())
+            (model.state.clone(), model.view.clone())
         };
         let page_view = state.snapshot().map(|snapshot| page(snapshot, &view));
         hero::update_controls(self, widgets, page_view.as_ref(), &view);
-        let changed = self.model.borrow().drawn != key;
+        let board = board_view(&state, page_view.as_ref());
+        let changed = self.model.borrow().drawn.as_ref() != Some(&board);
         if changed || force {
             let position = widgets.scroller.vadjustment().value();
-            board::render(self, &widgets.page, &state, page_view.as_ref());
-            self.model.borrow_mut().drawn = key;
+            board::render(self, &widgets.page, &board);
+            self.model.borrow_mut().drawn = Some(board);
             // Keep the reading position across a rebuild.
             let adjustment = widgets.scroller.vadjustment();
             gtk::glib::idle_add_local_once(move || adjustment.set_value(position));
@@ -227,7 +228,7 @@ pub fn run(
             state: ViewState::Loading,
             view: view_path.as_deref().map(View::load).unwrap_or_default(),
             view_path,
-            drawn: String::new(),
+            drawn: None,
             refresh_hold: None,
             weather: None,
             update: None,

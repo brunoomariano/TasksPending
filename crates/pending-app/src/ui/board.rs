@@ -10,9 +10,8 @@ use gtk4::prelude::*;
 use super::icons::{source_icon, symbolic};
 use super::{Ctx, wrapped};
 use crate::backend::Command;
-use crate::present::{CardView, GroupView, NowItem, Page, StackView, stale_notice};
+use crate::present::{BoardView, CardView, GroupView, Notice, NowItem, StackView};
 use crate::snooze::{CHOICES, until};
-use crate::state::ViewState;
 use crate::view::flip;
 
 /// Narrowest a group gets; the board wraps groups onto more rows instead.
@@ -119,28 +118,26 @@ fn source_tile(ctx: &Rc<Ctx>, icon: Option<&pending_core::Icon>) -> gtk::Box {
     tile
 }
 
-/// Draws `state` into `page_box`.
-pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, state: &ViewState, page: Option<&Page>) {
+/// Draws `page` into `page_box`.
+pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
     clear(page_box);
-    match state {
-        ViewState::Loading => {
+    match &page.notice {
+        Some(Notice::Loading) => {
             page_box.append(&text("Loading…", &["empty"]));
         }
-        ViewState::Unavailable { error } => {
+        Some(Notice::Unavailable(error)) => {
             page_box.append(&notice("unavailable", "Dashboard unavailable", error));
         }
-        ViewState::Stale {
-            error, fetched_at, ..
-        } => {
-            page_box.append(&notice("stale", &stale_notice(error, *fetched_at), ""));
+        Some(Notice::Stale(title)) => {
+            page_box.append(&notice("stale", title, ""));
         }
-        ViewState::Ready { .. } => {}
+        None => {}
     }
-    let Some(page) = page else {
-        return;
-    };
     if !page.now.is_empty() {
         page_box.append(&now_section(ctx, &page.now));
+    }
+    if page.groups.is_empty() {
+        return;
     }
     let board = gtk::FlowBox::builder()
         .selection_mode(gtk::SelectionMode::None)

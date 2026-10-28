@@ -381,6 +381,11 @@ fn upgrade_in(
     install_archive(&archive, &asset, work, layout, target)
 }
 
+/// Installs release `target` from `archive`, whose checksum was verified,
+/// in place of the one in the release directory, in steps that each leave
+/// a working release there: unpack and check it in `work`, stage it beside
+/// the release directory and run it once, swap it in, then run its
+/// installer. When the installer fails, the previous release comes back.
 fn install_archive(
     archive: &Path,
     asset: &str,
@@ -389,6 +394,60 @@ fn install_archive(
     target: &str,
 ) -> anyhow::Result<()> {
     let lib_dir = layout.lib_dir.as_path();
+    if lib_dir.exists() {
+        anyhow::ensure!(
+            release_executable(lib_dir).is_file(),
+            "refusing to replace {}: it does not hold a TasksPending release",
+            lib_dir.display()
+        );
+    }
+    let bundle = unpack_release(archive, asset, work)?;
+
+    // What an earlier run left beside the release directory goes first.
+    let staged = sibling(lib_dir, ".staged");
+    let previous = sibling(lib_dir, ".previous");
+    remove_if_present(&staged)?;
+    remove_if_present(&previous)?;
+    fs::rename(&bundle, &staged).context("staging the new release")?;
+    if let Err(error) = probe(&staged, target) {
+        // The next run removes it if this cannot.
+        let _ = fs::remove_dir_all(&staged);
+        return Err(error);
+    }
+    swap_in(&staged, lib_dir, &previous)?;
+
+    match run_installer(layout) {
+        Ok(()) => {}
+        Err(why) if previous.exists() => return Err(roll_back(layout, &staged, &previous, &why)),
+        Err(why) => anyhow::bail!(
+            "the bundle's installer {why}; the new release is in {}, run {} --start",
+            lib_dir.display(),
+            lib_dir.join("scripts/install.sh").display()
+        ),
+    }
+    if let Err(error) = remove_if_present(&previous) {
+        eprintln!("the previous release was left in place: {error:#}; remove it by hand");
+    }
+    println!(
+        "upgraded to tasks-pending {target} in {}",
+        lib_dir.display()
+    );
+    Ok(())
+}
+
+/// Removes `dir` and what it holds, if it is there.
+fn remove_if_present(dir: &Path) -> anyhow::Result<()> {
+    match fs::remove_dir_all(dir) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(error).with_context(|| format!("removing {}", dir.display()))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Unpacks `archive` into `work`, once its members are checked, and
+/// returns the release directory it holds.
+fn unpack_release(archive: &Path, asset: &str, work: &Path) -> anyhow::Result<PathBuf> {
     let archive_path = archive.to_string_lossy();
     let names = tar(&["-tzf", &archive_path])?;
     let verbose = tar(&["-tzvf", &archive_path])?;
@@ -414,82 +473,106 @@ fn install_archive(
         bundle.join("scripts/install.sh").is_file(),
         "the archive holds no installer"
     );
-    if lib_dir.exists() {
-        anyhow::ensure!(
-            release_executable(lib_dir).is_file(),
-            "refusing to replace {}: it does not hold a TasksPending release",
-            lib_dir.display()
-        );
-    }
+    Ok(bundle)
+}
 
-    // Stage the new release beside the current one and make sure it runs
-    // on this machine (its glibc and GTK) before anything is replaced.
-    let staged = sibling(lib_dir, ".staged");
-    let previous = sibling(lib_dir, ".previous");
-    let _ = fs::remove_dir_all(&staged);
-    let _ = fs::remove_dir_all(&previous);
-    fs::rename(&bundle, &staged).context("staging the new release")?;
-    let probe = Command::new(release_executable(&staged))
+/// Runs the staged release once: it must run on this machine (its glibc
+/// and GTK) and be release `target`.
+fn probe(staged: &Path, target: &str) -> anyhow::Result<()> {
+    let output = Command::new(release_executable(staged))
         .arg("--version")
         .stdin(Stdio::null())
         .output()
         .context("running the new release")?;
-    let reported = String::from_utf8_lossy(&probe.stdout);
     anyhow::ensure!(
-        probe.status.success() && reported.starts_with("tasks-pending "),
+        output.status.success(),
         "the new release does not run here ({}); nothing was replaced",
-        String::from_utf8_lossy(&probe.stderr).trim()
+        String::from_utf8_lossy(&output.stderr).trim()
     );
+    let reported = String::from_utf8_lossy(&output.stdout);
+    let reported = reported.trim();
+    anyhow::ensure!(
+        reported == format!("tasks-pending {target}"),
+        "the new release reports {reported}, not {target}; nothing was replaced"
+    );
+    Ok(())
+}
 
-    // Swap: the previous release is kept until the new one is in place
-    // and set up, and comes back if either step fails.
+/// Puts the staged release in the release directory, setting the current
+/// one aside as `previous`. On failure the current one is back in place,
+/// or the error says where it is.
+fn swap_in(staged: &Path, lib_dir: &Path, previous: &Path) -> anyhow::Result<()> {
     if lib_dir.exists() {
-        fs::rename(lib_dir, &previous).context("setting the previous release aside")?;
+        fs::rename(lib_dir, previous)
+            .context("setting the previous release aside; nothing was replaced")?;
     }
-    if let Err(error) = fs::rename(&staged, lib_dir) {
-        if previous.exists() {
-            let _ = fs::rename(&previous, lib_dir);
-        }
-        return Err(error).context("putting the new release in place");
-    }
-
-    // The bundle's installer links the executable, installs the desktop
-    // entry, icon and service, and restarts the daemon. It is part of the
-    // release whose checksum was just verified, and runs with the same
-    // trust as the executable it installs.
-    let installer = Command::new(lib_dir.join("scripts/install.sh"))
-        .arg("--start")
-        .envs(installer_env(layout))
-        .status()
-        .context("running the bundle's installer");
-    match installer {
-        Ok(status) if status.success() => {}
-        failed => {
-            let why = match failed {
-                Ok(status) => format!("exited with {status}"),
-                Err(error) => error.to_string(),
-            };
-            if previous.exists() {
-                let _ = fs::rename(lib_dir, &staged);
-                let _ = fs::rename(&previous, lib_dir);
-                let _ = fs::remove_dir_all(&staged);
-                anyhow::bail!(
-                    "the bundle's installer {why}; the previous release is back in {}",
-                    lib_dir.display()
-                );
-            }
+    if let Err(error) = fs::rename(staged, lib_dir) {
+        if previous.exists()
+            && let Err(back) = fs::rename(previous, lib_dir)
+        {
             anyhow::bail!(
-                "the bundle's installer {why}; the new release is in {}, run its scripts/install.sh --start",
+                "putting the new release in place failed ({error}), and so did putting the previous one back ({back}): it is in {}, move it to {}",
+                previous.display(),
                 lib_dir.display()
             );
         }
+        return Err(error).context("putting the new release in place; nothing was replaced");
     }
-    let _ = fs::remove_dir_all(&previous);
-    println!(
-        "upgraded to tasks-pending {target} in {}",
-        lib_dir.display()
-    );
     Ok(())
+}
+
+/// Runs the installer of the release in the release directory with
+/// `--start`: it links the executable, installs the desktop entry, icon
+/// and service, and starts or restarts the daemon. It is part of a release
+/// whose checksum was verified, and runs with the same trust as the
+/// executable it installs. Says why it failed.
+fn run_installer(layout: &Layout) -> Result<(), String> {
+    match Command::new(layout.lib_dir.join("scripts/install.sh"))
+        .arg("--start")
+        .envs(installer_env(layout))
+        .status()
+    {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!("exited with {status}")),
+        Err(error) => Err(format!("could not run ({error})")),
+    }
+}
+
+/// After the new release's installer failed (`why`), puts the previous
+/// release back and runs its installer again, so its link, unit and daemon
+/// are the ones in place. The error says where things stand.
+fn roll_back(layout: &Layout, staged: &Path, previous: &Path, why: &str) -> anyhow::Error {
+    let lib_dir = &layout.lib_dir;
+    let installer = lib_dir.join("scripts/install.sh");
+    if let Err(error) = fs::rename(lib_dir, staged) {
+        return anyhow::anyhow!(
+            "the bundle's installer {why}, and the new release could not be moved aside ({error}): the previous release is in {}; move it back to {} and run {} --start",
+            previous.display(),
+            lib_dir.display(),
+            installer.display()
+        );
+    }
+    if let Err(error) = fs::rename(previous, lib_dir) {
+        return anyhow::anyhow!(
+            "the bundle's installer {why}, and the previous release could not be put back ({error}): it is in {}; move it to {} and run {} --start",
+            previous.display(),
+            lib_dir.display(),
+            installer.display()
+        );
+    }
+    // The next run removes it if this cannot.
+    let _ = fs::remove_dir_all(staged);
+    match run_installer(layout) {
+        Ok(()) => anyhow::anyhow!(
+            "the bundle's installer {why}; the previous release is back in {} and its daemon restarted",
+            lib_dir.display()
+        ),
+        Err(again) => anyhow::anyhow!(
+            "the bundle's installer {why}; the previous release is back in {}, but its own installer failed too ({again}): run {} --start",
+            lib_dir.display(),
+            installer.display()
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -680,5 +763,247 @@ mod tests {
             check_members("a\nb\n", "-rw-r--r-- me/me 0 2026-10-27 10:00 a\n"),
             Err("the two listings of the archive do not agree".to_owned())
         );
+    }
+
+    /// Tests that run the fake releases' scripts take turns: a script
+    /// written while another test forks could not be run ("text file
+    /// busy").
+    static SCRIPTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A directory of its own for one test, removed afterwards.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "tasks-pending-upgrade-{name}-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn layout(&self) -> Layout {
+            Layout {
+                lib_dir: self.0.join("lib/tasks-pending"),
+                bin_dir: self.0.join("bin"),
+                home: self.0.join("home"),
+            }
+        }
+
+        fn log(&self) -> String {
+            fs::read_to_string(self.0.join("installer.log")).unwrap_or_default()
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_script(path: &Path, content: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A release in `dir` whose executable reports `version` (or cannot
+    /// run here, for `None`) and whose installer logs its runs and exits
+    /// with `installer_exit`.
+    fn fake_release(scratch: &Scratch, dir: &Path, version: Option<&str>, installer_exit: i32) {
+        let exe = match version {
+            Some(version) => format!("#!/bin/sh\necho 'tasks-pending {version}'\n"),
+            None => "#!/bin/sh\necho 'version GLIBC_9.9 not found' >&2\nexit 127\n".to_owned(),
+        };
+        write_script(&release_executable(dir), &exe);
+        write_script(
+            &dir.join("scripts/install.sh"),
+            &format!(
+                "#!/bin/sh\necho \"{} $* PREFIX=$PREFIX BIN_DIR=$BIN_DIR RELEASE_BIN=$RELEASE_BIN\" >>'{}'\nexit {installer_exit}\n",
+                version.unwrap_or("broken"),
+                scratch.0.join("installer.log").display()
+            ),
+        );
+    }
+
+    /// The archive of a fake release, packed as the real bundle is.
+    fn fake_archive(scratch: &Scratch, version: Option<&str>, installer_exit: i32) -> PathBuf {
+        let build = scratch.0.join("build");
+        let name = "tasks-pending-0.0.0-x86_64-unknown-linux-gnu";
+        fake_release(scratch, &build.join(name), version, installer_exit);
+        let archive = scratch.0.join("bundle.tar.gz");
+        tar(&[
+            "-C",
+            &build.to_string_lossy(),
+            "-czf",
+            &archive.to_string_lossy(),
+            name,
+        ])
+        .unwrap();
+        fs::remove_dir_all(&build).unwrap();
+        archive
+    }
+
+    /// Installs `archive` as release `target` over the scratch layout.
+    fn install(scratch: &Scratch, archive: &Path, target: &str) -> anyhow::Result<()> {
+        // `run` makes the release directory's parent, and works in it.
+        let work = scratch.0.join("lib/work");
+        fs::create_dir_all(&work).unwrap();
+        let result = install_archive(archive, "bundle.tar.gz", &work, &scratch.layout(), target);
+        let _ = fs::remove_dir_all(&work);
+        result
+    }
+
+    /// The release the release directory holds, by its executable.
+    fn installed(scratch: &Scratch) -> String {
+        fs::read_to_string(release_executable(&scratch.layout().lib_dir)).unwrap_or_default()
+    }
+
+    fn assert_no_leftovers(scratch: &Scratch) {
+        let lib_dir = scratch.layout().lib_dir;
+        for leftover in [sibling(&lib_dir, ".staged"), sibling(&lib_dir, ".previous")] {
+            assert!(!leftover.exists(), "{} was left behind", leftover.display());
+        }
+    }
+
+    #[test]
+    fn swaps_the_new_release_in_and_runs_its_installer() {
+        let _turn = SCRIPTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let scratch = Scratch::new("swap");
+        let layout = scratch.layout();
+        fake_release(&scratch, &layout.lib_dir, Some("0.6.0"), 0);
+        let archive = fake_archive(&scratch, Some("0.6.1"), 0);
+
+        install(&scratch, &archive, "0.6.1").unwrap();
+        assert!(installed(&scratch).contains("0.6.1"));
+        assert_no_leftovers(&scratch);
+        assert_eq!(
+            scratch.log(),
+            format!(
+                "0.6.1 --start PREFIX={} BIN_DIR={} RELEASE_BIN={}\n",
+                layout.home.join(".local").display(),
+                layout.bin_dir.display(),
+                layout.lib_dir.join("bin").display()
+            )
+        );
+    }
+
+    /// A release that does not run here, or that is not the version asked
+    /// for, replaces nothing and leaves nothing behind.
+    #[test]
+    fn keeps_the_release_when_the_new_one_is_not_right() {
+        let _turn = SCRIPTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let scratch = Scratch::new("probe");
+        let layout = scratch.layout();
+        fake_release(&scratch, &layout.lib_dir, Some("0.6.0"), 0);
+
+        let broken = fake_archive(&scratch, None, 0);
+        let error = install(&scratch, &broken, "0.6.1").unwrap_err().to_string();
+        assert!(error.contains("does not run here"), "{error}");
+        assert!(error.contains("GLIBC_9.9"), "{error}");
+        assert!(installed(&scratch).contains("0.6.0"));
+        assert_no_leftovers(&scratch);
+
+        let other = fake_archive(&scratch, Some("0.6.0"), 0);
+        let error = install(&scratch, &other, "0.6.1").unwrap_err().to_string();
+        assert!(
+            error.contains("reports tasks-pending 0.6.0, not 0.6.1"),
+            "{error}"
+        );
+        assert!(installed(&scratch).contains("0.6.0"));
+        assert_no_leftovers(&scratch);
+        assert_eq!(scratch.log(), "", "no installer runs for a release refused");
+    }
+
+    /// When the new release's installer fails, the previous release comes
+    /// back and its own installer runs again, so its links, unit and
+    /// daemon are the ones in place.
+    #[test]
+    fn puts_the_previous_release_back_when_the_installer_fails() {
+        let _turn = SCRIPTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let scratch = Scratch::new("rollback");
+        let layout = scratch.layout();
+        fake_release(&scratch, &layout.lib_dir, Some("0.6.0"), 0);
+        let archive = fake_archive(&scratch, Some("0.6.1"), 7);
+
+        let error = install(&scratch, &archive, "0.6.1")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!(
+                "the previous release is back in {}",
+                layout.lib_dir.display()
+            )),
+            "{error}"
+        );
+        assert!(installed(&scratch).contains("0.6.0"));
+        assert_no_leftovers(&scratch);
+        let runs: Vec<String> = scratch
+            .log()
+            .lines()
+            .map(|line| line.split(' ').take(2).collect::<Vec<_>>().join(" "))
+            .collect();
+        assert_eq!(runs, ["0.6.1 --start", "0.6.0 --start"]);
+    }
+
+    /// When the previous release's installer fails too, the message says
+    /// what to run, not that all is well.
+    #[test]
+    fn says_what_to_run_when_the_previous_installer_fails_too() {
+        let _turn = SCRIPTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let scratch = Scratch::new("rollback-fails");
+        let layout = scratch.layout();
+        fake_release(&scratch, &layout.lib_dir, Some("0.6.0"), 3);
+        let archive = fake_archive(&scratch, Some("0.6.1"), 7);
+
+        let error = install(&scratch, &archive, "0.6.1")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("its own installer failed too"), "{error}");
+        assert!(
+            error.contains(&format!(
+                "run {} --start",
+                layout.lib_dir.join("scripts/install.sh").display()
+            )),
+            "{error}"
+        );
+        assert!(installed(&scratch).contains("0.6.0"));
+        assert_no_leftovers(&scratch);
+    }
+
+    /// Without a previous release, the new one stays where it is, and the
+    /// message says what to run.
+    #[test]
+    fn keeps_a_first_release_when_its_installer_fails() {
+        let _turn = SCRIPTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let scratch = Scratch::new("first");
+        let layout = scratch.layout();
+        let archive = fake_archive(&scratch, Some("0.6.1"), 7);
+
+        let error = install(&scratch, &archive, "0.6.1")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!(
+                "the new release is in {}",
+                layout.lib_dir.display()
+            )),
+            "{error}"
+        );
+        assert!(installed(&scratch).contains("0.6.1"));
+        assert_no_leftovers(&scratch);
     }
 }

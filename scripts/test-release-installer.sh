@@ -32,7 +32,8 @@ mkdir -p "$FIXTURES" "$FAKE_BIN"
 
 # A release bundle whose executable and installer record how they are run.
 # The installer fails when FAIL_INSTALL is set, like one whose `setup`
-# could not start the daemon.
+# could not start the daemon: only the new release's, which holds no
+# marker file, unless it is `all`.
 make_bundle() {
   local bundle="$WORK/build/tasks-pending-$VERSION-$TARGET"
 
@@ -47,7 +48,11 @@ EOF2
   cat >"$bundle/scripts/install.sh" <<'EOF2'
 #!/bin/sh
 printf 'install.sh %s PREFIX=%s BIN_DIR=%s INSTALL_LINK=%s RELEASE_BIN=%s\n' "$*" "$PREFIX" "$BIN_DIR" "$INSTALL_LINK" "$RELEASE_BIN" >>"$BINARY_LOG"
-[ -z "${FAIL_INSTALL:-}" ] || exit 7
+case ${FAIL_INSTALL:-} in
+"") ;;
+all) exit 7 ;;
+*) [ -e "${0%/scripts/install.sh}/marker" ] || exit 7 ;;
+esac
 mkdir -p "$BIN_DIR"
 ln -sfn "$RELEASE_BIN/tasks-pending" "$BIN_DIR/tasks-pending"
 EOF2
@@ -248,10 +253,22 @@ test ! -e "$lib.staged"
 test ! -e "$lib.previous"
 
 # When the bundle's installer fails, the previous release comes back and
-# the failure is reported.
+# its own installer runs again, so its link, unit and daemon are the ones
+# in place; the failure is reported.
 : >"$lib/marker"
+: >"$home/binary.log"
 expect_failure "installer failure" "the previous release is back in $lib" \
   run_installer "$home" env FAIL_INSTALL=1
+test -e "$lib/marker"
+test ! -e "$lib.staged"
+test ! -e "$lib.previous"
+runs="$(grep -c '^install.sh --start' "$home/binary.log")"
+[[ $runs == 2 ]] || fail "the previous release's installer did not run again: $(cat "$home/binary.log")"
+
+# When the previous release's installer fails too, the message says what
+# to run instead of claiming all is well.
+expect_failure "both installers fail" "its own installer failed too: run $lib/scripts/install.sh --start" \
+  run_installer "$home" env FAIL_INSTALL=all
 test -e "$lib/marker"
 test ! -e "$lib.staged"
 test ! -e "$lib.previous"

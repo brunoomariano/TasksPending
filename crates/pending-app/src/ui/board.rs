@@ -21,7 +21,7 @@ const GROUP_MIN_WIDTH: i32 = 290;
 /// wide as the window.
 const CARD_TEXT_CHARS: i32 = 40;
 
-fn clear(container: &gtk::Box) {
+pub fn clear(container: &gtk::Box) {
     while let Some(child) = container.first_child() {
         container.remove(&child);
     }
@@ -79,8 +79,8 @@ fn dot() -> gtk::Box {
     dot
 }
 
-/// A notice above the board.
-fn notice(kind: &str, title: &str, body: &str) -> gtk::Box {
+/// A notice above the board or a dialog's content.
+pub fn notice(kind: &str, title: &str, body: &str) -> gtk::Box {
     let notice = gtk::Box::new(gtk::Orientation::Vertical, 4);
     notice.add_css_class("notice");
     notice.add_css_class(kind);

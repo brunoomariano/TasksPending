@@ -186,6 +186,11 @@ pub fn refreshed(manual: bool, result: &Result<(), Refusal>) -> Refreshed {
     Refreshed { hold, note }
 }
 
+/// The note when a card's link could not be opened.
+pub fn link_note(error: &str) -> String {
+    format!("Could not open the link ({error})")
+}
+
 /// `hold` if it still lasts at `now`: the timer set for one hold must not
 /// end a later one.
 pub fn lasting(hold: Option<(Instant, String)>, now: Instant) -> Option<(Instant, String)> {
@@ -275,7 +280,12 @@ impl<'a> Flags<'a> {
         CardView {
             id: card.id.clone(),
             title: card.title.clone(),
-            url: card.url.clone().filter(|url| is_http_url(url)),
+            url: card
+                .url
+                .as_deref()
+                .map(str::trim)
+                .filter(|url| is_http_url(url))
+                .map(str::to_owned),
             body: card.body.clone(),
             marked: self.marked.contains(card.id.as_str()),
             changed: self.changed.contains(card.id.as_str()),
@@ -602,7 +612,9 @@ mod tests {
     }
 
     /// Only an http(s) URL becomes a link: a source could hand the window
-    /// a `javascript:` or `file:` URL, and the title must not open it.
+    /// a `javascript:` or `file:` URL, and the title must not open it. The
+    /// link is the URL without the spaces around it, which the browser
+    /// would not take.
     #[test]
     fn links_only_to_http_urls() {
         let mut snapshot = snapshot();
@@ -616,7 +628,11 @@ mod tests {
             .iter()
             .map(|card| card.url.as_deref())
             .collect();
-        assert_eq!(urls, [None, None, Some(" HTTPS://example.com/ok "), None]);
+        assert_eq!(urls, [None, None, Some("HTTPS://example.com/ok"), None]);
+        assert_eq!(
+            link_note("no browser"),
+            "Could not open the link (no browser)"
+        );
     }
 
     /// The board filter and hidden items leave groups out; the marked cards

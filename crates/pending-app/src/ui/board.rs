@@ -7,10 +7,11 @@ use chrono::{Local, Utc};
 use gtk4 as gtk;
 use gtk4::prelude::*;
 
+use super::hero::show_note;
 use super::icons::{source_icon, symbolic};
 use super::{Ctx, wrapped};
 use crate::backend::Command;
-use crate::present::{BoardView, CardView, GroupView, Notice, NowItem, StackView};
+use crate::present::{BoardView, CardView, GroupView, Notice, NowItem, StackView, link_note};
 use crate::snooze::{CHOICES, until};
 use crate::view::flip;
 
@@ -366,7 +367,23 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, in_now: bool) -> gtk::Box {
             let ctx = ctx.clone();
             title.connect_activate_link(move |_, uri| {
                 let launcher = gtk::UriLauncher::new(uri);
-                launcher.launch(ctx.window().as_ref(), gtk::gio::Cancellable::NONE, |_| {});
+                let ctx = ctx.clone();
+                launcher.launch(
+                    ctx.window().as_ref(),
+                    gtk::gio::Cancellable::NONE,
+                    move |result| {
+                        // Closing the app chooser is not a failure.
+                        let Err(error) = result else { return };
+                        if error.matches(gtk::DialogError::Dismissed)
+                            || error.matches(gtk::DialogError::Cancelled)
+                        {
+                            return;
+                        }
+                        if let Some(widgets) = ctx.widgets.borrow().as_ref() {
+                            show_note(widgets, &link_note(error.message()));
+                        }
+                    },
+                );
                 gtk::glib::Propagation::Stop
             });
         }

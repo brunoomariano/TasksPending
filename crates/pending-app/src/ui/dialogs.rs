@@ -17,7 +17,12 @@ use crate::view::{AUTO_REFRESH_CHOICES, View, flip, hide_key};
 const DIALOG_WIDTH: i32 = 600;
 
 /// A dialog titled `title` over the window, holding `content`.
-fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) -> adw::Dialog {
+fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) {
+    dialog(title, content).present(ctx.window().as_ref());
+}
+
+/// A dialog titled `title` holding `content`, not shown yet.
+fn dialog(title: &str, content: &gtk::Box) -> adw::Dialog {
     content.add_css_class("dialog-page");
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -36,7 +41,6 @@ fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) -> adw::Dialog {
         .child(&view)
         .build();
     dialog.add_css_class("tasks-pending");
-    dialog.present(ctx.window().as_ref());
     dialog
 }
 
@@ -92,14 +96,20 @@ pub fn show_sources(ctx: &Rc<Ctx>) {
 
 /// The snoozed cards, each with when it comes back and a button to wake it.
 pub fn show_snoozed(ctx: &Rc<Ctx>) {
-    let Some(page) = ctx.current_page() else {
-        return;
-    };
+    if let Some(dialog) = snoozed_dialog(ctx) {
+        dialog.present(ctx.window().as_ref());
+    }
+}
+
+fn snoozed_dialog(ctx: &Rc<Ctx>) -> Option<adw::Dialog> {
+    let page = ctx.current_page()?;
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
     if page.snoozed.is_empty() {
         content.append(&text("Nothing snoozed.", &["empty"]));
     }
-    let dialog = Rc::new(std::cell::RefCell::new(None::<adw::Dialog>));
+    // Filled in once the dialog exists; weak, because its Wake buttons
+    // live inside it.
+    let dialog = Rc::new(gtk::glib::WeakRef::<adw::Dialog>::new());
     for entry in &page.snoozed {
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         row.add_css_class("row-card");
@@ -134,7 +144,7 @@ pub fn show_snoozed(ctx: &Rc<Ctx>) {
                 button.set_sensitive(false);
                 ctx.send(Command::Wake { id: id.clone() });
                 // The card is back on the board; the list is stale.
-                if let Some(dialog) = dialog.borrow().as_ref() {
+                if let Some(dialog) = dialog.upgrade() {
                     dialog.close();
                 }
             });
@@ -142,7 +152,9 @@ pub fn show_snoozed(ctx: &Rc<Ctx>) {
         row.append(&wake);
         content.append(&row);
     }
-    *dialog.borrow_mut() = Some(present(ctx, "Snoozed", &content));
+    let built = self::dialog("Snoozed", &content);
+    dialog.set(Some(&built));
+    Some(built)
 }
 
 /// Settings: which board to show, the auto-refresh interval, and what to
@@ -156,10 +168,16 @@ pub fn show_settings(ctx: &Rc<Ctx>) {
 
 /// Fills `content` with the settings, and again on each change.
 fn fill_settings(ctx: &Rc<Ctx>, content: &gtk::Box) {
+    // Weakly: the switches inside `content` hold `rebuild`, and a strong
+    // reference back would keep the dialog's widgets alive once it closes.
     let rebuild: Rc<dyn Fn()> = {
         let ctx = ctx.clone();
-        let content = content.clone();
-        Rc::new(move || fill_settings(&ctx, &content))
+        let content = content.downgrade();
+        Rc::new(move || {
+            if let Some(content) = content.upgrade() {
+                fill_settings(&ctx, &content);
+            }
+        })
     };
     fill_settings_with(ctx, content, rebuild);
 }

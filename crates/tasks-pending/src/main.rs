@@ -48,8 +48,9 @@ struct UpgradeCommand {
     /// Only say whether a newer release exists.
     #[arg(long)]
     check: bool,
-    /// Install this version instead of the latest, e.g. 0.6.1.
-    #[arg(long)]
+    /// Install this version instead of the latest, e.g. 0.6.1 (`latest`
+    /// is the latest). The installer reads the same variable.
+    #[arg(long, env = "TASKS_PENDING_VERSION")]
     version: Option<String>,
 }
 
@@ -216,6 +217,22 @@ mod tests {
             Cli::command()
                 .try_get_matches_from(["tasks-pending", "upgrade", "--check"])
                 .is_ok()
+        );
+    }
+
+    /// `TASKS_PENDING_VERSION` pins the version for `upgrade` the way it
+    /// does for the installer.
+    #[test]
+    fn upgrade_reads_the_version_from_the_installer_variable() {
+        let command = Cli::command();
+        let upgrade = command.find_subcommand("upgrade").unwrap();
+        let version = upgrade
+            .get_arguments()
+            .find(|arg| arg.get_id() == "version")
+            .unwrap();
+        assert_eq!(
+            version.get_env().and_then(|env| env.to_str()),
+            Some("TASKS_PENDING_VERSION")
         );
     }
 

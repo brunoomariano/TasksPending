@@ -82,5 +82,5 @@ install: ## Build a release and install it under PREFIX (default ~/.local)
 uninstall: ## Remove what install put in place (your config stays)
 	./scripts/install.sh --uninstall
 
-deploy: ## Build, install under ~/.local, (re)start the daemon and check it answers
+deploy: ## Build, install under ~/.local and (re)start the daemon; fails unless it answers as this build
 	./scripts/deploy.sh

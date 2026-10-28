@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Deploys this checkout to this machine, the same way every time: builds a
-# release, installs it under ~/.local, restarts the daemon and checks that
-# it answers. Safe to run again; config and tokens are left alone.
+# release, installs it under PREFIX (default ~/.local) and hands over to
+# `tasks-pending setup`, which starts or restarts the daemon and fails
+# unless it answers as this build. Safe to run again; config and tokens are
+# left alone.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

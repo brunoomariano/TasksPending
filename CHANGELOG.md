@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.6.1
+
+### Security
+
+- rustls, which TasksPending uses for HTTPS, is now 0.23.46, fixing four advisories in 0.23.45: [GHSA-c8m5-c952-6cm4](https://github.com/advisories/GHSA-c8m5-c952-6cm4) (formatting a session with `Debug` exposes its secrets), [GHSA-w44r-93j7-qv28](https://github.com/advisories/GHSA-w44r-93j7-qv28) (a forged ServerHello leaves later handshakes with only a classical X25519 key share), [GHSA-vp88-798v-h67f](https://github.com/advisories/GHSA-vp88-798v-h67f) (an ECH rejection can expose buffered data) and [GHSA-h2v8-394m-p7vv](https://github.com/advisories/GHSA-h2v8-394m-p7vv) (Brotli certificate decompression can allocate up to 1 GiB). Only the key exchange downgrade reached TasksPending: it builds no Brotli decompression, configures no ECH and never formats a session.
 
 ### Changed
 

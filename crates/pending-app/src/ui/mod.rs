@@ -400,10 +400,11 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
 }
 
 /// Clicks, keys and scrolling anywhere in the window count as looking;
-/// the pointer merely crossing it does not. A click counts once released:
-/// the snapshot read after the look may rebuild the page, which between
-/// press and release would take the pressed button away, and the click
-/// with it. A raw controller sees the release whatever gesture below
+/// the pointer merely crossing it does not. Clicks and keys count once
+/// released: the snapshot read after the look may rebuild the page, which
+/// before the release would take the pressed button away, and the click
+/// with it (a button activated from the keyboard clicks on the key's
+/// release). A raw controller sees the release whatever gesture below
 /// claims the click.
 fn watch_activity(ctx: &Rc<Ctx>, window: &adw::ApplicationWindow) {
     let release = gtk::EventControllerLegacy::new();
@@ -426,10 +427,7 @@ fn watch_activity(ctx: &Rc<Ctx>, window: &adw::ApplicationWindow) {
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     {
         let ctx = ctx.clone();
-        keys.connect_key_pressed(move |_, _, _, _| {
-            ctx.looked();
-            gtk::glib::Propagation::Proceed
-        });
+        keys.connect_key_released(move |_, _, _, _| ctx.looked());
     }
     window.add_controller(keys);
 

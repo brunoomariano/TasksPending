@@ -142,6 +142,30 @@ run_link_case() {
 }
 run_link_case
 
+# BIN_DIR puts the executable, and what points at it, somewhere other than
+# PREFIX/bin; the release installer passes TASKS_PENDING_BIN_DIR this way.
+run_bin_dir_case() {
+  local home="$WORK/bin-dir/home"
+  local release_bin="$WORK/bin-dir/release-bin"
+
+  mkdir -p "$home" "$release_bin"
+  make_fake_binary "$release_bin/tasks-pending"
+  HOME="$home" \
+    XDG_CONFIG_HOME="$home/.config" \
+    PREFIX="$home/.local" \
+    BIN_DIR="$home/tools" \
+    RELEASE_BIN="$release_bin" \
+    SKIP_BUILD=1 \
+    BINARY_LOG="$WORK/bin-dir/binary.log" \
+    "$ROOT/scripts/install.sh" >/dev/null
+  test -x "$home/tools/tasks-pending"
+  test ! -e "$home/.local/bin/tasks-pending"
+  grep -Fqx "ExecStart=$home/tools/tasks-pending serve --listen 127.0.0.1:61000" \
+    "$home/.config/systemd/user/tasks-pending.service"
+  grep -Fqx "Exec=$home/tools/tasks-pending" "$home/.local/share/applications/$APP_ID.desktop"
+}
+run_bin_dir_case
+
 # DESTDIR stages a system install: the service file goes under the prefix,
 # nothing runs, and the home directory is untouched.
 run_destdir_case() {

@@ -49,7 +49,14 @@ done
 "$BUNDLE/bin/tasks-pending" serve --help >/dev/null
 "$BUNDLE/bin/tasks-pending" sandbox --help >/dev/null
 "$BUNDLE/bin/tasks-pending" setup --help >/dev/null
-"$BUNDLE/bin/tasks-pending" upgrade --help >/dev/null
+# Every flag docs/install.md names for `upgrade` is in the release.
+upgrade_help="$("$BUNDLE/bin/tasks-pending" upgrade --help)"
+for flag in --check --version --allow-downgrade; do
+  [[ $upgrade_help == *"$flag"* ]] || {
+    echo "tasks-pending upgrade has no $flag" >&2
+    exit 1
+  }
+done
 "$BUNDLE/bin/tasks-pending" --version | grep -Fq "$VERSION"
 "$BUNDLE/bin/tasks-pending" serve --listen "127.0.0.1:$PORT" >"$LOG" 2>&1 &
 pid=$!

@@ -51,6 +51,9 @@ struct UpgradeCommand {
     /// is the latest). The installer reads the same variable.
     #[arg(long, env = "TASKS_PENDING_VERSION")]
     version: Option<String>,
+    /// Install the asked release even when it is older than this one.
+    #[arg(long)]
+    allow_downgrade: bool,
 }
 
 #[derive(Debug, Args, Default)]
@@ -135,6 +138,7 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Upgrade(command)) => upgrade::run(upgrade::Options {
             check: command.check,
             version: command.version,
+            allow_downgrade: command.allow_downgrade,
         }),
     }
 }
@@ -233,6 +237,28 @@ mod tests {
             version.get_env().and_then(|env| env.to_str()),
             Some("TASKS_PENDING_VERSION")
         );
+    }
+
+    /// `--allow-downgrade` is what lets `upgrade` install an older release.
+    #[test]
+    fn upgrade_takes_a_downgrade_only_when_asked() {
+        let cli = Cli::try_parse_from(["tasks-pending", "upgrade", "--version", "0.5.0"]).unwrap();
+        let Some(Command::Upgrade(command)) = cli.command else {
+            panic!("expected the upgrade command");
+        };
+        assert!(!command.allow_downgrade);
+        let cli = Cli::try_parse_from([
+            "tasks-pending",
+            "upgrade",
+            "--version",
+            "0.5.0",
+            "--allow-downgrade",
+        ])
+        .unwrap();
+        let Some(Command::Upgrade(command)) = cli.command else {
+            panic!("expected the upgrade command");
+        };
+        assert!(command.allow_downgrade);
     }
 
     /// Without a subcommand the window opens, looking for the daemon at

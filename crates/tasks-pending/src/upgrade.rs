@@ -30,6 +30,8 @@ pub struct Options {
     pub check: bool,
     /// Install this version instead of the latest; `latest` is the latest.
     pub version: Option<String>,
+    /// Install a release older than the running one.
+    pub allow_downgrade: bool,
 }
 
 /// How the running executable was installed.
@@ -120,6 +122,28 @@ fn installer_env(layout: &Layout) -> Vec<(&'static str, OsString)> {
         ("RELEASE_BIN", layout.lib_dir.join("bin").into()),
         ("SKIP_BUILD", "1".into()),
     ]
+}
+
+/// What to do about release `target` with `current` running.
+#[derive(Debug, PartialEq, Eq)]
+enum Decision {
+    Install,
+    /// `target` is the running version.
+    Installed,
+    /// `target` is older, and a downgrade was not asked for.
+    Older,
+}
+
+fn decide(current: &str, target: &str, allow_downgrade: bool) -> Decision {
+    if is_newer(target, current) {
+        Decision::Install
+    } else if !is_newer(current, target) {
+        Decision::Installed
+    } else if allow_downgrade {
+        Decision::Install
+    } else {
+        Decision::Older
+    }
 }
 
 /// The version asked for on the command line, or `None` for the latest.
@@ -272,9 +296,23 @@ pub fn run(options: Options) -> anyhow::Result<()> {
             .block_on(pending_api::update::latest_release(&base))
             .with_context(|| format!("could not read the latest release from {base}/latest"))?,
     };
-    if pinned.is_none() && !is_newer(&target, current) {
-        println!("tasks-pending {current} is the latest release");
-        return Ok(());
+    match decide(current, &target, options.allow_downgrade) {
+        Decision::Install => {}
+        Decision::Installed if pinned.is_none() => {
+            println!("tasks-pending {current} is the latest release");
+            return Ok(());
+        }
+        Decision::Installed => {
+            println!("tasks-pending {current} is already installed");
+            return Ok(());
+        }
+        Decision::Older if pinned.is_none() => {
+            println!("tasks-pending {current} is newer than the latest release, {target}");
+            return Ok(());
+        }
+        Decision::Older => anyhow::bail!(
+            "{target} is older than the installed {current}; pass --allow-downgrade to install it anyway"
+        ),
     }
     if options.check {
         println!(
@@ -534,6 +572,18 @@ mod tests {
         );
         assert_eq!(get("INSTALL_LINK"), Some(PathBuf::from("1")));
         assert_eq!(get("SKIP_BUILD"), Some(PathBuf::from("1")));
+    }
+
+    /// A release is installed when it is newer than the running one. The
+    /// same version is already there, and an older one, pinned or the
+    /// latest, only with --allow-downgrade.
+    #[test]
+    fn installs_only_what_moves_forward_unless_told() {
+        assert_eq!(decide("0.6.0", "0.6.1", false), Decision::Install);
+        assert_eq!(decide("0.6.0", "0.6.0", false), Decision::Installed);
+        assert_eq!(decide("0.6.0", "0.6.0", true), Decision::Installed);
+        assert_eq!(decide("0.6.0", "0.0.1", false), Decision::Older);
+        assert_eq!(decide("0.6.0", "0.5.9", true), Decision::Install);
     }
 
     /// `--version` takes a version, with or without the `v`; `latest` and

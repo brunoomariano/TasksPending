@@ -223,8 +223,9 @@ fn concurrent_saves_never_corrupt_the_file() {
     assert_eq!(cache.load().len(), 8, "every source's entry is kept");
 }
 
-/// API and TUI with different configs share the file: each updates its own
-/// sources without erasing the other's.
+/// The daemon and a window running the sources itself, with different
+/// configs, share the file: each updates its own sources without erasing
+/// the other's.
 #[test]
 fn processes_with_different_sources_keep_each_others_entries() {
     let path = cache_file("merge");

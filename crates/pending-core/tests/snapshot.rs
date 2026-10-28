@@ -463,7 +463,7 @@ fn cached_source_shows_previous_cards_while_refreshing() {
     );
 }
 
-/// The snapshot says which version produced it, so the page can show it.
+/// The snapshot says which version produced it, so the window can show it.
 #[test]
 fn snapshot_carries_the_running_version() {
     let snapshot = build_snapshot(at(12), Vec::new());

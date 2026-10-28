@@ -1,7 +1,8 @@
 //! Cards the user snoozed: hidden from the boards until a chosen time or
 //! until the item changes, whichever comes first. Nothing is written to the
 //! providers; snoozes are kept in a small file next to the cache (see
-//! [`crate::store`]), shared by the web page and the TUI.
+//! [`crate::store`]), shared by the daemon and a window that runs the
+//! sources itself.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

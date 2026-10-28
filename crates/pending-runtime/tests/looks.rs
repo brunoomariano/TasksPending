@@ -236,8 +236,8 @@ fn activity_is_written_at_most_every_thirty_seconds() {
     assert_eq!(file(&path)["looks"][0]["since"], second);
 }
 
-/// The web page and the TUI are two processes on one file: activity in
-/// either one counts for both.
+/// The daemon and a window running the sources itself are two processes on
+/// one file: activity in either one counts for both.
 #[test]
 fn two_processes_share_the_looks() {
     let path = scratch("shared");
@@ -247,8 +247,8 @@ fn two_processes_share_the_looks() {
     tui.look_at(at(55));
     let cards = [("early", at(40)), ("late", at(58))];
 
-    // The daemon's last activity was 9:00, but the TUI was used at 9:55:
-    // this is the same sitting, and it started at the first look.
+    // The daemon's last activity was 9:00, but the other process saw some
+    // at 9:55: this is the same sitting, and it started at the first look.
     daemon.look_at(at(60));
 
     assert_eq!(changed(&daemon, board(&cards)), ["early", "late"]);

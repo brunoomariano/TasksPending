@@ -35,6 +35,29 @@ fn config_dir() -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(home).join(".config").join("tasks-pending"))
 }
 
+/// The user this process acts as: the kernel makes it the owner of
+/// `/proc/self`.
+fn effective_uid() -> anyhow::Result<u32> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(fs::metadata("/proc/self")
+        .context("reading /proc/self")?
+        .uid())
+}
+
+/// Refuses to go on as root: `command` works on one user's home and user
+/// service, and root's would serve nobody.
+pub(crate) fn refuse_root(command: &str) -> anyhow::Result<()> {
+    refuse_root_as(effective_uid()?, command)
+}
+
+fn refuse_root_as(euid: u32, command: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        euid != 0,
+        "run `tasks-pending {command}` as the user who will use TasksPending, not as root: it works on your home and your user service"
+    );
+    Ok(())
+}
+
 /// Writes `content` to `path` with `mode` unless the file exists. Says
 /// whether it was created.
 fn ensure_file(path: &Path, content: &str, mode: u32) -> anyhow::Result<bool> {
@@ -129,6 +152,7 @@ fn data_home() -> Option<PathBuf> {
 }
 
 pub fn run(options: Options) -> anyhow::Result<()> {
+    refuse_root("setup")?;
     let config_dir = config_dir()?;
     let config = config_dir.join("config.toml");
     if ensure_file(&config, CONFIG_EXAMPLE, 0o644)? {
@@ -291,6 +315,22 @@ mod tests {
             None
         );
         assert_eq!(listen_from_exec_start(""), None);
+    }
+
+    /// Root is refused: setup and upgrade work on one user's home and user
+    /// service, and root's would serve nobody.
+    #[test]
+    fn refuses_to_run_as_root() {
+        let error = refuse_root_as(0, "setup").unwrap_err().to_string();
+        assert!(error.contains("not as root"), "{error}");
+        assert!(error.contains("tasks-pending setup"), "{error}");
+        assert!(refuse_root_as(1000, "setup").is_ok());
+        // The effective user is the one that owns what this process creates.
+        let file = std::env::temp_dir().join(format!("tasks-pending-owner-{}", std::process::id()));
+        fs::write(&file, "").unwrap();
+        let owner = std::os::unix::fs::MetadataExt::uid(&fs::metadata(&file).unwrap());
+        let _ = fs::remove_file(&file);
+        assert_eq!(effective_uid().unwrap(), owner);
     }
 
     /// The config directory follows XDG_CONFIG_HOME, then HOME.

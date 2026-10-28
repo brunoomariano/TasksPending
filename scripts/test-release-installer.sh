@@ -448,7 +448,9 @@ fi
 # ~/.config/systemd/user wins over the package's, so the old daemon would
 # keep running. The installer retires what that install put down, stops
 # its service first, and leaves the config, the tokens, the service's
-# drop-ins and anything else alone.
+# drop-ins and anything else alone. A drop-in that ran the retired
+# executable (one for another port) would start nothing: it runs the
+# package's instead.
 seed_user_install() {
   local home=$1 units="$1/.config/systemd/user"
   mkdir -p "$home/.local/bin" "$units/default.target.wants" "$units/tasks-pending.service.d" \
@@ -457,6 +459,8 @@ seed_user_install() {
     "$home/.local/bin/tasks-pending" >"$units/tasks-pending.service"
   ln -s "$units/tasks-pending.service" "$units/default.target.wants/tasks-pending.service"
   printf '[Service]\nEnvironment=RUST_LOG=debug\n' >"$units/tasks-pending.service.d/override.conf"
+  printf '[Service]\nExecStart=\nExecStart=%s serve --listen 127.0.0.1:8090\n' \
+    "$home/.local/bin/tasks-pending" >"$units/tasks-pending.service.d/port.conf"
   printf '[sources]\n' >"$home/.config/tasks-pending/config.toml"
   printf 'GITHUB_TOKEN=mine\n' >"$home/.config/tasks-pending/env"
   printf '#!/bin/sh\n' >"$home/.local/bin/other-tool"
@@ -477,6 +481,13 @@ check_user_install_retired() {
     test -e "$kept" || fail "$kept was removed"
   done
   grep -Fqx 'GITHUB_TOKEN=mine' "$home/.config/tasks-pending/env" || fail "the tokens were touched"
+  grep -Fqx 'Environment=RUST_LOG=debug' "$units/tasks-pending.service.d/override.conf" ||
+    fail "a drop-in that runs nothing retired was changed"
+  grep -Fqx "ExecStart=$PACKAGE_EXE serve --listen 127.0.0.1:8090" "$units/tasks-pending.service.d/port.conf" ||
+    fail "the drop-in still runs the retired executable: $(cat "$units/tasks-pending.service.d/port.conf")"
+  grep -Fqx 'ExecStart=' "$units/tasks-pending.service.d/port.conf" || fail "the drop-in's reset was dropped"
+  [[ $output == *"port.conf ran $home/.local/bin/tasks-pending; it now runs $PACKAGE_EXE"* ]] ||
+    fail "the rewritten drop-in was not reported: $output"
   grep -Fqx 'package setup' "$home/binary.log" || fail "the package's setup did not run"
   [[ $output == *"retired"* ]] || fail "the retirement was not reported: $output"
 }

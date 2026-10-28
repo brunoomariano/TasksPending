@@ -197,16 +197,19 @@ install_bundle() {
   say "installed $("$bin_dir/tasks-pending" --version 2>/dev/null || echo tasks-pending) to $lib_dir"
 }
 
-# retire_user_install <bin-dir> <lib-dir>: a release installed earlier for
-# this user (the bundle, before the package path covered distributions
-# built on Arch, or `make install`) would shadow the package: its unit in
-# ~/.config/systemd/user wins over the package's, so the old daemon would
-# go on running, and its executable and launcher entry come first. This
-# stops that service and removes what that install put down, and only
-# that: the config, the tokens, the service's drop-ins and anything else
-# stay. A unit that runs something else is the user's own, and is kept.
+# retire_user_install <bin-dir> <lib-dir> <package-executable>: a release
+# installed earlier for this user (the bundle, before the package path
+# covered distributions built on Arch, or `make install`) would shadow the
+# package: its unit in ~/.config/systemd/user wins over the package's, so
+# the old daemon would go on running, and its executable and launcher
+# entry come first. This stops that service and removes what that install
+# put down, and only that: the config, the tokens, the service's drop-ins
+# and anything else stay. A unit that runs something else is the user's
+# own, and is kept. A drop-in that ran the retired executable (one for
+# another port, say) would apply to the package's unit and start nothing:
+# it runs the package's executable instead.
 retire_user_install() {
-  bin_dir="$1" lib_dir="$2"
+  bin_dir="$1" lib_dir="$2" executable="$3"
   exe="$bin_dir/tasks-pending"
   share="$HOME/.local/share"
   units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -230,12 +233,25 @@ retire_user_install() {
     fi
   fi
 
+  exe_retired=0
   if [ -L "$exe" ] && [ "$(readlink "$exe")" = "$lib_dir/bin/tasks-pending" ]; then
-    rm -f "$exe"
-    retired="$retired $exe"
+    exe_retired=1
   elif [ -f "$exe" ] && [ -x "$exe" ] && "$exe" --version 2>/dev/null | grep -q '^tasks-pending '; then
+    exe_retired=1
+  fi
+  if [ "$exe_retired" -eq 1 ]; then
     rm -f "$exe"
     retired="$retired $exe"
+    for conf in "$units/tasks-pending.service.d"/*.conf; do
+      if [ -f "$conf" ] && grep -Fq "ExecStart=$exe " "$conf"; then
+        OLD="ExecStart=$exe " NEW="ExecStart=$executable " awk '
+          index($0, ENVIRON["OLD"]) == 1 { $0 = ENVIRON["NEW"] substr($0, length(ENVIRON["OLD"]) + 1) }
+          { print }
+        ' "$conf" >"$conf.new"
+        mv "$conf.new" "$conf"
+        say "note: $conf ran $exe; it now runs $executable"
+      fi
+    done
   fi
   if is_release_dir "$lib_dir"; then
     rm -rf "${lib_dir:?}"
@@ -295,7 +311,7 @@ install_arch_package() {
     say "installed the package; now run \`tasks-pending setup\` as the user who will use TasksPending"
     return
   fi
-  retire_user_install "$bin_dir" "$lib_dir"
+  retire_user_install "$bin_dir" "$lib_dir" "$executable"
   "$executable" setup
 }
 

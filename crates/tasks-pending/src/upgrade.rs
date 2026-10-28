@@ -56,18 +56,30 @@ fn home() -> anyhow::Result<PathBuf> {
         .context("HOME is not set")
 }
 
-/// `TASKS_PENDING_LIB_DIR`, or `~/.local/lib/tasks-pending`.
-fn lib_dir() -> anyhow::Result<PathBuf> {
-    let home = home()?;
-    Ok(env_dir("TASKS_PENDING_LIB_DIR", || {
-        home.join(".local/lib/tasks-pending")
-    }))
+/// Where a bundle install lives.
+#[derive(Debug)]
+struct Layout {
+    /// The unpacked release: `TASKS_PENDING_LIB_DIR`, or
+    /// `~/.local/lib/tasks-pending`.
+    lib_dir: PathBuf,
+    /// Where the `tasks-pending` link goes: `TASKS_PENDING_BIN_DIR`, or
+    /// `~/.local/bin`.
+    bin_dir: PathBuf,
+    /// The user's home, whose `~/.local` holds the desktop entry and icons.
+    home: PathBuf,
 }
 
-/// `TASKS_PENDING_BIN_DIR`, or `~/.local/bin`.
-fn bin_dir() -> anyhow::Result<PathBuf> {
-    let home = home()?;
-    Ok(env_dir("TASKS_PENDING_BIN_DIR", || home.join(".local/bin")))
+impl Layout {
+    fn from_env() -> anyhow::Result<Self> {
+        let home = home()?;
+        Ok(Self {
+            lib_dir: env_dir("TASKS_PENDING_LIB_DIR", || {
+                home.join(".local/lib/tasks-pending")
+            }),
+            bin_dir: env_dir("TASKS_PENDING_BIN_DIR", || home.join(".local/bin")),
+            home,
+        })
+    }
 }
 
 /// The executable a release directory holds.
@@ -95,6 +107,19 @@ fn sibling(lib_dir: &Path, suffix: &str) -> PathBuf {
     let mut name: OsString = lib_dir.components().collect::<PathBuf>().into_os_string();
     name.push(suffix);
     PathBuf::from(name)
+}
+
+/// The environment the bundle's installer runs with: link the release's
+/// executable into the bin directory, and put the desktop entry, icons
+/// and examples under `~/.local`, where launchers look.
+fn installer_env(layout: &Layout) -> Vec<(&'static str, OsString)> {
+    vec![
+        ("PREFIX", layout.home.join(".local").into()),
+        ("BIN_DIR", layout.bin_dir.clone().into()),
+        ("INSTALL_LINK", "1".into()),
+        ("RELEASE_BIN", layout.lib_dir.join("bin").into()),
+        ("SKIP_BUILD", "1".into()),
+    ]
 }
 
 /// The version asked for on the command line, or `None` for the latest.
@@ -258,10 +283,10 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let lib_dir = lib_dir()?;
-    let bin_dir = bin_dir()?;
+    let layout = Layout::from_env()?;
+    let lib_dir = &layout.lib_dir;
     let exe = std::env::current_exe().context("finding the running executable")?;
-    match installed_from(&exe, &lib_dir) {
+    match installed_from(&exe, lib_dir) {
         Install::Bundle => {}
         Install::Package => anyhow::bail!(
             "this tasks-pending was installed by the package manager; upgrade it with pacman, or with the release installer"
@@ -269,7 +294,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         Install::Other(path) => anyhow::bail!(
             "{} is not {} (the release directory's executable); upgrade the way it was installed (make install / make deploy), or run the release installer",
             path.display(),
-            release_executable(&lib_dir).display()
+            release_executable(lib_dir).display()
         ),
     }
 
@@ -281,7 +306,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     let work = parent.join(format!(".tasks-pending-upgrade-{}", std::process::id()));
     let _ = fs::remove_dir_all(&work);
     fs::create_dir_all(&work)?;
-    let result = upgrade_in(&runtime, &client, &base, &target, &work, &lib_dir, &bin_dir);
+    let result = upgrade_in(&runtime, &client, &base, &target, &work, &layout);
     let _ = fs::remove_dir_all(&work);
     result
 }
@@ -293,8 +318,7 @@ fn upgrade_in(
     base: &str,
     target: &str,
     work: &Path,
-    lib_dir: &Path,
-    bin_dir: &Path,
+    layout: &Layout,
 ) -> anyhow::Result<()> {
     let asset = bundle_asset(target);
     let url = format!("{base}/download/v{target}/{asset}");
@@ -315,17 +339,17 @@ fn upgrade_in(
     if !checksum_matches(&sha256_of(&archive)?, &checksum, &asset) {
         anyhow::bail!("checksum mismatch for {asset}; nothing was installed");
     }
-    install_archive(&archive, &asset, work, lib_dir, bin_dir, target)
+    install_archive(&archive, &asset, work, layout, target)
 }
 
 fn install_archive(
     archive: &Path,
     asset: &str,
     work: &Path,
-    lib_dir: &Path,
-    bin_dir: &Path,
+    layout: &Layout,
     target: &str,
 ) -> anyhow::Result<()> {
+    let lib_dir = layout.lib_dir.as_path();
     let archive_path = archive.to_string_lossy();
     let names = tar(&["-tzf", &archive_path])?;
     let verbose = tar(&["-tzvf", &archive_path])?;
@@ -394,14 +418,9 @@ fn install_archive(
     // entry, icon and service, and restarts the daemon. It is part of the
     // release whose checksum was just verified, and runs with the same
     // trust as the executable it installs.
-    let prefix = bin_dir.parent().unwrap_or(bin_dir);
     let installer = Command::new(lib_dir.join("scripts/install.sh"))
         .arg("--start")
-        .env("PREFIX", prefix)
-        .env("BIN_DIR", bin_dir)
-        .env("INSTALL_LINK", "1")
-        .env("RELEASE_BIN", lib_dir.join("bin"))
-        .env("SKIP_BUILD", "1")
+        .envs(installer_env(layout))
         .status()
         .context("running the bundle's installer");
     match installer {
@@ -489,6 +508,31 @@ mod tests {
             sibling(Path::new("/opt/tp/"), ".staged"),
             PathBuf::from("/opt/tp.staged")
         );
+    }
+
+    /// The bundle's installer links the release into the executable's
+    /// directory; the desktop entry, icons and examples stay under
+    /// `~/.local`, wherever that directory is.
+    #[test]
+    fn tells_the_installer_where_things_go() {
+        let env = installer_env(&Layout {
+            lib_dir: PathBuf::from("/home/me/.local/lib/tasks-pending"),
+            bin_dir: PathBuf::from("/home/me/bin"),
+            home: PathBuf::from("/home/me"),
+        });
+        let get = |name: &str| {
+            env.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| PathBuf::from(value))
+        };
+        assert_eq!(get("PREFIX"), Some(PathBuf::from("/home/me/.local")));
+        assert_eq!(get("BIN_DIR"), Some(PathBuf::from("/home/me/bin")));
+        assert_eq!(
+            get("RELEASE_BIN"),
+            Some(PathBuf::from("/home/me/.local/lib/tasks-pending/bin"))
+        );
+        assert_eq!(get("INSTALL_LINK"), Some(PathBuf::from("1")));
+        assert_eq!(get("SKIP_BUILD"), Some(PathBuf::from("1")));
     }
 
     /// `--version` takes a version, with or without the `v`; `latest` and

@@ -156,8 +156,10 @@ install_bundle() {
   # The bundle's installer links the executable and installs the desktop
   # entry, the icon and the user service, then runs `tasks-pending setup`.
   # It is part of the release whose checksum was just verified, and runs
-  # with the same trust as the executable it installs.
-  if ! PREFIX="$(dirname "$bin_dir")" BIN_DIR="$bin_dir" INSTALL_LINK=1 RELEASE_BIN="$lib_dir/bin" SKIP_BUILD=1 \
+  # with the same trust as the executable it installs. The desktop entry
+  # and icons go under ~/.local, where launchers look, wherever the link
+  # goes.
+  if ! PREFIX="$HOME/.local" BIN_DIR="$bin_dir" INSTALL_LINK=1 RELEASE_BIN="$lib_dir/bin" SKIP_BUILD=1 \
     "$lib_dir/scripts/install.sh" --start; then
     if [ "$had_previous" -eq 1 ]; then
       mv "$lib_dir" "$staged"

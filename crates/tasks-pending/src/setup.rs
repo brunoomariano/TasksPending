@@ -2,6 +2,7 @@
 //! does not cover. Safe to run again: it creates what is missing, keeps
 //! what exists, and starts or restarts the daemon.
 
+use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -11,6 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use pending_client::{Client, DEFAULT_DAEMON_URL};
+use pending_runtime::config;
 
 /// The systemd user unit the installers write.
 const SERVICE: &str = "tasks-pending.service";
@@ -19,6 +21,8 @@ const DAEMON_WAIT: Duration = Duration::from_secs(20);
 
 const CONFIG_EXAMPLE: &str = include_str!("../../../config.example.toml");
 const ENV_EXAMPLE: &str = include_str!("../../../packaging/env.example");
+#[cfg(test)]
+const SERVICE_TEMPLATE: &str = include_str!("../../../packaging/systemd/tasks-pending.service");
 
 #[derive(Debug, Default)]
 pub struct Options {
@@ -26,13 +30,36 @@ pub struct Options {
     pub no_start: bool,
 }
 
-/// `$XDG_CONFIG_HOME/tasks-pending`, or `~/.config/tasks-pending`.
-fn config_dir() -> anyhow::Result<PathBuf> {
-    if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").filter(|d| !d.is_empty()) {
-        return Ok(PathBuf::from(dir).join("tasks-pending"));
-    }
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join(".config").join("tasks-pending"))
+/// Where setup writes.
+#[derive(Debug)]
+struct Paths {
+    /// Where the daemon looks for its config: `TASKS_PENDING_CONFIG`, or
+    /// `config.toml` in the config directory.
+    config: PathBuf,
+    /// Where the unit reads the tokens from (`%E/tasks-pending/env`): the
+    /// config directory, whatever `TASKS_PENDING_CONFIG` says.
+    env: PathBuf,
+}
+
+/// The config directory is `$XDG_CONFIG_HOME/tasks-pending`, or
+/// `~/.config/tasks-pending`; relative values are ignored, as the daemon
+/// ignores them.
+fn setup_paths(env: &dyn Fn(&str) -> Option<OsString>) -> anyhow::Result<Paths> {
+    let missing = || anyhow::anyhow!("neither XDG_CONFIG_HOME nor HOME is an absolute path");
+    let config = config::locate(None, env).ok_or_else(missing)?.path;
+    let default = config::locate(None, &|key: &str| {
+        if key == config::CONFIG_ENV {
+            None
+        } else {
+            env(key)
+        }
+    })
+    .ok_or_else(missing)?
+    .path;
+    Ok(Paths {
+        config,
+        env: default.with_file_name("env"),
+    })
 }
 
 /// The user this process acts as: the kernel makes it the owner of
@@ -153,9 +180,9 @@ fn data_home() -> Option<PathBuf> {
 
 pub fn run(options: Options) -> anyhow::Result<()> {
     refuse_root("setup")?;
-    let config_dir = config_dir()?;
-    let config = config_dir.join("config.toml");
-    if ensure_file(&config, CONFIG_EXAMPLE, 0o644)? {
+    let paths = setup_paths(&|key: &str| std::env::var_os(key))?;
+    let config = &paths.config;
+    if ensure_file(config, CONFIG_EXAMPLE, 0o644)? {
         println!(
             "created {} from the example: edit it to add your sources",
             config.display()
@@ -163,8 +190,8 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     } else {
         println!("kept {}", config.display());
     }
-    let env = config_dir.join("env");
-    if ensure_file(&env, ENV_EXAMPLE, 0o600)? {
+    let env = &paths.env;
+    if ensure_file(env, ENV_EXAMPLE, 0o600)? {
         println!(
             "created {} (mode 600): put your tokens there, then run `tasks-pending setup` again",
             env.display()
@@ -333,12 +360,73 @@ mod tests {
         assert_eq!(effective_uid().unwrap(), owner);
     }
 
-    /// The config directory follows XDG_CONFIG_HOME, then HOME.
+    fn env_of(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {
+        let pairs: Vec<(String, OsString)> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), OsString::from(value)))
+            .collect();
+        move |key| {
+            pairs
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    /// The config file goes where the daemon looks for it, and the env
+    /// file where the unit reads it (`%E/tasks-pending/env`: the
+    /// XDG_CONFIG_HOME of the user manager, or ~/.config).
     #[test]
-    fn config_dir_follows_xdg() {
-        // Environment variables are process-wide: only read them here.
-        let dir = config_dir().unwrap();
-        assert!(dir.ends_with("tasks-pending"));
+    fn writes_where_the_daemon_and_the_unit_read() {
+        let paths = setup_paths(&env_of(&[("HOME", "/home/me")])).unwrap();
+        assert_eq!(
+            paths.config,
+            PathBuf::from("/home/me/.config/tasks-pending/config.toml")
+        );
+        assert_eq!(
+            paths.env,
+            PathBuf::from("/home/me/.config/tasks-pending/env")
+        );
+
+        let paths = setup_paths(&env_of(&[
+            ("HOME", "/home/me"),
+            ("XDG_CONFIG_HOME", "/cfg"),
+        ]))
+        .unwrap();
+        assert_eq!(
+            paths.config,
+            PathBuf::from("/cfg/tasks-pending/config.toml")
+        );
+        assert_eq!(paths.env, PathBuf::from("/cfg/tasks-pending/env"));
+
+        // A relative XDG_CONFIG_HOME is ignored, per the XDG spec.
+        let paths =
+            setup_paths(&env_of(&[("HOME", "/home/me"), ("XDG_CONFIG_HOME", "cfg")])).unwrap();
+        assert_eq!(
+            paths.env,
+            PathBuf::from("/home/me/.config/tasks-pending/env")
+        );
+
+        // TASKS_PENDING_CONFIG moves the config, not the env file.
+        let paths = setup_paths(&env_of(&[
+            ("HOME", "/home/me"),
+            ("TASKS_PENDING_CONFIG", "/elsewhere/tp.toml"),
+        ]))
+        .unwrap();
+        assert_eq!(paths.config, PathBuf::from("/elsewhere/tp.toml"));
+        assert_eq!(
+            paths.env,
+            PathBuf::from("/home/me/.config/tasks-pending/env")
+        );
+
+        assert!(setup_paths(&env_of(&[])).is_err());
+
+        assert!(
+            SERVICE_TEMPLATE
+                .lines()
+                .any(|line| line == "EnvironmentFile=-%E/tasks-pending/env"),
+            "the unit reads the env file from %E, where setup writes it"
+        );
         let example: toml::Value = toml::from_str(CONFIG_EXAMPLE).unwrap();
         assert!(
             example.get("sources").is_some(),

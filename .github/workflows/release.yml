@@ -35,6 +35,8 @@ jobs:
 
       - name: Read the version and check the tag
         id: version
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -42,12 +44,19 @@ jobs:
             echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
             exit 1
           fi
-          # A manual run that publishes needs the tag already pushed.
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "${{ inputs.dry_run }}" == false ]]; then
-            git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null || {
+          # A manual run that publishes must build the commit the tag names:
+          # the release is created from that tag, so its assets must come
+          # from it, not from whatever the branch holds now.
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$DRY_RUN" == false ]]; then
+            git fetch --no-tags --depth=1 origin "+refs/tags/v$version:refs/tags/v$version" || {
               echo "::error::push the tag v$version before publishing"
               exit 1
             }
+            tagged="$(git rev-parse "refs/tags/v$version^{commit}")"
+            if [[ "$tagged" != "$GITHUB_SHA" ]]; then
+              echo "::error::tag v$version is $tagged, not the commit being built ($GITHUB_SHA); run the workflow from the tag"
+              exit 1
+            fi
           fi
           grep -q "^## $version\$" CHANGELOG.md || {
             echo "::error::CHANGELOG.md has no '## $version' section"
@@ -109,7 +118,9 @@ jobs:
     needs: [quality, build]
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    container: archlinux:base-devel
+    # Pinned by digest: the package is built in it, so what it holds is
+    # part of the release. Move the digest on purpose, not by a rebuild.
+    container: archlinux:base-devel@sha256:624bdc7fc6615155d67bc34cf7146c0c9fd0e3c92943977da63a630e4ca49c30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5

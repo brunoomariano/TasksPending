@@ -22,6 +22,9 @@ use sha2::{Digest, Sha256};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Longest pause in a download before giving up on it.
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
+/// Longest a whole download may take, like the installer's `--max-time`:
+/// the read timeout alone lets a server that trickles go on for ever.
+const DOWNLOAD_DEADLINE: Duration = Duration::from_secs(15 * 60);
 /// Largest bundle accepted; the real one is a few tens of megabytes.
 const BUNDLE_MAX_BYTES: u64 = 256 * 1024 * 1024;
 /// Largest checksum file accepted; the real one is a line.
@@ -260,10 +263,22 @@ fn tar(args: &[&str]) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Downloads `url` into `path`, giving up past `max_bytes`: the size is
-/// checked as the body arrives, so a wrong or endless answer is cut, not
-/// kept.
+/// Downloads `url` into `path`, giving up past `max_bytes` or past
+/// `deadline`: the size is checked as the body arrives, so a wrong or
+/// endless answer is cut, not kept.
 async fn download(
+    client: &reqwest::Client,
+    url: &str,
+    path: &Path,
+    max_bytes: u64,
+    deadline: Duration,
+) -> anyhow::Result<()> {
+    tokio::time::timeout(deadline, fetch(client, url, path, max_bytes))
+        .await
+        .map_err(|_| anyhow::anyhow!("downloading {url} took longer than {deadline:?}"))?
+}
+
+async fn fetch(
     client: &reqwest::Client,
     url: &str,
     path: &Path,
@@ -398,12 +413,13 @@ fn upgrade_in(
     let checksum = work.join(format!("{asset}.sha256"));
     println!("downloading {url}");
     runtime.block_on(async {
-        download(client, &url, &archive, BUNDLE_MAX_BYTES).await?;
+        download(client, &url, &archive, BUNDLE_MAX_BYTES, DOWNLOAD_DEADLINE).await?;
         download(
             client,
             &format!("{url}.sha256"),
             &checksum,
             CHECKSUM_MAX_BYTES,
+            DOWNLOAD_DEADLINE,
         )
         .await
     })?;
@@ -700,6 +716,47 @@ mod tests {
         assert_eq!(decide("0.6.0", "0.6.0", true), Decision::Installed);
         assert_eq!(decide("0.6.0", "0.0.1", false), Decision::Older);
         assert_eq!(decide("0.6.0", "0.5.9", true), Decision::Install);
+    }
+
+    /// A download that keeps trickling is cut at its deadline, however
+    /// short each pause is.
+    #[test]
+    fn gives_up_on_a_download_past_its_deadline() {
+        use std::io::{Read, Write as _};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/bundle", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request);
+            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n");
+            for _ in 0..40 {
+                if socket.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let scratch = Scratch::new("deadline");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let started = std::time::Instant::now();
+        let result = runtime.block_on(download(
+            &client,
+            &url,
+            &scratch.0.join("bundle"),
+            1024,
+            Duration::from_millis(300),
+        ));
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("took longer than 300ms"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(runtime);
+        server.join().unwrap();
     }
 
     /// The latest release is where `<base>/latest` redirects; when it does

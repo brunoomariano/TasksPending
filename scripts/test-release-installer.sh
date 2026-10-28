@@ -56,9 +56,10 @@ EOF2
   (
     cd "$FIXTURES"
     sha256sum "$ASSET" >"$ASSET.sha256"
-    # The same archive published with the wrong hash, and with a
-    # checksum file that names another asset.
-    sed 's/^./0/' "$ASSET.sha256" >mismatch.sha256
+    # The same archive published with the hash of other bytes, so it can
+    # never match by chance, and with a checksum file that names another
+    # asset.
+    printf '%s  %s\n' "$(printf 'not the release' | sha256sum | cut -d' ' -f1)" "$ASSET" >mismatch.sha256
     sed "s/ $ASSET\$/ other.tar.gz/" "$ASSET.sha256" >wrong-asset.sha256
   )
 }
@@ -163,24 +164,32 @@ cat >"$FAKE_BIN/sudo" <<'EOF2'
 printf 'sudo %s\n' "$*" >>"$PACMAN_LOG"
 EOF2
 # pacman installs nothing; asked where the package's files are, it names
-# the stand-in executable.
+# the stand-in executable, which is not on PATH. Another `tasks-pending`
+# is, as an older install of your own would be: the installer must run the
+# package's.
+PACKAGE_EXE="$WORK/fake/package/bin/tasks-pending"
+mkdir -p "${PACKAGE_EXE%/*}"
 cat >"$FAKE_BIN/pacman" <<'EOF2'
 #!/bin/sh
 case $1 in
--Qlq) printf '%s\n' /usr/share/doc/tasks-pending/README.md "$FAKE_BIN/tasks-pending" ;;
+-Qlq) printf '%s\n' /usr/share/doc/tasks-pending/README.md "$PACKAGE_EXE" ;;
 *) printf 'pacman %s\n' "$*" >>"$PACMAN_LOG" ;;
 esac
 EOF2
-cat >"$FAKE_BIN/tasks-pending" <<'EOF2'
+cat >"$PACKAGE_EXE" <<'EOF2'
 #!/bin/sh
 printf 'package %s\n' "$*" >>"$BINARY_LOG"
 EOF2
-chmod +x "$FAKE_BIN"/*
+cat >"$FAKE_BIN/tasks-pending" <<'EOF2'
+#!/bin/sh
+printf 'path %s\n' "$*" >>"$BINARY_LOG"
+EOF2
+chmod +x "$FAKE_BIN"/* "$PACKAGE_EXE"
 
 # run_installer <home> <env...>: runs the installer with the fakes on PATH
 # and the downloads pointed at the fixtures. A script of its own, so it
 # can also run without a terminal (setsid) or under one (script).
-export ROOT FIXTURES FAKE_BIN ASSET WORK
+export ROOT FIXTURES FAKE_BIN PACKAGE_EXE ASSET WORK
 cat >"$WORK/run-installer.sh" <<'EOF2'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -255,7 +264,9 @@ run_installer "$home" env TASKS_PENDING_VERSION=v0.6.0 >/dev/null
 grep -Fq "https://example.test/releases/download/v0.6.0/$ASSET.sha256" "$home/curl.log"
 RELEASE_BASE_URL="https://example.test/releases/" run_installer "$home" env >/dev/null
 grep -Fq " https://example.test/releases/latest/download/$ASSET" "$home/curl.log"
-! grep -Fq "releases//latest" "$home/curl.log"
+if grep -Fq "releases//latest" "$home/curl.log"; then
+  fail "the trailing slash of the releases location was doubled"
+fi
 
 # A plain-text releases location is refused before anything is fetched.
 home="$WORK/plain"
@@ -342,6 +353,9 @@ home="$WORK/arch"
 output="$(OS_RELEASE="$WORK/arch-os-release" setsid -w "$WORK/run-installer.sh" "$home" env </dev/null)"
 grep -Eq '^sudo pacman -U --noconfirm .*/tasks-pending-bin-x86_64\.pkg\.tar\.zst$' "$home/pacman.log"
 grep -Fqx 'package setup' "$home/binary.log"
+if grep -q '^path ' "$home/binary.log"; then
+  fail "the installer ran the tasks-pending on PATH, not the package's"
+fi
 [[ $output == *"running: sudo pacman -U --noconfirm "* ]] || fail "the command was not shown: $output"
 test ! -e "$home/.local/lib/tasks-pending"
 
@@ -351,7 +365,9 @@ if command -v script >/dev/null 2>&1; then
   OS_RELEASE="$WORK/arch-os-release" script -qec "$WORK/run-installer.sh '$home' env" /dev/null >/dev/null 2>&1 ||
     fail "the installer failed under a terminal"
   grep -Eq '^sudo pacman -U .*/tasks-pending-bin-x86_64\.pkg\.tar\.zst$' "$home/pacman.log"
-  ! grep -Fq -- '--noconfirm' "$home/pacman.log"
+  if grep -Fq -- '--noconfirm' "$home/pacman.log"; then
+    fail "pacman ran with --noconfirm although a terminal could answer it"
+  fi
 fi
 
 # A distribution built on Arch (ID_LIKE) gets the package too; as root,

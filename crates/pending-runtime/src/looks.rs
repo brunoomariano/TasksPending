@@ -1,10 +1,10 @@
 //! When the user last looked at the dashboard, to flag what changed since.
 //!
-//! "Looking" is any activity on the web page or in the TUI. Activity after
-//! a while away starts a new sitting: cards updated after the previous
-//! sitting ended are flagged, and stay flagged for the whole sitting. The
-//! times are kept in a small file next to the cache (see [`crate::store`]),
-//! shared by every browser and the TUI.
+//! "Looking" is any activity in the window. Activity after a while away
+//! starts a new sitting: cards updated after the previous sitting ended are
+//! flagged, and stay flagged for the whole sitting. The times are kept in a
+//! small file next to the cache (see [`crate::store`]), shared by the
+//! daemon and a window that runs the sources itself.
 //!
 //! A change is on screen only once its source was refreshed, so each look
 //! also records the refresh every source was showing. A card changed just

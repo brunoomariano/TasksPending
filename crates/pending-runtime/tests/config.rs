@@ -240,9 +240,9 @@ fn github_alert_stacks_are_accepted() {
 }
 
 /// A stack with `enabled = false` is switched off in the config: it is not
-/// queried and not shown, in the web page or the TUI, while its filter is
-/// still checked for typos. A source whose stacks are all off is not
-/// scheduled at all, instead of falling back to its default stacks.
+/// queried and not shown in the window, while its filter is still checked
+/// for typos. A source whose stacks are all off is not scheduled at all,
+/// instead of falling back to its default stacks.
 #[test]
 fn disabled_stacks_are_left_out() {
     let path = scratch("stack-enabled").join("config.toml");

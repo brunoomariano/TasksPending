@@ -490,8 +490,8 @@ mod tests {
     }
 
     /// The sandbox shows some cards as changed since the last look, and
-    /// keeps showing them however the page is used: activity reported by
-    /// the page does not start a new sitting there.
+    /// keeps showing them however the window is used: activity it reports
+    /// does not start a new sitting there.
     #[tokio::test]
     async fn sandbox_keeps_its_changed_cards() {
         let dashboard = SandboxDashboard::default();
@@ -641,9 +641,9 @@ mod tests {
         (status, String::from_utf8_lossy(&body).into_owned())
     }
 
-    /// The web refresh button asks for an immediate refresh of every source; a
-    /// second request right after is refused with the wait time, so provider
-    /// rate limits aren't exceeded.
+    /// The window's Refresh button asks for an immediate refresh of every
+    /// source; a second request right after is refused with the wait time,
+    /// so provider rate limits aren't exceeded.
     #[tokio::test(start_paused = true)]
     async fn refresh_endpoint_wakes_sources_with_a_cooldown() {
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -705,7 +705,7 @@ mod tests {
         snapshot.marked
     }
 
-    /// The page marks a card as in progress and unmarks it again; the
+    /// The window marks a card as in progress and unmarks it again; the
     /// snapshot lists the marked cards. Unknown cards are refused.
     #[tokio::test]
     async fn marks_endpoint_marks_and_unmarks_cards() {
@@ -728,7 +728,7 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
-    /// The page reports activity so the next visit can flag what changed;
+    /// The window reports activity so the next visit can flag what changed;
     /// only the dashboard itself may do so.
     #[tokio::test]
     async fn look_endpoint_requires_the_dashboard_header() {
@@ -754,7 +754,7 @@ mod tests {
         (on_board, snapshot.snoozed.len())
     }
 
-    /// The page snoozes a card until a time or until it changes, and wakes
+    /// The window snoozes a card until a time or until it changes, and wakes
     /// it again; the snapshot leaves snoozed cards out of the boards and
     /// lists them. Unknown cards and past times are refused, and so is a
     /// request without the dashboard header.

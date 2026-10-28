@@ -150,7 +150,7 @@ fn marks_of_finished_cards_are_dropped() {
     assert!(marked(&reloaded, snapshot(vec![("plane", fresh(&["a", "b"]))])).is_empty());
 }
 
-/// The daemon and the TUI fetch on their own schedules. A process whose
+/// The daemon and the window fetch on their own schedules. A process whose
 /// last clean refresh is older than the mark has simply not seen the card
 /// yet: it must not drop the mark.
 #[test]
@@ -174,10 +174,11 @@ fn a_refresh_older_than_the_mark_does_not_drop_it() {
     assert!(marked(&Marks::load(Some(path)), caught_up).is_empty());
 }
 
-/// A source missing from the snapshot says nothing about its cards: the TUI
-/// may run another config, the config file may be briefly absent, or the
-/// source may be switched off. Its marks are kept and work again when the
-/// source is back; only marks left behind for a month are cleaned up.
+/// A source missing from the snapshot says nothing about its cards: the
+/// other process may run another config, the config file may be briefly
+/// absent, or the source may be switched off. Its marks are kept and work
+/// again when the source is back; only marks left behind for a month are
+/// cleaned up.
 #[test]
 fn marks_survive_their_source_leaving_the_config() {
     let path = scratch("absent-source");
@@ -247,9 +248,9 @@ fn a_broken_file_starts_empty_and_saved_files_are_private() {
     assert_eq!(marked(&Marks::load(Some(path)), on_screen), ["a"]);
 }
 
-/// The daemon and the TUI are separate processes sharing one marks file: a
-/// mark made by one shows in the other, and neither overwrites the other's
-/// marks with its own older copy.
+/// The daemon and a window running the sources itself are separate
+/// processes sharing one marks file: a mark made by one shows in the other,
+/// and neither overwrites the other's marks with its own older copy.
 #[test]
 fn two_processes_share_the_marks_file() {
     let path = scratch("shared");

@@ -1,5 +1,5 @@
 //! A small list kept in a JSON file next to the cache, shared by the daemon
-//! and the TUI.
+//! and a window that runs the sources itself.
 //!
 //! They are separate processes, so the file is the single source of truth:
 //! it is read before every use, and changed only under a lock file held
@@ -159,7 +159,7 @@ pub(crate) const ABSENT_SOURCE_DAYS: i64 = 30;
 /// applies to `snapshot`. It no longer does when the card is missing after
 /// a clean refresh of its source that completed after `since` (the item was
 /// finished elsewhere). An older refresh may simply not have the card yet
-/// (the daemon and the TUI fetch on their own schedules), and a failing,
+/// (the daemon and the window fetch on their own schedules), and a failing,
 /// refreshing or stale source says nothing. A source absent from the
 /// dashboard keeps its entries for [`ABSENT_SOURCE_DAYS`]. A card in
 /// `hidden` is left out of the boards by an `exclude` pattern but its

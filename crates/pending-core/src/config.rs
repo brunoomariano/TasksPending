@@ -123,7 +123,7 @@ impl SourceKind {
             Self::Linear => (LINEAR_ICON, Some(LINEAR_DARK_ICON)),
             Self::Plane => (PLANE_ICON, None),
             Self::Todoist => (TODOIST_ICON, None),
-            // Not a provider: the page falls back to its generic icon.
+            // Not a provider: the window falls back to its generic icon.
             Self::Sample => return None,
         };
 
@@ -411,7 +411,8 @@ mod tests {
     }
 
     /// A source may name an icon (and a variant for dark themes) by http(s)
-    /// URL; anything else is rejected, since the page loads it as an image.
+    /// URL; anything else is rejected, since the window fetches it as an
+    /// image.
     #[test]
     fn source_icons_are_http_urls() {
         let config = parse(

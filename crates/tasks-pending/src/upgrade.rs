@@ -12,7 +12,10 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::Context;
-use pending_core::release::{bundle_asset, is_newer, parse_version, process_var, release_base_url};
+use pending_api::update::release_client;
+use pending_core::release::{
+    bundle_asset, is_newer, parse_version, process_var, release_base_url, version_from_release_url,
+};
 use sha2::{Digest, Sha256};
 
 /// Longest wait to reach the releases host.
@@ -144,6 +147,36 @@ fn decide(current: &str, target: &str, allow_downgrade: bool) -> Decision {
     } else {
         Decision::Older
     }
+}
+
+/// The version `<base>/latest` redirects to, read from the redirect
+/// alone (no body, no API, no token), or what came back instead.
+async fn latest_version(base: &str) -> anyhow::Result<String> {
+    let url = format!("{base}/latest");
+    let client = release_client().context("building the HTTP client")?;
+    let response = client
+        .head(&url)
+        .send()
+        .await
+        .with_context(|| format!("could not reach {url}"))?;
+    let location = response
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|location| location.to_str().ok());
+    version_from_latest(&url, response.status(), location)
+}
+
+/// The release version in `location`, the redirect `url` answered with
+/// `status`.
+fn version_from_latest(
+    url: &str,
+    status: reqwest::StatusCode,
+    location: Option<&str>,
+) -> anyhow::Result<String> {
+    let location =
+        location.with_context(|| format!("{url} answered HTTP {status}, not a release"))?;
+    version_from_release_url(location)
+        .with_context(|| format!("{url} points at {location}, which names no release"))
 }
 
 /// The version asked for on the command line, or `None` for the latest.
@@ -293,8 +326,8 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     let target = match &pinned {
         Some(version) => version.clone(),
         None => runtime
-            .block_on(pending_api::update::latest_release(&base))
-            .with_context(|| format!("could not read the latest release from {base}/latest"))?,
+            .block_on(latest_version(&base))
+            .context("could not read the latest release")?,
     };
     match decide(current, &target, options.allow_downgrade) {
         Decision::Install => {}
@@ -667,6 +700,34 @@ mod tests {
         assert_eq!(decide("0.6.0", "0.6.0", true), Decision::Installed);
         assert_eq!(decide("0.6.0", "0.0.1", false), Decision::Older);
         assert_eq!(decide("0.6.0", "0.5.9", true), Decision::Install);
+    }
+
+    /// The latest release is where `<base>/latest` redirects; when it does
+    /// not, the error says what came back instead.
+    #[test]
+    fn reads_the_latest_release_from_the_redirect() {
+        let url = "https://example.test/releases/latest";
+        assert_eq!(
+            version_from_latest(
+                url,
+                reqwest::StatusCode::FOUND,
+                Some("https://example.test/releases/tag/v0.6.1")
+            )
+            .unwrap(),
+            "0.6.1"
+        );
+        let error = version_from_latest(url, reqwest::StatusCode::NOT_FOUND, None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("HTTP 404"), "{error}");
+        let error = version_from_latest(
+            url,
+            reqwest::StatusCode::FOUND,
+            Some("https://example.test/login"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("https://example.test/login"), "{error}");
     }
 
     /// `--version` takes a version, with or without the `v`; `latest` and

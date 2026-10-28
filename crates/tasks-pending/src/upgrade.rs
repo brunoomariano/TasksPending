@@ -95,6 +95,11 @@ fn release_executable(lib_dir: &Path) -> PathBuf {
     lib_dir.join("bin/tasks-pending")
 }
 
+/// The installer a release directory holds.
+fn release_installer(lib_dir: &Path) -> PathBuf {
+    lib_dir.join("scripts/install.sh")
+}
+
 /// Where `exe` was installed, given the release directory.
 fn installed_from(exe: &Path, lib_dir: &Path) -> Install {
     let exe = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
@@ -471,7 +476,7 @@ fn install_archive(
         Err(why) => anyhow::bail!(
             "the bundle's installer {why}; the new release is in {}, run {} --start",
             lib_dir.display(),
-            lib_dir.join("scripts/install.sh").display()
+            release_installer(lib_dir).display()
         ),
     }
     if let Err(error) = remove_if_present(&previous) {
@@ -519,7 +524,7 @@ fn unpack_release(archive: &Path, asset: &str, work: &Path) -> anyhow::Result<Pa
         "the archive holds no executable"
     );
     anyhow::ensure!(
-        bundle.join("scripts/install.sh").is_file(),
+        release_installer(&bundle).is_file(),
         "the archive holds no installer"
     );
     Ok(bundle)
@@ -576,7 +581,7 @@ fn swap_in(staged: &Path, lib_dir: &Path, previous: &Path) -> anyhow::Result<()>
 /// whose checksum was verified, and runs with the same trust as the
 /// executable it installs. Says why it failed.
 fn run_installer(layout: &Layout) -> Result<(), String> {
-    match Command::new(layout.lib_dir.join("scripts/install.sh"))
+    match Command::new(release_installer(&layout.lib_dir))
         .arg("--start")
         .envs(installer_env(layout))
         .status()
@@ -592,7 +597,7 @@ fn run_installer(layout: &Layout) -> Result<(), String> {
 /// are the ones in place. The error says where things stand.
 fn roll_back(layout: &Layout, staged: &Path, previous: &Path, why: &str) -> anyhow::Error {
     let lib_dir = &layout.lib_dir;
-    let installer = lib_dir.join("scripts/install.sh");
+    let installer = release_installer(lib_dir);
     if let Err(error) = fs::rename(lib_dir, staged) {
         return anyhow::anyhow!(
             "the bundle's installer {why}, and the new release could not be moved aside ({error}): the previous release is in {}; move it back to {} and run {} --start",
@@ -938,7 +943,7 @@ mod tests {
         };
         write_script(&release_executable(dir), &exe);
         write_script(
-            &dir.join("scripts/install.sh"),
+            &release_installer(dir),
             &format!(
                 "#!/bin/sh\necho \"{} $* PREFIX=$PREFIX BIN_DIR=$BIN_DIR RELEASE_BIN=$RELEASE_BIN\" >>'{}'\nexit {installer_exit}\n",
                 version.unwrap_or("broken"),
@@ -1092,7 +1097,7 @@ mod tests {
         assert!(
             error.contains(&format!(
                 "run {} --start",
-                layout.lib_dir.join("scripts/install.sh").display()
+                release_installer(&layout.lib_dir).display()
             )),
             "{error}"
         );

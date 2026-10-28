@@ -1,6 +1,6 @@
 //! Cards the user marked as in progress. Marks are kept in a small file next
-//! to the cache (see [`crate::store`]), so the web page and the TUI share
-//! them and they survive restarts.
+//! to the cache (see [`crate::store`]), so the daemon and a window that runs
+//! the sources itself share them and they survive restarts.
 
 use std::collections::HashSet;
 use std::path::PathBuf;

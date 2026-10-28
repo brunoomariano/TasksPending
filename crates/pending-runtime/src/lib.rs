@@ -27,7 +27,7 @@ pub mod marks;
 pub mod snoozes;
 mod store;
 
-/// What the API and the TUI need from a running dashboard.
+/// What the API needs from a running dashboard.
 pub trait Dashboard: Send + Sync {
     fn snapshot(&self) -> DashboardSnapshot;
     /// Refreshes every source now (reloading a changed config first, when

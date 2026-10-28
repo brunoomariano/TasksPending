@@ -202,8 +202,8 @@ fn snoozes_of_finished_cards_are_dropped() {
 }
 
 /// A snoozed card can be snoozed again, from a snapshot that already lists
-/// it as snoozed (what the page and the TUI hold): the new time replaces
-/// the old one, and the card is still listed once.
+/// it as snoozed (what the window holds): the new time replaces the old
+/// one, and the card is still listed once.
 #[test]
 fn snoozing_a_snoozed_card_replaces_its_time() {
     let snoozes = Snoozes::load(Some(scratch("again")));
@@ -281,7 +281,7 @@ fn snoozes_of_an_absent_source_are_kept_for_a_month() {
 }
 
 /// A snooze that cannot be written is an error, not a silent success: the
-/// card would stay on the board while the page said it was snoozed.
+/// card would stay on the board while the window said it was snoozed.
 #[test]
 fn a_snooze_that_cannot_be_saved_is_an_error() {
     let cards = [("a", base())];

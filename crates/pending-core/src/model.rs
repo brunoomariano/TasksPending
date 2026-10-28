@@ -143,7 +143,7 @@ impl<'de> Deserialize<'de> for SourceStatus {
 mod tests {
     use super::*;
 
-    /// The frontend and external integrations read timestamps as RFC3339 and
+    /// The window and external integrations read timestamps as RFC3339 and
     /// the card link as a string or null; the snapshot JSON must not change
     /// shape when the internal types get stronger.
     #[test]

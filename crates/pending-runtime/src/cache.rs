@@ -18,8 +18,8 @@ const VERSION: u32 = 1;
 const MAX_AGE: chrono::Duration = chrono::Duration::days(30);
 
 /// A JSON file holding, per source name, its last successful batch. Several
-/// processes (API, TUI) may share it: each save merges its own entries into
-/// what is on disk.
+/// processes (the daemon, a window running the sources) may share it: each
+/// save merges its own entries into what is on disk.
 pub struct Cache {
     path: PathBuf,
     /// Serializes saves inside this process.

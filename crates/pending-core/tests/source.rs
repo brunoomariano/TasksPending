@@ -17,8 +17,8 @@ async fn sources_are_refreshed_through_a_shared_port() {
     }
 }
 
-/// The sample snapshot served by the API and the TUI is built through the
-/// same path as a real source, and the source shows as ready.
+/// The sample snapshot served by the API is built through the same path as
+/// a real source, and the source shows as ready.
 #[test]
 fn sample_snapshot_is_built_from_the_sample_source() {
     let snapshot = sample_snapshot();

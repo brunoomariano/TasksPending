@@ -15,5 +15,6 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
 pending-api = { path = "../pending-api" }
 tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }

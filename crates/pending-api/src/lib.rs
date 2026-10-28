@@ -9,6 +9,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use pending_core::api::{DASHBOARD_HEADER, Health, REFRESH_COOLDOWN};
 use pending_core::{DashboardSnapshot, sandbox_snapshot};
 use pending_runtime::Dashboard;
 use pending_runtime::config::{Origin, cache_path};
@@ -37,12 +38,6 @@ pub struct ServeOptions {
     pub config: Option<PathBuf>,
 }
 
-#[derive(Debug, Serialize)]
-struct Health {
-    status: &'static str,
-    version: &'static str,
-}
-
 /// The live dashboard behind the API: the routes, where the config came
 /// from, and the watch that reloads the config file while it runs.
 pub struct LiveServer {
@@ -56,7 +51,8 @@ pub struct LiveServer {
 /// Starts the live dashboard (the sources, their cache and the config
 /// watch) and returns its API routes, to serve on a listener of the
 /// caller's choosing: the daemon's port, or one the app picks for itself
-/// when no daemon is running.
+/// when no daemon is running. Needs a Tokio runtime: the sources, the
+/// config watch and the release check are spawned on it.
 pub fn start_live(config: Option<PathBuf>) -> anyhow::Result<LiveServer> {
     let env = process_env();
     let cache = cache_path(&*env);
@@ -129,14 +125,6 @@ fn validate_listen_addr(listen: SocketAddr) -> anyhow::Result<()> {
 /// How often the config file is checked for changes.
 const CONFIG_WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Minimum wait between refreshes requested over HTTP; each one queries every
-/// source, and provider APIs rate-limit.
-const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
-
-/// Header the app sends with state-changing requests. A web page open in a
-/// browser cannot add it without a CORS preflight, which is refused.
-pub const DASHBOARD_HEADER: (&str, &str) = ("x-requested-with", "tasks-pending");
-
 #[derive(Clone)]
 struct AppState {
     dashboard: Arc<dyn Dashboard>,
@@ -146,7 +134,7 @@ struct AppState {
 /// Simulated cards; marks, snoozes and looks are kept in memory while the
 /// sandbox runs.
 #[derive(Clone)]
-pub struct SandboxDashboard {
+pub(crate) struct SandboxDashboard {
     marks: Arc<Marks>,
     snoozes: Arc<Snoozes>,
     looks: Arc<Looks>,
@@ -281,8 +269,8 @@ async fn root() -> String {
 
 async fn healthz() -> Json<Health> {
     Json(Health {
-        status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
+        status: "ok".to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
     })
 }
 
@@ -426,6 +414,16 @@ mod tests {
 
     use super::*;
 
+    /// [`app`] without the release check, which would reach GitHub from a
+    /// test that runs long enough.
+    fn test_app(dashboard: impl Dashboard + 'static) -> Router {
+        app_with(
+            dashboard,
+            weather::WeatherService::omarchy(),
+            update::UpdateCheck::off(),
+        )
+    }
+
     /// The API serves the aggregator's state: after the first refresh, the
     /// snapshot carries the cards and health of the configured source.
     #[tokio::test(start_paused = true)]
@@ -445,7 +443,7 @@ mod tests {
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
 
-        let response = app(aggregator)
+        let response = test_app(aggregator)
             .oneshot(
                 Request::get("/api/v1/snapshot")
                     .body(Body::empty())
@@ -468,7 +466,7 @@ mod tests {
     /// contacts a provider before returning its simulated cards.
     #[tokio::test]
     async fn sandbox_snapshot_endpoint_serves_simulated_cards() {
-        let response = app(SandboxDashboard::default())
+        let response = test_app(SandboxDashboard::default())
             .oneshot(
                 Request::get("/api/v1/snapshot")
                     .body(Body::empty())
@@ -514,7 +512,7 @@ mod tests {
             .sum::<usize>();
         assert!(changed.len() < cards, "only the newest cards are flagged");
 
-        let app = app(dashboard);
+        let app = test_app(dashboard);
         let status = post_json(app.clone(), "/api/v1/look", "", true).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
         let (_, body) = get(app, "/api/v1/snapshot").await;
@@ -537,7 +535,7 @@ mod tests {
     /// The daemon's address in a browser explains where the page went.
     #[tokio::test]
     async fn the_root_names_the_daemon_and_the_app() {
-        let (status, body) = get(app(idle_aggregator()), "/").await;
+        let (status, body) = get(test_app(idle_aggregator()), "/").await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("TasksPending"), "{body}");
         assert!(body.contains("tasks-pending"), "{body}");
@@ -623,7 +621,7 @@ mod tests {
             Duration::from_secs(30),
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
-        let app = app(aggregator);
+        let app = test_app(aggregator);
 
         let (status, _) = post(app.clone(), "/api/v1/refresh", true).await;
         assert_eq!(status, StatusCode::ACCEPTED);
@@ -643,7 +641,7 @@ mod tests {
     /// header only the dashboard sends, the request is refused.
     #[tokio::test]
     async fn refresh_requires_the_dashboard_header() {
-        let (status, _) = post(app(idle_aggregator()), "/api/v1/refresh", false).await;
+        let (status, _) = post(test_app(idle_aggregator()), "/api/v1/refresh", false).await;
 
         assert_eq!(status, StatusCode::FORBIDDEN);
     }
@@ -669,7 +667,7 @@ mod tests {
     /// snapshot lists the marked cards. Unknown cards are refused.
     #[tokio::test]
     async fn marks_endpoint_marks_and_unmarks_cards() {
-        let app = app(SandboxDashboard::default());
+        let app = test_app(SandboxDashboard::default());
         let id = sandbox_snapshot().boards[0].groups[0].columns[0].cards[0]
             .id
             .clone();
@@ -692,7 +690,7 @@ mod tests {
     /// only the dashboard itself may do so.
     #[tokio::test]
     async fn look_endpoint_requires_the_dashboard_header() {
-        let app = app(SandboxDashboard::default());
+        let app = test_app(SandboxDashboard::default());
 
         let (status, _) = post(app.clone(), "/api/v1/look", false).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
@@ -720,7 +718,7 @@ mod tests {
     /// request without the dashboard header.
     #[tokio::test]
     async fn snooze_endpoint_hides_and_wakes_cards() {
-        let app = app(SandboxDashboard::default());
+        let app = test_app(SandboxDashboard::default());
         let id = sandbox_snapshot().boards[0].groups[0].columns[0].cards[0]
             .id
             .clone();
@@ -757,7 +755,7 @@ mod tests {
     /// only the dashboard sends, the request is refused and nothing changes.
     #[tokio::test]
     async fn marks_require_the_dashboard_header() {
-        let app = app(SandboxDashboard::default());
+        let app = test_app(SandboxDashboard::default());
         let id = sandbox_snapshot().boards[0].groups[0].columns[0].cards[0]
             .id
             .clone();
@@ -785,7 +783,7 @@ mod tests {
     /// 127.0.0.1 (DNS rebinding) can't read the snapshot or trigger a refresh.
     #[tokio::test]
     async fn only_local_host_names_are_served() {
-        let app = app(idle_aggregator());
+        let app = test_app(idle_aggregator());
 
         for host in [
             "127.0.0.1:8080",

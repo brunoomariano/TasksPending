@@ -8,8 +8,8 @@ use std::time::Duration;
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
+use pending_core::api::VersionReport;
 use pending_core::release::{REPOSITORY, is_newer, release_base_url, version_from_release_url};
-use serde::Serialize;
 use tracing::debug;
 
 /// Set to anything to skip the check (e.g. offline machines, tests).
@@ -20,16 +20,6 @@ const FIRST_CHECK_AFTER: Duration = Duration::from_secs(30);
 const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// Longest wait for the release page's redirect.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// What `GET /api/v1/version` answers.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct VersionReport {
-    /// The daemon's version.
-    pub current: String,
-    /// The latest published version, when the check ran and found one
-    /// newer than `current`; `None` otherwise.
-    pub available: Option<String>,
-}
 
 /// The latest version seen, shared with the route.
 #[derive(Clone, Default)]

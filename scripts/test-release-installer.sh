@@ -275,12 +275,14 @@ RELEASE_BASE_URL="http://example.test/releases" \
 test ! -e "$home/curl.log"
 
 # Custom directories are honoured, and the executable's directory is
-# passed on as it is, not rebuilt from the prefix.
+# passed on as it is. The desktop entry, icons and examples stay under
+# ~/.local, where launchers look, wherever the link goes.
 home="$WORK/dirs"
 run_installer "$home" env TASKS_PENDING_LIB_DIR="$home/opt/tp" TASKS_PENDING_BIN_DIR="$home/opt/bin" >/dev/null
 test -x "$home/opt/tp/bin/tasks-pending"
 test -L "$home/opt/bin/tasks-pending"
-grep -Fq "PREFIX=$home/opt BIN_DIR=$home/opt/bin INSTALL_LINK=1 RELEASE_BIN=$home/opt/tp/bin" "$home/binary.log"
+grep -Fq "PREFIX=$home/.local BIN_DIR=$home/opt/bin INSTALL_LINK=1 RELEASE_BIN=$home/opt/tp/bin" "$home/binary.log" ||
+  fail "the prefix followed the executable's directory: $(cat "$home/binary.log")"
 
 # A trailing slash on either directory changes nothing: the staging
 # directories still sit beside the release one, not inside it.

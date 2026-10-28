@@ -14,7 +14,7 @@ use super::icons::symbolic;
 use super::{Ctx, Widgets};
 use crate::backend::Command;
 use crate::clock::{clock_text, date_text, drawing};
-use crate::present::{Page, weather_icon_name};
+use crate::present::{Page, refresh_button, weather_icon_name};
 use crate::view::View;
 
 /// Widest the clock gets.
@@ -222,7 +222,7 @@ pub fn build(ctx: &Rc<Ctx>) -> Hero {
         let ctx = ctx.clone();
         refresh_button.connect_clicked(move |button| {
             button.set_sensitive(false);
-            ctx.send(Command::Refresh);
+            ctx.send(Command::Refresh { manual: true });
         });
     }
 
@@ -301,17 +301,9 @@ fn start_clock(date: gtk::Label, digits: gtk::DrawingArea) {
 /// is unavailable must not leave it off.
 pub fn update_controls(ctx: &Rc<Ctx>, widgets: &Widgets, page: Option<&Page>, view: &View) {
     let hero = &widgets.hero;
-    let hold = ctx.model.borrow().refresh_hold.clone();
-    match hold {
-        Some((until, text)) if Instant::now() < until => {
-            hero.refresh_button.set_sensitive(false);
-            hero.refresh_label.set_label(&text);
-        }
-        _ => {
-            hero.refresh_button.set_sensitive(true);
-            hero.refresh_label.set_label("Refresh");
-        }
-    }
+    let (label, enabled) = refresh_button(ctx.model.borrow().refresh_hold.as_ref(), Instant::now());
+    hero.refresh_button.set_sensitive(enabled);
+    hero.refresh_label.set_label(&label);
     hero.settings_button
         .set_tooltip_text(Some(&view.settings_label()));
     hero.filter_dot.set_visible(view.is_filtering());

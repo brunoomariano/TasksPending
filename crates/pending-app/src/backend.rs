@@ -36,8 +36,11 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 pub enum Command {
     /// Read the snapshot now.
     Poll,
-    /// Refresh every source, then read the snapshot a moment later.
-    Refresh,
+    /// Refresh every source, then read the snapshot a moment later;
+    /// `manual` when the user asked, not the auto-refresh timer.
+    Refresh {
+        manual: bool,
+    },
     SetMark {
         id: String,
         marked: bool,
@@ -62,12 +65,34 @@ pub enum Command {
 pub enum Event {
     Snapshot(Result<DashboardSnapshot, String>),
     Weather(Option<WeatherReport>),
-    /// A refresh was accepted, or why not (e.g. "wait 7s").
-    Refreshed(Result<(), String>),
+    /// A refresh was accepted, or why not.
+    Refreshed {
+        manual: bool,
+        result: Result<(), Refusal>,
+    },
     /// A mark, snooze or wake went through, or why not.
     Acted(Result<(), String>),
     /// A newer published version, when the daemon knows of one.
     Update(Option<String>),
+}
+
+/// Why the daemon did not take a refresh.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// It refreshed a moment ago, and takes another after this many
+    /// seconds.
+    Wait(u64),
+    /// It could not be asked, or it answered with an error.
+    Failed(String),
+}
+
+impl From<Error> for Refusal {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::Cooldown(secs) => Self::Wait(secs),
+            other => Self::Failed(text(other)),
+        }
+    }
 }
 
 /// How the dashboard was found.
@@ -321,10 +346,10 @@ async fn change_lane(
 ) {
     while let Some(command) = inbox.recv().await {
         let (event, read_after) = match command {
-            Command::Refresh => {
-                let result = client.refresh().await.map_err(text);
+            Command::Refresh { manual } => {
+                let result = client.refresh().await.map_err(Refusal::from);
                 let read_after = result.is_ok().then_some(AFTER_REFRESH);
-                (Event::Refreshed(result), read_after)
+                (Event::Refreshed { manual, result }, read_after)
             }
             Command::SetMark { id, marked } => acted(client.set_mark(&id, marked).await),
             Command::Snooze { id, until } => acted(client.snooze(&id, until).await),
@@ -562,14 +587,53 @@ mod tests {
             _ => (Duration::ZERO, 200, "{}".to_owned()),
         });
         let (commands, mut events) = spawn_worker(&runtime, fake.client());
-        commands.send(Command::Refresh).unwrap();
+        commands.send(Command::Refresh { manual: true }).unwrap();
         let refreshed = next(&runtime, &mut events);
         assert!(
-            matches!(refreshed, Event::Refreshed(Ok(()))),
+            matches!(refreshed, Event::Refreshed { result: Ok(()), .. }),
             "{refreshed:?}"
         );
         let read = next(&runtime, &mut events);
         assert!(matches!(read, Event::Snapshot(Ok(_))), "{read:?}");
+    }
+
+    /// A refused refresh says why, the daemon's wait or the failure, and
+    /// who asked for it.
+    #[test]
+    fn tells_why_a_refresh_was_refused() {
+        let runtime = runtime();
+        let busy = Fake::start(|_, _| {
+            let body = r#"{"retry_after_secs": 7}"#.to_owned();
+            (Duration::ZERO, 429, body)
+        });
+        let (commands, mut events) = spawn_worker(&runtime, busy.client());
+        commands.send(Command::Refresh { manual: false }).unwrap();
+        let event = next(&runtime, &mut events);
+        assert!(
+            matches!(
+                event,
+                Event::Refreshed {
+                    manual: false,
+                    result: Err(Refusal::Wait(7)),
+                }
+            ),
+            "{event:?}"
+        );
+
+        let broken = Fake::start(|_, _| (Duration::ZERO, 500, String::new()));
+        let (commands, mut events) = spawn_worker(&runtime, broken.client());
+        commands.send(Command::Refresh { manual: true }).unwrap();
+        let event = next(&runtime, &mut events);
+        assert!(
+            matches!(
+                &event,
+                Event::Refreshed {
+                    manual: true,
+                    result: Err(Refusal::Failed(error)),
+                } if error == "HTTP 500"
+            ),
+            "{event:?}"
+        );
     }
 
     /// A change the daemon refuses says why, and reads nothing: there is

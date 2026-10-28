@@ -17,14 +17,13 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use pending_core::WeatherReport;
-use pending_core::api::REFRESH_COOLDOWN;
 use pending_runtime::live::Env;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::activity::LookThrottle;
 use crate::backend::{self, Command, Event, spawn_worker};
-use crate::present::{BoardView, Page, board_view, page};
+use crate::present::{BoardView, Page, board_view, lasting, page, refreshed};
 use crate::state::ViewState;
 use crate::theme;
 use crate::view::View;
@@ -437,19 +436,25 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
                         hero::update_weather(&ctx, widgets);
                     }
                 }
-                Event::Refreshed(result) => {
-                    let label = match result {
-                        Ok(()) => "Refreshing…".to_owned(),
-                        Err(error) => format!("Refresh ({error})"),
-                    };
-                    ctx.model.borrow_mut().refresh_hold =
-                        Some((Instant::now() + REFRESH_COOLDOWN, label));
+                Event::Refreshed { manual, result } => {
+                    let shown = refreshed(manual, &result);
+                    if let Some(note) = &shown.note
+                        && let Some(widgets) = ctx.widgets.borrow().as_ref()
+                    {
+                        hero::show_note(widgets, note);
+                    }
+                    if let Some((wait, label)) = shown.hold {
+                        ctx.model.borrow_mut().refresh_hold = Some((Instant::now() + wait, label));
+                        let ctx = ctx.clone();
+                        gtk::glib::timeout_add_local_once(wait, move || {
+                            let mut model = ctx.model.borrow_mut();
+                            let hold = model.refresh_hold.take();
+                            model.refresh_hold = lasting(hold, Instant::now());
+                            drop(model);
+                            ctx.refresh_controls();
+                        });
+                    }
                     ctx.refresh_controls();
-                    let ctx = ctx.clone();
-                    gtk::glib::timeout_add_local_once(REFRESH_COOLDOWN, move || {
-                        ctx.model.borrow_mut().refresh_hold = None;
-                        ctx.refresh_controls();
-                    });
                 }
                 Event::Acted(Err(error)) => {
                     if let Some(widgets) = ctx.widgets.borrow().as_ref() {
@@ -515,7 +520,7 @@ fn schedule_auto_refresh(ctx: &Rc<Ctx>) {
         let ctx = ctx.clone();
         gtk::glib::timeout_add_local(Duration::from_secs(u64::from(minutes) * 60), move || {
             if !is_hidden(&ctx) {
-                ctx.send(Command::Refresh);
+                ctx.send(Command::Refresh { manual: false });
             }
             gtk::glib::ControlFlow::Continue
         })

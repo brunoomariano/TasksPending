@@ -4,12 +4,15 @@
 //! widgets put on screen.
 
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local, Utc};
+use pending_core::api::REFRESH_COOLDOWN;
 use pending_core::{
     DashboardSnapshot, Icon, PendingCard, SourceHealth, SourceStatus, WeatherCondition, is_http_url,
 };
 
+use crate::backend::Refusal;
 use crate::snooze::until_text;
 use crate::state::ViewState;
 use crate::view::{View, column_key, group_key, hide_key};
@@ -150,6 +153,50 @@ pub fn board_view(state: &ViewState, page: Option<&Page>) -> BoardView {
         notice,
         now: page.map(|page| page.now.clone()).unwrap_or_default(),
         groups: page.map(|page| page.groups.clone()).unwrap_or_default(),
+    }
+}
+
+/// How the window shows the answer to a refresh.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refreshed {
+    /// The Refresh button stays off this long, saying this.
+    pub hold: Option<(Duration, String)>,
+    /// A note under the controls.
+    pub note: Option<String>,
+}
+
+/// The answer to a refresh, `manual` when the user asked for it. One the
+/// daemon took holds the button until it would take another. A refusal
+/// shows only for a refresh the user asked for, since the auto-refresh
+/// timer tries again at its next turn: a wait holds the button for as long
+/// as the daemon said, and a failure is a note, too long for a button.
+pub fn refreshed(manual: bool, result: &Result<(), Refusal>) -> Refreshed {
+    let (hold, note) = match result {
+        Ok(()) => (Some((REFRESH_COOLDOWN, "Refreshing…".to_owned())), None),
+        Err(_) if !manual => (None, None),
+        Err(Refusal::Wait(secs)) => (
+            Some((
+                Duration::from_secs(*secs),
+                format!("Refresh (wait {secs}s)"),
+            )),
+            None,
+        ),
+        Err(Refusal::Failed(error)) => (None, Some(format!("Could not refresh ({error})"))),
+    };
+    Refreshed { hold, note }
+}
+
+/// `hold` if it still lasts at `now`: the timer set for one hold must not
+/// end a later one.
+pub fn lasting(hold: Option<(Instant, String)>, now: Instant) -> Option<(Instant, String)> {
+    hold.filter(|(until, _)| now < *until)
+}
+
+/// The Refresh button's label, and whether it can be pressed, at `now`.
+pub fn refresh_button(hold: Option<&(Instant, String)>, now: Instant) -> (String, bool) {
+    match hold {
+        Some((until, label)) if now < *until => (label.clone(), false),
+        _ => ("Refresh".to_owned(), true),
     }
 }
 
@@ -709,6 +756,57 @@ mod tests {
         );
         assert_eq!(stale.groups.len(), 2);
         assert_eq!(stale.now.len(), 2);
+    }
+
+    /// A refresh the daemon took holds the button until it would take
+    /// another. A refusal shows only for a refresh the user asked for: as
+    /// a wait on the button, or as a note when it failed outright.
+    #[test]
+    fn shows_the_answer_to_a_refresh() {
+        let none = Refreshed {
+            hold: None,
+            note: None,
+        };
+        let accepted = Some((REFRESH_COOLDOWN, "Refreshing…".to_owned()));
+        assert_eq!(refreshed(false, &Ok(())).hold, accepted);
+        assert_eq!(refreshed(true, &Ok(())).hold, accepted);
+        let failed = Err(Refusal::Failed("HTTP 500".to_owned()));
+        assert_eq!(refreshed(false, &Err(Refusal::Wait(7))), none);
+        assert_eq!(refreshed(false, &failed), none);
+        assert_eq!(
+            refreshed(true, &Err(Refusal::Wait(7))),
+            Refreshed {
+                hold: Some((Duration::from_secs(7), "Refresh (wait 7s)".to_owned())),
+                note: None,
+            }
+        );
+        assert_eq!(
+            refreshed(true, &failed),
+            Refreshed {
+                hold: None,
+                note: Some("Could not refresh (HTTP 500)".to_owned()),
+            }
+        );
+    }
+
+    /// The button is off while its hold lasts, and the timer of an earlier
+    /// hold firing meanwhile does not end a later one.
+    #[test]
+    fn holds_the_refresh_button_while_the_hold_lasts() {
+        let now = Instant::now();
+        let hold = (now + Duration::from_secs(5), "Refreshing…".to_owned());
+        assert_eq!(
+            refresh_button(Some(&hold), now),
+            ("Refreshing…".to_owned(), false)
+        );
+        let ended = now + Duration::from_secs(5);
+        assert_eq!(
+            refresh_button(Some(&hold), ended),
+            ("Refresh".to_owned(), true)
+        );
+        assert_eq!(refresh_button(None, now), ("Refresh".to_owned(), true));
+        assert_eq!(lasting(Some(hold.clone()), now), Some(hold.clone()));
+        assert_eq!(lasting(Some(hold), ended), None);
     }
 
     /// The words and icons that do not depend on the snapshot.

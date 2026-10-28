@@ -415,10 +415,16 @@ mod tests {
             config
         }
 
-        /// An environment with only `XDG_STATE_HOME`, pointing here.
+        /// An environment with only `XDG_STATE_HOME`, pointing here, and
+        /// the release check off: the sources started here must not reach
+        /// GitHub from a test that runs long enough.
         fn env(&self) -> Env {
             let dir = self.dir.clone();
-            Arc::new(move |key| (key == "XDG_STATE_HOME").then(|| dir.clone().into()))
+            Arc::new(move |key| match key {
+                "XDG_STATE_HOME" => Some(dir.clone().into()),
+                pending_api::update::DISABLE_VARIABLE => Some("1".into()),
+                _ => None,
+            })
         }
     }
 

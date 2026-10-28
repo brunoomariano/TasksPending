@@ -2,22 +2,31 @@
 //! when a newer version exists. Nothing is downloaded; `tasks-pending
 //! upgrade` does that when asked.
 
+use std::fmt;
+use std::future::Future;
 use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
 use pending_core::api::VersionReport;
 use pending_core::release::{is_newer, process_var, release_base_url, version_from_release_url};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Set to anything to skip the check (e.g. offline machines, tests).
 pub const DISABLE_VARIABLE: &str = "TASKS_PENDING_NO_VERSION_CHECK";
 /// How long after the daemon starts the first look happens.
 const FIRST_CHECK_AFTER: Duration = Duration::from_secs(30);
-/// How often it looks again.
+/// How long after a look that found the latest release the next one is due.
 const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+/// How long after a look that failed (offline at login, the page down) the
+/// next one is due: soon, rather than a day later.
+const RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
+/// Longest sleep between two glances at the wall clock. A suspended
+/// machine does not count the time asleep in a monotonic timer, so the
+/// loop wakes this often to see whether a look came due meanwhile.
+const WAKE_EVERY: Duration = Duration::from_secs(10 * 60);
 /// Longest wait for the release page's redirect.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -26,6 +35,65 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 struct Schedule {
     first_after: Duration,
     every: Duration,
+    retry_after: Duration,
+    wake_every: Duration,
+}
+
+const SCHEDULE: Schedule = Schedule {
+    first_after: FIRST_CHECK_AFTER,
+    every: CHECK_EVERY,
+    retry_after: RETRY_AFTER,
+    wake_every: WAKE_EVERY,
+};
+
+/// The wall clock the schedule reads: the system's, or a fake in tests.
+type Clock = Arc<dyn Fn() -> SystemTime + Send + Sync>;
+
+fn system_clock() -> Clock {
+    Arc::new(SystemTime::now)
+}
+
+/// Why a look at the releases page found no version.
+#[derive(Debug)]
+pub enum LatestReleaseError {
+    /// No HTTP client could be built.
+    Client(String),
+    /// The page did not answer (offline, refused, timed out, not https).
+    Request { url: String, reason: String },
+    /// The page answered without redirecting to a release.
+    NoRedirect { url: String, status: u16 },
+    /// The redirect points at something that is not a version.
+    NotAVersion { url: String, location: String },
+}
+
+impl fmt::Display for LatestReleaseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Client(reason) => write!(f, "no HTTP client: {reason}"),
+            Self::Request { url, reason } => write!(f, "{url}: {reason}"),
+            Self::NoRedirect { url, status } => {
+                write!(f, "{url} answered {status} without a redirect")
+            }
+            Self::NotAVersion { url, location } => {
+                write!(f, "{url} redirects to {location}, which names no version")
+            }
+        }
+    }
+}
+
+impl std::error::Error for LatestReleaseError {}
+
+/// An error and every cause under it: reqwest's own text only names the
+/// kind of failure.
+fn with_causes(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut cause = error.source();
+    while let Some(inner) = cause {
+        text.push_str(": ");
+        text.push_str(&inner.to_string());
+        cause = inner.source();
+    }
+    text
 }
 
 /// The latest version seen, shared with the route.
@@ -68,14 +136,7 @@ impl UpdateCheck {
                 return Self::off();
             }
         };
-        Self::looking(
-            client,
-            base,
-            Schedule {
-                first_after: FIRST_CHECK_AFTER,
-                every: CHECK_EVERY,
-            },
-        )
+        Self::looking(client, base, SCHEDULE)
     }
 
     /// Whether the check looks at the releases page at all.
@@ -86,18 +147,56 @@ impl UpdateCheck {
     /// Looks at `<base>/latest` with `client` on `schedule`, in the
     /// background, and remembers the version it points at.
     fn looking(client: reqwest::Client, base: String, schedule: Schedule) -> Self {
+        let look = move || {
+            let client = client.clone();
+            let base = base.clone();
+            async move { find_latest_release(&client, &base).await }
+        };
+        Self::looking_with(look, schedule, system_clock())
+    }
+
+    /// Runs `look` on `schedule`, reading `clock` for when the next one is
+    /// due, and remembers the version the last successful one found.
+    fn looking_with<L, F>(look: L, schedule: Schedule, clock: Clock) -> Self
+    where
+        L: Fn() -> F + Send + 'static,
+        F: Future<Output = Result<String, LatestReleaseError>> + Send,
+    {
         let check = Self {
             latest: Arc::default(),
             looking: true,
         };
         let latest = check.latest.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(schedule.first_after).await;
+            let mut due = clock() + schedule.first_after;
+            let mut failed_before = false;
             loop {
-                if let Some(version) = latest_release_with(&client, &base).await {
-                    *latest.write().unwrap_or_else(|e| e.into_inner()) = Some(version);
+                // Wall time decides, in short sleeps: time spent suspended
+                // counts, which a monotonic sleep until `due` would not.
+                if let Ok(left) = due.duration_since(clock())
+                    && !left.is_zero()
+                {
+                    tokio::time::sleep(left.min(schedule.wake_every)).await;
+                    continue;
                 }
-                tokio::time::sleep(schedule.every).await;
+                due = match look().await {
+                    Ok(version) => {
+                        *latest.write().unwrap_or_else(|e| e.into_inner()) = Some(version);
+                        failed_before = false;
+                        clock() + schedule.every
+                    }
+                    Err(error) => {
+                        // Once at info, so a wrong releases location shows
+                        // in the journal; the hourly retries stay quiet.
+                        if failed_before {
+                            debug!(%error, "version check failed again");
+                        } else {
+                            info!(%error, "version check failed; looking again in an hour");
+                        }
+                        failed_before = true;
+                        clock() + schedule.retry_after
+                    }
+                };
             }
         });
         check
@@ -132,34 +231,57 @@ pub fn release_client() -> reqwest::Result<reqwest::Client> {
 /// The version `<base>/latest` redirects to, from the redirect alone: no
 /// body, no API, no token. `base` is the releases URL prefix.
 pub async fn latest_release(base: &str) -> Option<String> {
-    let client = match release_client() {
-        Ok(client) => client,
-        Err(error) => {
-            debug!(%error, "version check failed: no HTTP client");
-            return None;
-        }
-    };
-    latest_release_with(&client, base).await
+    try_latest_release(base)
+        .await
+        .inspect_err(|error| debug!(%error, "version check failed"))
+        .ok()
+}
+
+/// [`latest_release`], saying why no version was found.
+pub async fn try_latest_release(base: &str) -> Result<String, LatestReleaseError> {
+    let client =
+        release_client().map_err(|error| LatestReleaseError::Client(with_causes(&error)))?;
+    find_latest_release(&client, base).await
 }
 
 /// [`latest_release`] with the caller's client.
 pub async fn latest_release_with(client: &reqwest::Client, base: &str) -> Option<String> {
+    find_latest_release(client, base)
+        .await
+        .inspect_err(|error| debug!(%error, "version check failed"))
+        .ok()
+}
+
+/// [`latest_release_with`], saying why no version was found.
+pub async fn find_latest_release(
+    client: &reqwest::Client,
+    base: &str,
+) -> Result<String, LatestReleaseError> {
     let url = format!("{base}/latest");
-    let response = match client.head(&url).send().await {
-        Ok(response) => response,
-        Err(error) => {
-            debug!(%error, "version check failed");
-            return None;
-        }
-    };
-    let location = response
+    let response = client
+        .head(&url)
+        .send()
+        .await
+        .map_err(|error| LatestReleaseError::Request {
+            url: url.clone(),
+            reason: with_causes(&error.without_url()),
+        })?;
+    let Some(location) = response
         .headers()
-        .get(reqwest::header::LOCATION)?
-        .to_str()
-        .ok()?;
+        .get(reqwest::header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return Err(LatestReleaseError::NoRedirect {
+            url,
+            status: response.status().as_u16(),
+        });
+    };
     let version = version_from_release_url(location);
     debug!(?version, location, "version check");
-    version
+    version.ok_or_else(|| LatestReleaseError::NotAVersion {
+        url,
+        location: location.to_owned(),
+    })
 }
 
 /// The version route, to merge into the API router.
@@ -175,12 +297,123 @@ async fn version(State(check): State<UpdateCheck>) -> Json<VersionReport> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use axum::http::{HeaderValue, StatusCode, header};
     use axum::response::IntoResponse;
     use pending_core::release::BASE_URL_VARIABLE;
     use tokio::net::TcpListener;
 
     use super::*;
+
+    const HOUR: Duration = Duration::from_secs(60 * 60);
+    const MINUTE: Duration = Duration::from_secs(60);
+
+    /// The daemon's schedule, with the first look right away.
+    const TEST_SCHEDULE: Schedule = Schedule {
+        first_after: Duration::ZERO,
+        ..SCHEDULE
+    };
+
+    /// Wall time for the schedule tests: it follows Tokio's paused clock,
+    /// plus whatever a test adds to stand for the machine being suspended
+    /// (wall time passes, the monotonic clock does not).
+    #[derive(Clone)]
+    struct Wall {
+        start: tokio::time::Instant,
+        suspended: Arc<Mutex<Duration>>,
+    }
+
+    impl Wall {
+        fn new() -> Self {
+            Self {
+                start: tokio::time::Instant::now(),
+                suspended: Arc::default(),
+            }
+        }
+
+        fn clock(&self) -> Clock {
+            let wall = self.clone();
+            Arc::new(move || {
+                SystemTime::UNIX_EPOCH
+                    + Duration::from_secs(1_800_000_000)
+                    + wall.start.elapsed()
+                    + *wall.suspended.lock().unwrap()
+            })
+        }
+
+        fn suspend(&self, how_long: Duration) {
+            *self.suspended.lock().unwrap() += how_long;
+        }
+    }
+
+    /// A look that fails its first `failures` times and then finds 0.7.0,
+    /// counting the looks in `looks`.
+    fn look_failing(
+        failures: usize,
+        looks: Arc<AtomicUsize>,
+    ) -> impl Fn() -> std::future::Ready<Result<String, LatestReleaseError>> + Send + 'static {
+        move || {
+            let n = looks.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(if n < failures {
+                Err(LatestReleaseError::NoRedirect {
+                    url: "https://releases.test/latest".to_owned(),
+                    status: 503,
+                })
+            } else {
+                Ok("0.7.0".to_owned())
+            })
+        }
+    }
+
+    /// Scenario: the machine is offline at login, so the first look fails.
+    /// The daemon looks again an hour later, not a day later, and then
+    /// reports the newer version.
+    #[tokio::test(start_paused = true)]
+    async fn looks_again_an_hour_after_a_failed_look() {
+        let looks = Arc::new(AtomicUsize::new(0));
+        let wall = Wall::new();
+        let check =
+            UpdateCheck::looking_with(look_failing(1, looks.clone()), TEST_SCHEDULE, wall.clock());
+
+        tokio::time::sleep(MINUTE).await;
+        assert_eq!(looks.load(Ordering::SeqCst), 1);
+        assert_eq!(check.report("0.6.0").available, None);
+
+        tokio::time::sleep(HOUR - 2 * MINUTE).await;
+        assert_eq!(looks.load(Ordering::SeqCst), 1, "not before the hour");
+
+        tokio::time::sleep(12 * MINUTE).await;
+        assert_eq!(looks.load(Ordering::SeqCst), 2);
+        assert_eq!(check.report("0.6.0").available.as_deref(), Some("0.7.0"));
+    }
+
+    /// Scenario: after a successful look the laptop sleeps through the
+    /// night. Once it wakes, the next look happens within minutes, because
+    /// a day has passed on the wall clock even though the monotonic clock
+    /// did not count the time asleep.
+    #[tokio::test(start_paused = true)]
+    async fn a_look_comes_due_across_a_suspend() {
+        let looks = Arc::new(AtomicUsize::new(0));
+        let wall = Wall::new();
+        let _check =
+            UpdateCheck::looking_with(look_failing(0, looks.clone()), TEST_SCHEDULE, wall.clock());
+
+        tokio::time::sleep(MINUTE).await;
+        assert_eq!(looks.load(Ordering::SeqCst), 1);
+
+        wall.suspend(25 * HOUR);
+        tokio::time::sleep(WAKE_EVERY + MINUTE).await;
+        assert_eq!(looks.load(Ordering::SeqCst), 2);
+
+        tokio::time::sleep(HOUR).await;
+        assert_eq!(
+            looks.load(Ordering::SeqCst),
+            2,
+            "the next one is a day away"
+        );
+    }
 
     /// Nothing is reported until a newer version was seen; the same or an
     /// older one is not news.
@@ -271,7 +504,7 @@ mod tests {
             base,
             Schedule {
                 first_after: Duration::ZERO,
-                every: Duration::from_secs(3600),
+                ..TEST_SCHEDULE
             },
         );
         assert!(check.is_looking());

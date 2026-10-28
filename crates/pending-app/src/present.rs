@@ -12,7 +12,7 @@ use pending_core::{
     DashboardSnapshot, Icon, PendingCard, SourceHealth, SourceStatus, WeatherCondition, is_http_url,
 };
 
-use crate::backend::Refusal;
+use crate::backend::{Command, Refusal};
 use crate::snooze::until_text;
 use crate::state::ViewState;
 use crate::view::{AUTO_REFRESH_CHOICES, View, column_key, group_key, hide_key};
@@ -375,6 +375,33 @@ pub fn refresh_button(hold: Option<&(Instant, String)>, now: Instant) -> (String
         Some((until, label)) if now < *until => (label.clone(), false),
         _ => ("Refresh".to_owned(), true),
     }
+}
+
+/// The window's timers.
+#[derive(Clone, Copy, Debug)]
+pub enum Timer {
+    Poll,
+    Weather,
+    Version,
+    AutoRefresh,
+}
+
+/// What a timer asks of the daemon when it fires. While the window is
+/// hidden nothing is read or refreshed; the version is asked for anyway.
+pub fn on_timer(timer: Timer, hidden: bool) -> Option<Command> {
+    match timer {
+        Timer::Version => Some(Command::Version),
+        _ if hidden => None,
+        Timer::Poll => Some(Command::Poll),
+        Timer::Weather => Some(Command::Weather),
+        Timer::AutoRefresh => Some(Command::Refresh { manual: false }),
+    }
+}
+
+/// How often every source is refreshed for the setting of `minutes`, or
+/// `None` when it is off.
+pub fn auto_refresh_every(minutes: u32) -> Option<Duration> {
+    (minutes > 0).then(|| Duration::from_secs(u64::from(minutes) * 60))
 }
 
 /// `at` in local time, as written on the page.
@@ -1004,6 +1031,31 @@ mod tests {
         assert_eq!(refresh_button(None, now), ("Refresh".to_owned(), true));
         assert_eq!(lasting(Some(hold.clone()), now), Some(hold.clone()));
         assert_eq!(lasting(Some(hold), ended), None);
+    }
+
+    /// The timers read and refresh only while the window is shown; the
+    /// version is asked for regardless, being the daemon's own concern.
+    #[test]
+    fn asks_nothing_of_the_daemon_while_hidden() {
+        let asked = |timer, hidden| format!("{:?}", on_timer(timer, hidden));
+        assert_eq!(asked(Timer::Poll, false), "Some(Poll)");
+        assert_eq!(asked(Timer::Weather, false), "Some(Weather)");
+        assert_eq!(asked(Timer::Version, false), "Some(Version)");
+        assert_eq!(
+            asked(Timer::AutoRefresh, false),
+            "Some(Refresh { manual: false })"
+        );
+        assert_eq!(asked(Timer::Poll, true), "None");
+        assert_eq!(asked(Timer::Weather, true), "None");
+        assert_eq!(asked(Timer::AutoRefresh, true), "None");
+        assert_eq!(asked(Timer::Version, true), "Some(Version)");
+    }
+
+    /// The auto-refresh setting is in minutes, and none means off.
+    #[test]
+    fn refreshes_every_source_as_often_as_set() {
+        assert_eq!(auto_refresh_every(0), None);
+        assert_eq!(auto_refresh_every(15), Some(Duration::from_secs(15 * 60)));
     }
 
     /// What the group header's toggle and a stack's "more" button say.

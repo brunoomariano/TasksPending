@@ -15,6 +15,14 @@ pub const DASHBOARD_HEADER: (&str, &str) = ("x-requested-with", "tasks-pending")
 /// refresh with 429, and the window holds its Refresh button for as long.
 pub const REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
 
+/// What `POST /api/v1/refresh` answers with 429: how long until a refresh
+/// is accepted again.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct RefreshWait {
+    /// Whole seconds, rounded up, so waiting exactly that long is enough.
+    pub retry_after_secs: u64,
+}
+
 /// What `GET /healthz` answers.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Health {

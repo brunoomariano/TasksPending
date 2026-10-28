@@ -5,11 +5,11 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use pending_core::api::DASHBOARD_HEADER;
+use pending_core::api::{DASHBOARD_HEADER, RefreshWait};
 use pending_core::{DashboardSnapshot, WeatherAnswer, WeatherReport};
 use reqwest::{StatusCode, Url};
+use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 
 pub use pending_core::api::{Health, VersionReport};
 
@@ -57,11 +57,6 @@ impl From<reqwest::Error> for Error {
             Self::Transport(error.without_url().to_string())
         }
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct Wait {
-    retry_after_secs: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -148,11 +143,9 @@ impl Client {
         let status = response.status();
         if status == StatusCode::TOO_MANY_REQUESTS {
             let wait = response
-                .json::<Wait>()
+                .json::<RefreshWait>()
                 .await
-                .ok()
-                .and_then(|wait| wait.retry_after_secs)
-                .unwrap_or(COOLDOWN_FALLBACK_SECS);
+                .map_or(COOLDOWN_FALLBACK_SECS, |wait| wait.retry_after_secs);
             return Err(Error::Cooldown(wait));
         }
         Self::done(status)
@@ -328,17 +321,31 @@ mod tests {
     }
 
     /// A refresh is accepted once and then refused for a while, with the
-    /// wait the daemon asks for.
+    /// wait the daemon asks for: more than the fallback the client uses
+    /// when it cannot read one, so a body the client misreads shows here.
     #[tokio::test]
     async fn refreshes_with_the_daemon_cooldown() {
         let client = sandbox().await;
 
         client.refresh().await.unwrap();
+        let cooldown = pending_core::api::REFRESH_COOLDOWN.as_secs();
         assert!(matches!(
             client.refresh().await,
-            Err(Error::Cooldown(wait)) if (1..=10).contains(&wait)
+            Err(Error::Cooldown(wait)) if wait > COOLDOWN_FALLBACK_SECS && wait <= cooldown
         ));
         client.look().await.unwrap();
+    }
+
+    /// Scenario: the daemon refuses a refresh without saying how long to
+    /// wait. The window is told to wait the short fallback, not forever.
+    #[tokio::test]
+    async fn a_refusal_without_a_wait_gives_the_fallback() {
+        let client = serve(pending_api::Router::new().route(
+            "/api/v1/refresh",
+            axum::routing::post(|| async { StatusCode::TOO_MANY_REQUESTS }),
+        ))
+        .await;
+        assert!(matches!(client.refresh().await, Err(Error::Cooldown(1))));
     }
 
     /// The sandbox's version report names the daemon version with nothing

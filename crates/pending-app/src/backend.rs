@@ -235,7 +235,9 @@ async fn serve_here(router: Router) -> anyhow::Result<(Client, SocketAddr)> {
 /// Runs the window's commands against `client` on the runtime, and reports
 /// back through the returned receiver. Changes run one at a time, in
 /// order. Reads run beside them, so a change never waits for a slow read,
-/// and a read asked for again before it was made is made once.
+/// and a read asked for again before it was made is made once. A snapshot
+/// read while a change to a card was under way is not shown, and is read
+/// again once none is.
 pub fn spawn_worker(
     runtime: &Runtime,
     client: Client,
@@ -270,7 +272,12 @@ struct Reads {
 
 impl Reads {
     /// Makes the reads, telling `events`; false once nobody listens.
-    async fn run(self, client: &Client, events: &UnboundedSender<Event>) -> bool {
+    async fn run(
+        self,
+        client: &Client,
+        queue: &ReadQueue,
+        events: &UnboundedSender<Event>,
+    ) -> bool {
         // The look first, so the snapshot read after it counts changes
         // from now. A look that failed reads nothing by itself: the daemon
         // is not answering, and the next poll says so.
@@ -279,8 +286,9 @@ impl Reads {
             poll |= client.look().await.is_ok();
         }
         if poll {
+            let start = queue.read_starts();
             let snapshot = client.snapshot().await.map_err(text);
-            if events.send(Event::Snapshot(snapshot)).is_err() {
+            if queue.read_is_current(start) && events.send(Event::Snapshot(snapshot)).is_err() {
                 return false;
             }
         }
@@ -300,11 +308,26 @@ impl Reads {
     }
 }
 
+/// The changes to cards (marks, snoozes, wakes) under way. A snapshot
+/// read while one was may not hold it yet, and would put the card back as
+/// it was for a moment.
+#[derive(Debug, Default)]
+struct Changes {
+    under_way: usize,
+    /// How many ever started, so a read can tell that one began and ended
+    /// while it was made.
+    started: u64,
+    /// A snapshot was left unshown while changes were under way: read it
+    /// again once the last one is through.
+    unshown: bool,
+}
+
 /// The reads waiting for the read lane, and the signal that there are some.
 #[derive(Debug, Default)]
 struct ReadQueue {
     pending: Mutex<Reads>,
     ready: Notify,
+    changes: Mutex<Changes>,
 }
 
 impl ReadQueue {
@@ -317,11 +340,55 @@ impl ReadQueue {
                 Command::Look => pending.look = true,
                 Command::Weather => pending.weather = true,
                 Command::Version => pending.version = true,
-                change => return Some(change),
+                change => {
+                    drop(pending);
+                    if matches!(
+                        change,
+                        Command::SetMark { .. } | Command::Snooze { .. } | Command::Wake { .. }
+                    ) {
+                        let mut changes = self.changes.lock().expect("changes");
+                        changes.under_way += 1;
+                        changes.started += 1;
+                    }
+                    return Some(change);
+                }
             }
         }
         self.ready.notify_one();
         None
+    }
+
+    /// Where the changes to cards stand as a snapshot read starts: how
+    /// many had started, or nothing when one is under way.
+    fn read_starts(&self) -> Option<u64> {
+        let changes = self.changes.lock().expect("changes");
+        (changes.under_way == 0).then_some(changes.started)
+    }
+
+    /// Whether the snapshot read since `start` holds every change to a
+    /// card: none was under way while it was made. When one was, it is
+    /// read again, now if none is under way any more, or else once the
+    /// last one is through.
+    fn read_is_current(&self, start: Option<u64>) -> bool {
+        let mut changes = self.changes.lock().expect("changes");
+        if start == Some(changes.started) {
+            return true;
+        }
+        let again = changes.under_way == 0;
+        changes.unshown |= !again;
+        drop(changes);
+        if again {
+            self.ask(Command::Poll);
+        }
+        false
+    }
+
+    /// A change to a card is through, taken or refused. Says whether a
+    /// snapshot was left unshown meanwhile and must be read again.
+    fn change_finished(&self) -> bool {
+        let mut changes = self.changes.lock().expect("changes");
+        changes.under_way -= 1;
+        changes.under_way == 0 && std::mem::take(&mut changes.unshown)
     }
 
     /// The reads asked for since the last call, once there are any.
@@ -332,7 +399,7 @@ impl ReadQueue {
 }
 
 async fn read_lane(client: Client, reads: Arc<ReadQueue>, events: UnboundedSender<Event>) {
-    while reads.next().await.run(&client, &events).await {}
+    while reads.next().await.run(&client, &reads, &events).await {}
 }
 
 /// Makes the changes one at a time. After one went through, the snapshot
@@ -351,9 +418,9 @@ async fn change_lane(
                 let read_after = result.is_ok().then_some(AFTER_REFRESH);
                 (Event::Refreshed { manual, result }, read_after)
             }
-            Command::SetMark { id, marked } => acted(client.set_mark(&id, marked).await),
-            Command::Snooze { id, until } => acted(client.snooze(&id, until).await),
-            Command::Wake { id } => acted(client.wake(&id).await),
+            Command::SetMark { id, marked } => acted(client.set_mark(&id, marked).await, &reads),
+            Command::Snooze { id, until } => acted(client.snooze(&id, until).await, &reads),
+            Command::Wake { id } => acted(client.wake(&id).await, &reads),
             // The read lane makes these.
             Command::Poll | Command::Look | Command::Weather | Command::Version => continue,
         };
@@ -370,9 +437,12 @@ async fn change_lane(
     }
 }
 
-/// The event for a change, and when to read the snapshot after it.
-fn acted(result: Result<(), Error>) -> (Event, Option<Duration>) {
-    let read_after = result.is_ok().then_some(Duration::ZERO);
+/// The event for a change to a card, and when to read the snapshot after
+/// it: right away when it went through, or when a snapshot was left
+/// unshown while it was under way.
+fn acted(result: Result<(), Error>, reads: &ReadQueue) -> (Event, Option<Duration>) {
+    let unshown = reads.change_finished();
+    let read_after = (result.is_ok() || unshown).then_some(Duration::ZERO);
     (Event::Acted(result.map_err(text)), read_after)
 }
 
@@ -640,6 +710,62 @@ mod tests {
             ),
             "{event:?}"
         );
+    }
+
+    /// A snapshot read while a mark was under way may not hold it yet, and
+    /// would put the old mark back on the page: it is not shown. The first
+    /// snapshot after the change is one read once it went through.
+    #[test]
+    fn a_snapshot_read_during_a_change_is_not_shown() {
+        let runtime = runtime();
+        let fake = Fake::start(|method, path| match (method, path) {
+            ("GET", "/api/v1/snapshot") => (Duration::from_millis(400), 200, snapshot_json()),
+            _ => (Duration::from_millis(100), 200, "{}".to_owned()),
+        });
+        let (commands, mut events) = spawn_worker(&runtime, fake.client());
+        commands.send(Command::Poll).unwrap();
+        commands
+            .send(Command::SetMark {
+                id: "x".to_owned(),
+                marked: true,
+            })
+            .unwrap();
+        let acted = next(&runtime, &mut events);
+        assert!(matches!(acted, Event::Acted(Ok(()))), "{acted:?}");
+        let read = next(&runtime, &mut events);
+        assert!(matches!(read, Event::Snapshot(Ok(_))), "{read:?}");
+        assert_eq!(
+            fake.count("GET /api/v1/snapshot"),
+            2,
+            "the snapshot shown was read before the mark went through"
+        );
+    }
+
+    /// The snapshot left unshown is read again even when the change is
+    /// refused, so what the sources found meanwhile is not lost: whether
+    /// the read or the change ends first.
+    #[test]
+    fn a_snapshot_left_unshown_is_read_again_after_a_refused_change() {
+        let read_ends_first: Answer = |method, path| match (method, path) {
+            ("GET", "/api/v1/snapshot") => (Duration::from_millis(100), 200, snapshot_json()),
+            _ => (Duration::from_millis(400), 500, String::new()),
+        };
+        let change_ends_first: Answer = |method, path| match (method, path) {
+            ("GET", "/api/v1/snapshot") => (Duration::from_millis(400), 200, snapshot_json()),
+            _ => (Duration::from_millis(100), 500, String::new()),
+        };
+        let runtime = runtime();
+        for answer in [read_ends_first, change_ends_first] {
+            let fake = Fake::start(answer);
+            let (commands, mut events) = spawn_worker(&runtime, fake.client());
+            commands.send(Command::Poll).unwrap();
+            commands.send(Command::Wake { id: "x".to_owned() }).unwrap();
+            let refused = next(&runtime, &mut events);
+            assert!(matches!(refused, Event::Acted(Err(_))), "{refused:?}");
+            let read = next(&runtime, &mut events);
+            assert!(matches!(read, Event::Snapshot(Ok(_))), "{read:?}");
+            assert_eq!(fake.count("GET /api/v1/snapshot"), 2);
+        }
     }
 
     /// A change the daemon refuses says why, and reads nothing: there is

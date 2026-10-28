@@ -90,9 +90,9 @@ fn installed_from(exe: &Path, lib_dir: &Path) -> Install {
 }
 
 /// `lib_dir` with `suffix` appended to its name (`tasks-pending.staged`),
-/// whatever the name holds.
+/// whatever the name holds and however many slashes end it.
 fn sibling(lib_dir: &Path, suffix: &str) -> PathBuf {
-    let mut name: OsString = lib_dir.as_os_str().to_owned();
+    let mut name: OsString = lib_dir.components().collect::<PathBuf>().into_os_string();
     name.push(suffix);
     PathBuf::from(name)
 }
@@ -483,6 +483,11 @@ mod tests {
         assert_eq!(
             sibling(Path::new("/opt/tp.v1"), ".previous"),
             PathBuf::from("/opt/tp.v1.previous")
+        );
+        // TASKS_PENDING_LIB_DIR=/opt/tp/ is /opt/tp, not a directory in it.
+        assert_eq!(
+            sibling(Path::new("/opt/tp/"), ".staged"),
+            PathBuf::from("/opt/tp.staged")
         );
     }
 

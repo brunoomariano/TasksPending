@@ -98,12 +98,24 @@ fn release_installer(lib_dir: &Path) -> PathBuf {
     lib_dir.join("scripts/install.sh")
 }
 
+/// Whether `dir` is laid out as a release the bundle unpacks: its
+/// executable, its installer and its changelog, and no `share` directory,
+/// which every install prefix (`~/.local`, `/usr/local`) has and a release
+/// never does. Nothing that fails this is renamed or removed, so a
+/// `TASKS_PENDING_LIB_DIR` naming a prefix cannot cost the prefix.
+fn is_release_dir(dir: &Path) -> bool {
+    release_executable(dir).is_file()
+        && release_installer(dir).is_file()
+        && dir.join("CHANGELOG.md").is_file()
+        && !dir.join("share").exists()
+}
+
 /// Where `exe` was installed, given the release directory.
 fn installed_from(exe: &Path, lib_dir: &Path) -> Install {
     let exe = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
     let released = release_executable(lib_dir);
     let released = released.canonicalize().unwrap_or(released);
-    if exe == released {
+    if exe == released && is_release_dir(lib_dir) {
         Install::Bundle
     } else if exe.starts_with("/usr") && !exe.starts_with("/usr/local") {
         Install::Package
@@ -418,7 +430,7 @@ fn install_archive(
     let lib_dir = layout.lib_dir.as_path();
     if lib_dir.exists() {
         anyhow::ensure!(
-            release_executable(lib_dir).is_file(),
+            is_release_dir(lib_dir),
             "refusing to replace {}: it does not hold a TasksPending release",
             lib_dir.display()
         );
@@ -607,7 +619,10 @@ mod tests {
             std::env::temp_dir().join(format!("tasks-pending-upgrade-{}", std::process::id()));
         let lib = root.join("lib/tasks-pending");
         fs::create_dir_all(lib.join("bin")).unwrap();
+        fs::create_dir_all(lib.join("scripts")).unwrap();
         fs::write(lib.join("bin/tasks-pending"), "").unwrap();
+        fs::write(lib.join("scripts/install.sh"), "").unwrap();
+        fs::write(lib.join("CHANGELOG.md"), "").unwrap();
         assert_eq!(
             installed_from(&lib.join("bin/tasks-pending"), &lib),
             Install::Bundle
@@ -633,6 +648,43 @@ mod tests {
         let checkout = root.join("target/release/tasks-pending");
         assert!(matches!(installed_from(&checkout, &lib), Install::Other(_)));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Scenario: `TASKS_PENDING_LIB_DIR` names an install prefix
+    /// (`~/.local`) whose `bin/tasks-pending` came from `make install`.
+    /// The prefix is not taken for a release directory: the executable is
+    /// not a release install, and an upgrade refuses to replace the prefix
+    /// and leaves everything in it where it was.
+    #[test]
+    fn never_takes_an_install_prefix_for_a_release() {
+        let scratch = Scratch::new("prefix");
+        let prefix = scratch.layout().lib_dir;
+        write_script(
+            &release_executable(&prefix),
+            "#!/bin/sh
+echo 'tasks-pending 0.5.0'
+",
+        );
+        fs::create_dir_all(prefix.join("share/applications")).unwrap();
+        fs::write(prefix.join("share/applications/other.desktop"), "keep").unwrap();
+        assert!(matches!(
+            installed_from(&release_executable(&prefix), &prefix),
+            Install::Other(_)
+        ));
+
+        let archive = fake_archive(&scratch, Some("0.6.1"), 0);
+        let error = install(&scratch, &archive, "0.6.1")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("does not hold a TasksPending release"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(prefix.join("share/applications/other.desktop")).unwrap(),
+            "keep"
+        );
+        assert!(release_executable(&prefix).is_file());
     }
 
     /// The staging directories sit beside the release directory, whatever
@@ -882,6 +934,7 @@ mod tests {
             None => "#!/bin/sh\necho 'version GLIBC_9.9 not found' >&2\nexit 127\n".to_owned(),
         };
         write_script(&release_executable(dir), &exe);
+        fs::write(dir.join("CHANGELOG.md"), "# Changelog\n").unwrap();
         write_script(
             &release_installer(dir),
             &format!(

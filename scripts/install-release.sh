@@ -117,6 +117,17 @@ download_checked() {
   printf '%s\n' "$file"
 }
 
+# run_bundle_installer <bin-dir> <lib-dir>: runs the installer of the
+# release in <lib-dir>, which links the executable and installs the desktop
+# entry, the icon and the user service, then runs `tasks-pending setup`.
+# It is part of a release whose checksum was verified, and runs with the
+# same trust as the executable it installs. The desktop entry and icons go
+# under ~/.local, where launchers look, wherever the link goes.
+run_bundle_installer() {
+  PREFIX="$HOME/.local" BIN_DIR="$1" INSTALL_LINK=1 RELEASE_BIN="$2/bin" SKIP_BUILD=1 \
+    "$2/scripts/install.sh" --start
+}
+
 install_bundle() {
   base="$1" work="$2" bin_dir="$3" lib_dir="$4"
   [ "$(id -u)" -ne 0 ] ||
@@ -152,25 +163,27 @@ install_bundle() {
     had_previous=1
   fi
   if ! mv "$staged" "$lib_dir"; then
-    [ "$had_previous" -eq 0 ] || mv "$previous" "$lib_dir"
+    if [ "$had_previous" -eq 1 ] && ! mv "$previous" "$lib_dir"; then
+      fail "could not put the new release in $lib_dir, nor the previous one back: it is in $previous"
+    fi
     fail "could not put the new release in $lib_dir"
   fi
 
-  # The bundle's installer links the executable and installs the desktop
-  # entry, the icon and the user service, then runs `tasks-pending setup`.
-  # It is part of the release whose checksum was just verified, and runs
-  # with the same trust as the executable it installs. The desktop entry
-  # and icons go under ~/.local, where launchers look, wherever the link
-  # goes.
-  if ! PREFIX="$HOME/.local" BIN_DIR="$bin_dir" INSTALL_LINK=1 RELEASE_BIN="$lib_dir/bin" SKIP_BUILD=1 \
-    "$lib_dir/scripts/install.sh" --start; then
-    if [ "$had_previous" -eq 1 ]; then
-      mv "$lib_dir" "$staged"
-      mv "$previous" "$lib_dir"
-      rm -rf "${staged:?}"
-      fail "the bundle's installer failed; the previous release is back in $lib_dir"
-    fi
-    fail "the bundle's installer failed; the new release is in $lib_dir, run $lib_dir/scripts/install.sh --start"
+  # When the new release's installer fails, the previous release comes
+  # back and its own installer runs again, so its link, unit and daemon
+  # are the ones in place.
+  if ! run_bundle_installer "$bin_dir" "$lib_dir"; then
+    installer="$lib_dir/scripts/install.sh"
+    [ "$had_previous" -eq 1 ] ||
+      fail "the bundle's installer failed; the new release is in $lib_dir, run $installer --start"
+    mv "$lib_dir" "$staged" ||
+      fail "the bundle's installer failed, and the new release could not be moved aside: the previous release is in $previous; move it back to $lib_dir and run $installer --start"
+    mv "$previous" "$lib_dir" ||
+      fail "the bundle's installer failed, and the previous release could not be put back: it is in $previous; move it to $lib_dir and run $installer --start"
+    rm -rf "${staged:?}"
+    run_bundle_installer "$bin_dir" "$lib_dir" ||
+      fail "the bundle's installer failed; the previous release is back in $lib_dir, but its own installer failed too: run $installer --start"
+    fail "the bundle's installer failed; the previous release is back in $lib_dir and its daemon restarted"
   fi
   rm -rf "${previous:?}"
   say "installed $("$bin_dir/tasks-pending" --version 2>/dev/null || echo tasks-pending) to $lib_dir"

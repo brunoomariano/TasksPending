@@ -11,7 +11,10 @@ use super::board::{clear, notice, tracked};
 use super::icons::{source_icon, symbolic};
 use super::{Ctx, wrapped as text};
 use crate::backend::Command;
-use crate::view::{AUTO_REFRESH_CHOICES, View, flip, hide_key};
+use crate::present::{
+    BoardSwitches, Choice, SwitchView, board_choices, interval_choices, switches,
+};
+use crate::view::{View, flip};
 
 /// Every dialog's width: enough for a source's message or a stack's name
 /// on one line, and the same for all three so they open in one place.
@@ -199,112 +202,72 @@ fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) 
         return;
     };
     let view = ctx.model.borrow().view.clone();
-
     content.append(&heading("Board"));
-    let boards = gtk::FlowBox::builder()
+    content.append(&pills(
+        ctx,
+        &rebuild,
+        board_choices(&snapshot, &view),
+        |view, board| view.board = board,
+    ));
+    content.append(&heading("Auto-refresh"));
+    content.append(&pills(
+        ctx,
+        &rebuild,
+        interval_choices(&view),
+        |view, minutes| view.auto_refresh_minutes = minutes,
+    ));
+    content.append(&heading("Show or hide"));
+    content.append(&visibility(ctx, &rebuild, &switches(&snapshot, &view)));
+}
+
+/// A pill for each of `choices`; choosing one applies it with `set`.
+fn pills<T: Clone + 'static>(
+    ctx: &Rc<Ctx>,
+    rebuild: &Rc<dyn Fn()>,
+    choices: Vec<Choice<T>>,
+    set: fn(&mut View, T),
+) -> gtk::FlowBox {
+    let row = gtk::FlowBox::builder()
         .selection_mode(gtk::SelectionMode::None)
         .column_spacing(6)
         .row_spacing(6)
         .max_children_per_line(10)
         .build();
-    let mut choices = vec![("All".to_owned(), None)];
-    choices.extend(
-        snapshot
-            .boards
-            .iter()
-            .map(|board| (board.name.clone(), Some(board.name.clone()))),
-    );
-    for (label, value) in choices {
-        let button = pill(&label, view.board == value);
+    for choice in choices {
+        let button = pill(&choice.label, choice.active);
         let ctx = ctx.clone();
         let rebuild = rebuild.clone();
+        let value = choice.value;
         button.connect_clicked(move |_| {
             let value = value.clone();
-            ctx.change_view(|view| view.board = value);
+            ctx.change_view(|view| set(view, value));
             rebuild();
         });
-        boards.insert(&flow_child(&button), -1);
+        row.insert(&flow_child(&button), -1);
     }
-    content.append(&boards);
+    row
+}
 
-    content.append(&heading("Auto-refresh"));
-    let intervals = gtk::FlowBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .column_spacing(6)
-        .row_spacing(6)
-        .max_children_per_line(10)
-        .build();
-    for minutes in AUTO_REFRESH_CHOICES {
-        let label = if minutes == 0 {
-            "Off".to_owned()
-        } else {
-            format!("{minutes} min")
-        };
-        let button = pill(&label, view.auto_refresh_minutes == minutes);
-        let ctx = ctx.clone();
-        let rebuild = rebuild.clone();
-        button.connect_clicked(move |_| {
-            ctx.change_view(|view| view.auto_refresh_minutes = minutes);
-            rebuild();
-        });
-        intervals.insert(&flow_child(&button), -1);
-    }
-    content.append(&intervals);
-
-    content.append(&heading("Show or hide"));
+/// The show/hide switches: each board, its groups under it, and their
+/// stacks under those.
+fn visibility(ctx: &Rc<Ctx>, rebuild: &Rc<dyn Fn()>, boards: &[BoardSwitches]) -> gtk::Box {
     let tree = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    for (index, board) in snapshot.boards.iter().enumerate() {
+    for (index, board) in boards.iter().enumerate() {
         let board_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         board_box.add_css_class("visibility-board");
         if index > 0 {
             board_box.add_css_class("after");
         }
-        let board_off = view.hidden.contains(&hide_key::board(&board.name));
-        board_box.append(&switch_row(
-            ctx,
-            &rebuild,
-            &view,
-            SwitchRow {
-                label: &board.name,
-                key: hide_key::board(&board.name),
-                inherited: false,
-                prefix: None,
-                is_board: true,
-            },
-        ));
+        board_box.append(&switch_row(ctx, rebuild, &board.board, None, true));
         for group in &board.groups {
-            let group_off = view
-                .hidden
-                .contains(&hide_key::group(&board.name, &group.source));
             let group_box = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
                 .margin_start(18)
                 .build();
-            group_box.append(&switch_row(
-                ctx,
-                &rebuild,
-                &view,
-                SwitchRow {
-                    label: &group.source,
-                    key: hide_key::group(&board.name, &group.source),
-                    inherited: board_off,
-                    prefix: Some(source_icon(ctx, group.icon.as_ref(), 16)),
-                    is_board: false,
-                },
-            ));
-            for column in &group.columns {
-                let row = switch_row(
-                    ctx,
-                    &rebuild,
-                    &view,
-                    SwitchRow {
-                        label: &column.name,
-                        key: hide_key::column(&board.name, &group.source, &column.name),
-                        inherited: board_off || group_off,
-                        prefix: None,
-                        is_board: false,
-                    },
-                );
+            let logo = source_icon(ctx, group.icon.as_ref(), 16);
+            group_box.append(&switch_row(ctx, rebuild, &group.group, Some(logo), false));
+            for stack in &group.stacks {
+                let row = switch_row(ctx, rebuild, stack, None, false);
                 row.set_margin_start(18);
                 group_box.append(&row);
             }
@@ -312,7 +275,7 @@ fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) 
         }
         tree.append(&board_box);
     }
-    content.append(&tree);
+    tree
 }
 
 fn flow_child(widget: &impl IsA<gtk::Widget>) -> gtk::FlowBoxChild {
@@ -322,28 +285,20 @@ fn flow_child(widget: &impl IsA<gtk::Widget>) -> gtk::FlowBoxChild {
         .build()
 }
 
-/// One thing the settings can show or hide.
-struct SwitchRow<'a> {
-    label: &'a str,
-    /// Its entry in the view's hidden set (see [`hide_key`]).
-    key: String,
-    /// A parent is hidden: the switch is greyed out, keeping its own
-    /// setting for when the parent comes back.
-    inherited: bool,
-    /// A logo before the label.
+/// The row for `switch`, after `prefix` (a logo) when there is one.
+fn switch_row(
+    ctx: &Rc<Ctx>,
+    rebuild: &Rc<dyn Fn()>,
+    switch: &SwitchView,
     prefix: Option<gtk::Widget>,
     is_board: bool,
-}
-
-/// The show/hide switch for `row`.
-fn switch_row(ctx: &Rc<Ctx>, rebuild: &Rc<dyn Fn()>, view: &View, row: SwitchRow) -> gtk::Box {
-    let SwitchRow {
+) -> gtk::Box {
+    let SwitchView {
         label,
         key,
+        on,
         inherited,
-        prefix,
-        is_board,
-    } = row;
+    } = switch.clone();
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     row.add_css_class("switch-row");
     if inherited {
@@ -360,13 +315,13 @@ fn switch_row(ctx: &Rc<Ctx>, rebuild: &Rc<dyn Fn()>, view: &View, row: SwitchRow
     if let Some(prefix) = prefix {
         name.append(&prefix);
     }
-    let text = text(label, &[]);
+    let text = text(&label, &[]);
     text.set_ellipsize(gtk::pango::EllipsizeMode::End);
     text.set_wrap(false);
     name.append(&text);
     row.append(&name);
     let switch = gtk::Switch::builder()
-        .active(!view.hidden.contains(&key))
+        .active(on)
         .sensitive(!inherited)
         .valign(gtk::Align::Center)
         .build();

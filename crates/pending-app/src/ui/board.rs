@@ -220,24 +220,15 @@ fn group_widget(ctx: &Rc<Ctx>, group: &GroupView) -> gtk::Box {
     let board = gtk::Label::new(Some(&group.board));
     board.add_css_class("badge");
     header.append(&board);
-    if group.empty > 0 {
-        let (icon, label) = if group.expanded {
-            ("view-conceal-symbolic", "hide empty".to_owned())
-        } else {
-            ("view-reveal-symbolic", format!("{} empty", group.empty))
-        };
+    if let Some(empty) = &group.empty_toggle {
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        content.append(&symbolic(icon, 13));
-        content.append(&gtk::Label::new(Some(&label)));
+        content.append(&symbolic(empty.icon, 13));
+        content.append(&gtk::Label::new(Some(&empty.label)));
         let toggle = gtk::Button::builder()
             .child(&content)
             .halign(gtk::Align::End)
             .hexpand(true)
-            .tooltip_text(if group.expanded {
-                "Hide empty stacks"
-            } else {
-                "Show empty stacks"
-            })
+            .tooltip_text(empty.tooltip)
             .build();
         toggle.add_css_class("empty-toggle");
         let ctx = ctx.clone();
@@ -308,13 +299,9 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
     for card in &stack.cards {
         cards.append(&card_widget(ctx, card, false));
     }
-    if stack.more > 0 || (stack.open && stack.count > crate::present::COLUMN_LIMIT) {
+    if let Some(label) = &stack.more_label {
         let more = gtk::Button::builder()
-            .label(if stack.open {
-                "Show less".to_owned()
-            } else {
-                format!("Show {} more", stack.more)
-            })
+            .label(label)
             .halign(gtk::Align::Center)
             .build();
         more.add_css_class("link-button");

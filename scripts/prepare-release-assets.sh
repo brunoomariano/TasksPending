@@ -30,7 +30,10 @@ test -f "$versioned_package"
 cp "$versioned_package" "$stable_package"
 (
   cd "$ARTIFACTS"
-  sha256sum "$(basename "$stable_package")" >"$(basename "$stable_package").sha256"
+  # Both names get a checksum, as the bundles do.
+  for package in "$versioned_package" "$stable_package"; do
+    sha256sum "$(basename "$package")" >"$(basename "$package").sha256"
+  done
 )
 
 install -m 0755 "$ROOT/scripts/install-release.sh" "$ARTIFACTS/tasks-pending-install.sh"

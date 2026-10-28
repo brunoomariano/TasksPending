@@ -7,6 +7,7 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
+use super::board::{clear, notice, tracked};
 use super::icons::{source_icon, symbolic};
 use super::{Ctx, wrapped as text};
 use crate::backend::Command;
@@ -52,15 +53,11 @@ pub fn show_sources(ctx: &Rc<Ctx>) {
     };
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
     if let Some(error) = &page.config_error {
-        let notice = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        notice.add_css_class("notice");
-        notice.add_css_class("stale");
-        notice.append(&text(
+        content.append(&notice(
+            "stale",
             "Config not reloaded (the previous one is still running)",
-            &["notice-title"],
+            error,
         ));
-        notice.append(&text(error, &["notice-body"]));
-        content.append(&notice);
     }
     for source in &page.sources {
         let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -183,7 +180,7 @@ fn fill_settings(ctx: &Rc<Ctx>, content: &gtk::Box) {
 }
 
 fn heading(label: &str) -> gtk::Label {
-    super::board::tracked(label, &["dialog-heading"])
+    tracked(label, &["dialog-heading"])
 }
 
 fn pill(label: &str, active: bool) -> gtk::ToggleButton {
@@ -196,9 +193,7 @@ fn pill(label: &str, active: bool) -> gtk::ToggleButton {
 }
 
 fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) {
-    while let Some(child) = content.first_child() {
-        content.remove(&child);
-    }
+    clear(content);
     let Some(snapshot) = ctx.model.borrow().state.snapshot().cloned() else {
         content.append(&text("Nothing to set up yet.", &["empty"]));
         return;

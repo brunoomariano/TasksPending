@@ -3,9 +3,11 @@
 //! auto-refresh interval. Remembered in a small file; fine to lose.
 
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use pending_runtime::config::state_dir;
 use serde::{Deserialize, Serialize};
 
 /// Intervals offered in Settings, in minutes; 0 is off.
@@ -90,22 +92,13 @@ impl View {
     }
 }
 
-/// Where the view is kept: `$XDG_STATE_HOME/tasks-pending/app-view.json`.
-pub fn view_path(state_dir: &Path) -> PathBuf {
-    state_dir.join("tasks-pending").join("app-view.json")
-}
-
-/// `$XDG_STATE_HOME`, or `~/.local/state`; `None` when the environment
-/// names neither, and the view is then not remembered (rather than written
-/// into whatever directory the app was started from).
-pub fn state_dir() -> Option<PathBuf> {
-    let absolute = |key: &str| {
-        std::env::var_os(key)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .filter(|path| path.is_absolute())
-    };
-    absolute("XDG_STATE_HOME").or_else(|| absolute("HOME").map(|home| home.join(".local/state")))
+/// Where `env` keeps the view: `app-view.json` in the state directory
+/// (`$XDG_STATE_HOME/tasks-pending`, else `~/.local/state/tasks-pending`).
+/// `None` when the environment names neither, and the view is then not
+/// remembered (rather than written into whatever directory the app was
+/// started from).
+pub fn view_path(env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    state_dir(env).map(|dir| dir.join("app-view.json"))
 }
 
 /// Adds `key` to `set`, or removes it if it was there.
@@ -153,7 +146,7 @@ mod tests {
     #[test]
     fn saves_loads_and_validates() {
         let dir = temp_path("roundtrip");
-        let path = view_path(&dir);
+        let path = dir.join("tasks-pending").join("app-view.json");
         assert_eq!(View::load(&path), View::default());
 
         let mut view = View {
@@ -177,6 +170,31 @@ mod tests {
         fs::write(&path, "not json").unwrap();
         assert_eq!(View::load(&path), View::default());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The view lives in the XDG state directory the environment names; a
+    /// relative or empty value is ignored, and with neither there is none.
+    #[test]
+    fn keeps_the_view_in_the_state_directory() {
+        let env = |pairs: &'static [(&str, &str)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| OsString::from(value))
+            }
+        };
+        assert_eq!(
+            view_path(&env(&[("XDG_STATE_HOME", "/state"), ("HOME", "/home/me")])),
+            Some(PathBuf::from("/state/tasks-pending/app-view.json"))
+        );
+        assert_eq!(
+            view_path(&env(&[("XDG_STATE_HOME", "state"), ("HOME", "/home/me")])),
+            Some(PathBuf::from(
+                "/home/me/.local/state/tasks-pending/app-view.json"
+            ))
+        );
+        assert_eq!(view_path(&env(&[("HOME", "")])), None);
     }
 
     /// The settings button says what the settings change.

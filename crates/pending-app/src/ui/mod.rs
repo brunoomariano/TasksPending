@@ -27,7 +27,7 @@ use crate::backend::{self, Command, Event, spawn_worker};
 use crate::present::{BoardView, Page, board_view, page};
 use crate::state::ViewState;
 use crate::theme;
-use crate::view::{View, state_dir, view_path};
+use crate::view::View;
 
 /// How often the snapshot is read while the window is shown.
 const POLL_INTERVAL: Duration = Duration::from_secs(15);
@@ -45,8 +45,9 @@ const DEFAULT_HEIGHT: i32 = 860;
 pub struct Model {
     pub state: ViewState,
     pub view: View,
-    /// Where the view is remembered; `None` when the environment names no
-    /// state directory, and it then lasts as long as the window.
+    /// Where the view is remembered; `None` for the sandbox, a screenshot,
+    /// or an environment that names no state directory, and it then lasts
+    /// as long as the window.
     view_path: Option<PathBuf>,
     /// The board last drawn, so a snapshot that changed nothing on it does
     /// not rebuild the page.
@@ -190,16 +191,18 @@ const DIALOG_AFTER: Duration = Duration::from_millis(4200);
 const SCREENSHOT_AFTER: Duration = Duration::from_millis(6000);
 
 /// Finds the dashboard, opens the window over it and runs until it closes,
-/// returning the exit status. With `screenshot`, the window shows that
-/// scene, is pictured into that file and closed. A `unique` application
-/// hands over to an instance already running (opening the app twice
-/// focuses the window) before looking for the dashboard, so the second
-/// launch starts no sources of its own; the sandbox and a screenshot
-/// always open their own window.
+/// returning the exit status. The view is remembered at `view_path`, or
+/// for as long as the window when there is none. With `screenshot`, the
+/// window shows that scene, is pictured into that file and closed. A
+/// `unique` application hands over to an instance already running
+/// (opening the app twice focuses the window) before looking for the
+/// dashboard, so the second launch starts no sources of its own; the
+/// sandbox and a screenshot always open their own window.
 pub fn run(
     runtime: &Runtime,
     options: backend::Options,
     env: Env,
+    view_path: Option<PathBuf>,
     screenshot: Option<(PathBuf, crate::Scene)>,
     unique: bool,
 ) -> anyhow::Result<i32> {
@@ -222,7 +225,6 @@ pub fn run(
 
     let backend = backend::resolve(runtime, options, env)?;
     let (commands, events) = spawn_worker(runtime, backend.client.clone());
-    let view_path = state_dir().map(|dir| view_path(&dir));
     let ctx = Rc::new(Ctx {
         model: RefCell::new(Model {
             state: ViewState::Loading,

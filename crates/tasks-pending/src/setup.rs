@@ -13,7 +13,7 @@ use anyhow::Context;
 use pending_client::{Client, DEFAULT_DAEMON_URL};
 
 /// The systemd user unit the installers write.
-pub const SERVICE: &str = "tasks-pending.service";
+const SERVICE: &str = "tasks-pending.service";
 /// How long to wait for the daemon after starting it.
 const DAEMON_WAIT: Duration = Duration::from_secs(20);
 
@@ -27,7 +27,7 @@ pub struct Options {
 }
 
 /// `$XDG_CONFIG_HOME/tasks-pending`, or `~/.config/tasks-pending`.
-pub fn config_dir() -> anyhow::Result<PathBuf> {
+fn config_dir() -> anyhow::Result<PathBuf> {
     if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").filter(|d| !d.is_empty()) {
         return Ok(PathBuf::from(dir).join("tasks-pending"));
     }
@@ -37,7 +37,7 @@ pub fn config_dir() -> anyhow::Result<PathBuf> {
 
 /// Writes `content` to `path` with `mode` unless the file exists. Says
 /// whether it was created.
-pub fn ensure_file(path: &Path, content: &str, mode: u32) -> anyhow::Result<bool> {
+fn ensure_file(path: &Path, content: &str, mode: u32) -> anyhow::Result<bool> {
     if path.exists() {
         return Ok(false);
     }
@@ -56,7 +56,7 @@ pub fn ensure_file(path: &Path, content: &str, mode: u32) -> anyhow::Result<bool
 
 /// The systemctl invocations that start a daemon that is not running, or
 /// restart one that is, so a new version takes over.
-pub fn service_plan(active: bool) -> Vec<Vec<&'static str>> {
+fn service_plan(active: bool) -> Vec<Vec<&'static str>> {
     let mut plan = vec![vec!["--user", "daemon-reload"]];
     if active {
         plan.push(vec!["--user", "restart", SERVICE]);
@@ -73,6 +73,42 @@ fn systemctl(args: &[&str]) -> anyhow::Result<bool> {
         .status()
         .with_context(|| format!("running systemctl {}", args.join(" ")))?;
     Ok(status.success())
+}
+
+fn service_is_active() -> anyhow::Result<bool> {
+    systemctl(&["--user", "is-active", "--quiet", SERVICE])
+}
+
+/// The daemon's address from the unit's `ExecStart`, as `systemctl show`
+/// prints it (`{ path=... ; argv[]=... serve --listen 127.0.0.1:8090 ;
+/// ... }`): a drop-in may have moved it off the default port.
+fn listen_from_exec_start(shown: &str) -> Option<String> {
+    let argv = shown.split("argv[]=").nth(1)?;
+    let argv = argv.split(" ; ").next()?;
+    let mut words = argv.split_whitespace();
+    while let Some(word) = words.next() {
+        let listen = match word {
+            "--listen" => words.next(),
+            _ => word.strip_prefix("--listen="),
+        };
+        if let Some(listen) = listen {
+            return Some(format!("http://{listen}"));
+        }
+    }
+    None
+}
+
+/// Where the service's daemon answers: its `ExecStart`'s `--listen`, or
+/// the default address.
+fn daemon_url() -> String {
+    Command::new("systemctl")
+        .args(["--user", "show", "-p", "ExecStart", "--value", SERVICE])
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| listen_from_exec_start(&String::from_utf8_lossy(&output.stdout)))
+        .unwrap_or_else(|| DEFAULT_DAEMON_URL.to_owned())
 }
 
 /// Runs a desktop helper if it exists; its failure is not ours.
@@ -146,7 +182,7 @@ pub fn run(options: Options) -> anyhow::Result<()> {
             "systemctl is required to run the daemon as a user service; start `tasks-pending serve` yourself"
         );
     }
-    let active = systemctl(&["--user", "is-active", "--quiet", SERVICE])?;
+    let active = service_is_active()?;
     for step in service_plan(active) {
         if !systemctl(&step)? {
             anyhow::bail!(
@@ -161,18 +197,18 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         SERVICE
     );
 
+    let url = daemon_url();
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("starting async runtime")?;
     let health = runtime.block_on(async {
-        let client = Client::new(DEFAULT_DAEMON_URL)?;
+        let client = Client::new(&url)?;
         let deadline = Instant::now() + DAEMON_WAIT;
         loop {
             match client.health().await {
                 Ok(health) => return Ok(health),
-                Err(error) if Instant::now() < deadline => {
-                    let _ = error;
+                Err(_) if Instant::now() < deadline => {
                     tokio::time::sleep(Duration::from_millis(250)).await;
                 }
                 Err(error) => return Err(anyhow::anyhow!(error)),
@@ -181,11 +217,16 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     });
     match health {
         Ok(health) => println!(
-            "daemon {} answering at {DEFAULT_DAEMON_URL}; open the window with `tasks-pending` or from the launcher",
+            "daemon {} answering at {url}; open the window with `tasks-pending` or from the launcher",
             health.version
         ),
+        // The service runs but does not answer where expected: say so
+        // and leave it running, rather than fail a setup that worked.
+        Err(error) if service_is_active()? => println!(
+            "{SERVICE} is active but did not answer at {url} ({error}); if it listens elsewhere, open the window with `tasks-pending --daemon <url>`; see `journalctl --user -u tasks-pending`"
+        ),
         Err(error) => anyhow::bail!(
-            "the daemon did not answer at {DEFAULT_DAEMON_URL} ({error}); see `journalctl --user -u tasks-pending`"
+            "{SERVICE} is not running: no answer at {url} ({error}); see `journalctl --user -u tasks-pending`"
         ),
     }
     Ok(())
@@ -229,6 +270,27 @@ mod tests {
             service_plan(false)[1],
             vec!["--user", "enable", "--now", "tasks-pending.service"]
         );
+    }
+
+    /// The daemon's address is read from the unit as systemctl shows it,
+    /// so a drop-in with another port is waited for where it listens.
+    #[test]
+    fn reads_the_listen_address_from_the_unit() {
+        let shown = "{ path=/usr/bin/tasks-pending ; argv[]=/usr/bin/tasks-pending serve --listen 127.0.0.1:8090 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n";
+        assert_eq!(
+            listen_from_exec_start(shown).as_deref(),
+            Some("http://127.0.0.1:8090")
+        );
+        assert_eq!(
+            listen_from_exec_start("{ path=/x ; argv[]=/x serve --listen=[::1]:61000 ; pid=0 }")
+                .as_deref(),
+            Some("http://[::1]:61000")
+        );
+        assert_eq!(
+            listen_from_exec_start("{ path=/x ; argv[]=/x serve ; pid=0 }"),
+            None
+        );
+        assert_eq!(listen_from_exec_start(""), None);
     }
 
     /// The config directory follows XDG_CONFIG_HOME, then HOME.

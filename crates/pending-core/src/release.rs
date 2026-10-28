@@ -1,8 +1,12 @@
 //! Releases: where they are published and how versions compare, shared by
-//! the daemon's update check and `tasks-pending upgrade`.
+//! the daemon's update check, `tasks-pending upgrade` and the installer.
 
 /// The GitHub repository the releases come from, `owner/name`.
 pub const REPOSITORY: &str = "brunoomariano/TasksPending";
+/// Names another releases URL prefix (the installer reads it too).
+pub const BASE_URL_VARIABLE: &str = "TASKS_PENDING_RELEASE_BASE_URL";
+/// Names another GitHub repository, `owner/name`.
+pub const REPOSITORY_VARIABLE: &str = "TASKS_PENDING_REPOSITORY";
 
 /// The release asset for this platform, by version: the Linux x86_64
 /// bundle, the only one published.
@@ -10,13 +14,72 @@ pub fn bundle_asset(version: &str) -> String {
     format!("tasks-pending-{version}-x86_64-unknown-linux-gnu.tar.gz")
 }
 
-/// The releases URL prefix: `TASKS_PENDING_RELEASE_BASE_URL`, or GitHub.
-pub fn release_base_url(repository: &str) -> String {
-    std::env::var("TASKS_PENDING_RELEASE_BASE_URL")
-        .ok()
-        .filter(|url| !url.trim().is_empty())
-        .map(|url| url.trim_end_matches('/').to_owned())
-        .unwrap_or_else(|| format!("https://github.com/{repository}/releases"))
+/// Why the environment's releases location cannot be used.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ReleaseUrlError {
+    /// The archive and its checksum come from the same place, so it must
+    /// not be one a network could rewrite on the way.
+    #[error("{variable} must start with https:// (it is {value})")]
+    NotHttps {
+        variable: &'static str,
+        value: String,
+    },
+    #[error("{variable} must be owner/name (it is {value})")]
+    NotARepository {
+        variable: &'static str,
+        value: String,
+    },
+}
+
+/// The process environment, for [`release_base_url`].
+pub fn process_var(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+/// The releases URL prefix: [`BASE_URL_VARIABLE`] when set, else GitHub's
+/// for [`REPOSITORY_VARIABLE`] or [`REPOSITORY`]. Only `https://` is
+/// accepted. `var` reads the environment (see [`process_var`]).
+pub fn release_base_url(var: &dyn Fn(&str) -> Option<String>) -> Result<String, ReleaseUrlError> {
+    let set = |name: &str| {
+        var(name)
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    };
+    if let Some(url) = set(BASE_URL_VARIABLE) {
+        if !url.starts_with("https://") {
+            return Err(ReleaseUrlError::NotHttps {
+                variable: BASE_URL_VARIABLE,
+                value: url,
+            });
+        }
+        return Ok(url.trim_end_matches('/').to_owned());
+    }
+    let repository = set(REPOSITORY_VARIABLE).unwrap_or_else(|| REPOSITORY.to_owned());
+    if !is_repository(&repository) {
+        return Err(ReleaseUrlError::NotARepository {
+            variable: REPOSITORY_VARIABLE,
+            value: repository,
+        });
+    }
+    Ok(format!("https://github.com/{repository}/releases"))
+}
+
+/// `owner/name`, each a GitHub-style slug, so the value stays a path
+/// segment of its own in the URL.
+fn is_repository(text: &str) -> bool {
+    let slug = |part: &str| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    let mut parts = text.split('/');
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(owner), Some(name), None) if slug(owner) && slug(name)
+    )
 }
 
 /// The version a release page URL points at: `.../releases/tag/v0.6.1`
@@ -85,11 +148,76 @@ mod tests {
     }
 
     #[test]
-    fn names_the_bundle_and_the_releases() {
+    fn names_the_bundle() {
         assert_eq!(
             bundle_asset("0.6.0"),
             "tasks-pending-0.6.0-x86_64-unknown-linux-gnu.tar.gz"
         );
-        assert!(release_base_url("o/r").ends_with("/releases"));
+    }
+
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    /// GitHub by default; another repository or another location from
+    /// the environment, trimmed; blanks are as good as unset.
+    #[test]
+    fn the_releases_come_from_github_unless_told_otherwise() {
+        assert_eq!(
+            release_base_url(&env(&[])).as_deref(),
+            Ok("https://github.com/brunoomariano/TasksPending/releases")
+        );
+        assert_eq!(
+            release_base_url(&env(&[(REPOSITORY_VARIABLE, " me/fork ")])).as_deref(),
+            Ok("https://github.com/me/fork/releases")
+        );
+        assert_eq!(
+            release_base_url(&env(&[
+                (REPOSITORY_VARIABLE, "ignored/when-the-url-is-set"),
+                (BASE_URL_VARIABLE, "https://example.test/releases/ ")
+            ]))
+            .as_deref(),
+            Ok("https://example.test/releases")
+        );
+        assert_eq!(
+            release_base_url(&env(&[
+                (BASE_URL_VARIABLE, "  "),
+                (REPOSITORY_VARIABLE, "")
+            ]))
+            .as_deref(),
+            Ok("https://github.com/brunoomariano/TasksPending/releases")
+        );
+    }
+
+    /// A plain-text location or a repository that is not `owner/name`
+    /// (and could change the path) is refused.
+    #[test]
+    fn refuses_plain_text_and_odd_repositories() {
+        assert_eq!(
+            release_base_url(&env(&[(BASE_URL_VARIABLE, "http://example.test/releases")])),
+            Err(ReleaseUrlError::NotHttps {
+                variable: BASE_URL_VARIABLE,
+                value: "http://example.test/releases".to_owned()
+            })
+        );
+        for odd in ["single", "a/b/c", "../x", "a/..", "o/r?x=1", "o/r r", "/r"] {
+            assert_eq!(
+                release_base_url(&env(&[(REPOSITORY_VARIABLE, odd)])),
+                Err(ReleaseUrlError::NotARepository {
+                    variable: REPOSITORY_VARIABLE,
+                    value: odd.to_owned()
+                }),
+                "{odd}"
+            );
+        }
     }
 }

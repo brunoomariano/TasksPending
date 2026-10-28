@@ -15,7 +15,7 @@ Every picture here comes from `tasks-pending sandbox`, which shows simulated car
 - **Now.** Pin the cards you are working on: they are highlighted in place and repeated in a row at the top.
 - **Snooze.** Hide a card for an hour, until tomorrow, until next week, or until it changes. It always comes back when the item changes, and nothing is written to the provider.
 - **What changed.** A small dot marks the cards that changed since you last looked.
-- **Local only.** The daemon listens on this machine, reads tokens from the environment, and keeps your marks and snoozes in a state folder. The window talks to it over loopback and never to the providers.
+- **Local only.** The daemon listens on this machine, reads tokens from the environment, and keeps your marks and snoozes in a state folder. The window reads it over loopback; it reaches the network itself only for the sources' logos, and for the providers when no daemon is running and it runs the sources in its own process.
 
 <p align="center">
   <img src="docs/assets/tasks-pending-sources.png" alt="The Sources dialog: each source with its board, status and last fetch" width="49%">
@@ -37,7 +37,7 @@ Install the latest release and start everything:
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh
 ```
 
-On Arch Linux it installs the release's package; elsewhere on Linux x86_64 it unpacks the release under `~/.local/lib/tasks-pending` and links `~/.local/bin/tasks-pending`. Every download is checked against its published checksum. It ends with `tasks-pending setup`, which creates the config files if they are missing, installs the launcher entry and starts the user service. Later, `tasks-pending upgrade` fetches the next release the same way. [docs/install.md](docs/install.md) covers sources, tokens, the Omarchy shortcut and manual installs.
+On Arch Linux (and distributions built on it, such as Omarchy) it installs the release's package; elsewhere on Linux x86_64 it unpacks the release under `~/.local/lib/tasks-pending` and links `~/.local/bin/tasks-pending`. Every download is checked against the checksum published beside it, which proves it arrived whole. It ends with `tasks-pending setup`, which creates the config files if they are missing, installs the launcher entry and starts the user service. Later, `tasks-pending upgrade` fetches the next release the same way. [docs/install.md](docs/install.md) covers sources, tokens, the Omarchy shortcut and manual installs.
 
 Then open **TasksPending** from the launcher, or run `tasks-pending`.
 

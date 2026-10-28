@@ -39,6 +39,12 @@ const UPDATE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 /// leaves narrower windows (see [`hero::WEATHER_MIN_WIDTH`]).
 const DEFAULT_WIDTH: i32 = 1440;
 const DEFAULT_HEIGHT: i32 = 860;
+/// The page's margins and the space between its parts, in pixels: a little
+/// less above, where the header sits, than below and at the sides.
+const PAGE_TOP: i32 = 20;
+const PAGE_BOTTOM: i32 = 32;
+const PAGE_SIDE: i32 = 28;
+const PAGE_SPACING: i32 = 20;
 
 /// Everything the window knows, shared by its widgets.
 pub struct Model {
@@ -326,11 +332,11 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
     let hero = hero::build(ctx);
     let page = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .spacing(20)
-        .margin_top(20)
-        .margin_bottom(32)
-        .margin_start(28)
-        .margin_end(28)
+        .spacing(PAGE_SPACING)
+        .margin_top(PAGE_TOP)
+        .margin_bottom(PAGE_BOTTOM)
+        .margin_start(PAGE_SIDE)
+        .margin_end(PAGE_SIDE)
         .build();
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)

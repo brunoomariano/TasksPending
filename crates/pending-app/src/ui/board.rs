@@ -7,13 +7,13 @@ use chrono::{Local, Utc};
 use gtk4 as gtk;
 use gtk4::prelude::*;
 
-use super::Ctx;
 use super::icons::{source_icon, symbolic};
+use super::{Ctx, wrapped};
 use crate::backend::Command;
-use crate::present::{CardView, GroupView, NowItem, Page, StackView, TIME_FORMAT};
+use crate::present::{CardView, GroupView, NowItem, Page, StackView, stale_notice};
 use crate::snooze::{CHOICES, until};
 use crate::state::ViewState;
-use crate::view::{View, flip};
+use crate::view::flip;
 
 /// Narrowest a group gets; the board wraps groups onto more rows instead.
 const GROUP_MIN_WIDTH: i32 = 290;
@@ -31,16 +31,8 @@ fn clear(container: &gtk::Box) {
 /// A label that wraps onto more lines, asking for at most
 /// [`CARD_TEXT_CHARS`] of width.
 fn text(label: &str, classes: &[&str]) -> gtk::Label {
-    let widget = gtk::Label::builder()
-        .label(label)
-        .xalign(0.0)
-        .wrap(true)
-        .wrap_mode(gtk::pango::WrapMode::WordChar)
-        .max_width_chars(CARD_TEXT_CHARS)
-        .build();
-    for class in classes {
-        widget.add_css_class(class);
-    }
+    let widget = wrapped(label, classes);
+    widget.set_max_width_chars(CARD_TEXT_CHARS);
     widget
 }
 
@@ -128,13 +120,7 @@ fn source_tile(ctx: &Rc<Ctx>, icon: Option<&pending_core::Icon>) -> gtk::Box {
 }
 
 /// Draws `state` into `page_box`.
-pub fn render(
-    ctx: &Rc<Ctx>,
-    page_box: &gtk::Box,
-    state: &ViewState,
-    page: Option<&Page>,
-    view: &View,
-) {
+pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, state: &ViewState, page: Option<&Page>) {
     clear(page_box);
     match state {
         ViewState::Loading => {
@@ -146,14 +132,7 @@ pub fn render(
         ViewState::Stale {
             error, fetched_at, ..
         } => {
-            page_box.append(&notice(
-                "stale",
-                &format!(
-                    "Daemon unreachable ({error}); showing data from {}",
-                    fetched_at.format(TIME_FORMAT)
-                ),
-                "",
-            ));
+            page_box.append(&notice("stale", &stale_notice(error, *fetched_at), ""));
         }
         ViewState::Ready { .. } => {}
     }
@@ -175,7 +154,7 @@ pub fn render(
     board.add_css_class("board");
     for group in &page.groups {
         let child = gtk::FlowBoxChild::builder()
-            .child(&group_widget(ctx, group, view))
+            .child(&group_widget(ctx, group))
             .focusable(false)
             .can_focus(false)
             .valign(gtk::Align::Start)
@@ -223,7 +202,7 @@ fn now_section(ctx: &Rc<Ctx>, items: &[NowItem]) -> gtk::Box {
     section
 }
 
-fn group_widget(ctx: &Rc<Ctx>, group: &GroupView, view: &View) -> gtk::Box {
+fn group_widget(ctx: &Rc<Ctx>, group: &GroupView) -> gtk::Box {
     // Set explicitly, so the expanding labels inside do not make the group
     // claim a whole row of the board.
     let widget = gtk::Box::builder()
@@ -279,14 +258,14 @@ fn group_widget(ctx: &Rc<Ctx>, group: &GroupView, view: &View) -> gtk::Box {
     }
     let stacks = gtk::Box::new(gtk::Orientation::Vertical, 14);
     for (index, stack) in group.stacks.iter().enumerate() {
-        stacks.append(&stack_widget(ctx, stack, index > 0, view));
+        stacks.append(&stack_widget(ctx, stack, index > 0));
     }
     widget.append(&stacks);
     widget
 }
 
 /// One stack: a header that collapses it, then its cards.
-fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool, _view: &View) -> gtk::Box {
+fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
     let widget = gtk::Box::new(gtk::Orientation::Vertical, 10);
     widget.add_css_class("stack");
     if after {

@@ -14,8 +14,7 @@ mod view;
 use std::path::PathBuf;
 
 use anyhow::Context;
-
-pub use backend::Options as BackendOptions;
+use pending_runtime::live::process_env;
 
 /// The application id, also the window's app-id on Wayland and the name of
 /// its desktop entry.
@@ -57,22 +56,19 @@ pub fn run(options: AppOptions) -> anyhow::Result<()> {
         .enable_all()
         .build()
         .context("starting async runtime")?;
-    let backend = backend::resolve(
+    let unique = !options.sandbox && options.screenshot.is_none();
+    let status = ui::run(
         &runtime,
-        BackendOptions {
+        backend::Options {
             config: options.config,
             daemon: options.daemon,
             no_daemon: options.no_daemon,
             sandbox: options.sandbox,
         },
-    )?;
-    let unique = !options.sandbox && options.screenshot.is_none();
-    let status = ui::run(
-        &runtime,
-        backend,
+        process_env(),
         options.screenshot.map(|path| (path, options.scene)),
         unique,
-    );
+    )?;
     // Quit right away: an in-flight request must not keep the process
     // alive after the window closed.
     runtime.shutdown_background();

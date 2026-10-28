@@ -13,7 +13,7 @@ use pending_core::api::{DASHBOARD_HEADER, Health, REFRESH_COOLDOWN};
 use pending_core::{DashboardSnapshot, sandbox_snapshot};
 use pending_runtime::Dashboard;
 use pending_runtime::config::{Origin, cache_path};
-use pending_runtime::live::{Live, Watch, process_env};
+use pending_runtime::live::{Env, Live, Watch, process_env};
 use pending_runtime::looks::Looks;
 use pending_runtime::marks::{MarkError, Marks};
 use pending_runtime::snoozes::{SnoozeError, Snoozes};
@@ -51,10 +51,11 @@ pub struct LiveServer {
 /// Starts the live dashboard (the sources, their cache and the config
 /// watch) and returns its API routes, to serve on a listener of the
 /// caller's choosing: the daemon's port, or one the app picks for itself
-/// when no daemon is running. Needs a Tokio runtime: the sources, the
-/// config watch and the release check are spawned on it.
-pub fn start_live(config: Option<PathBuf>) -> anyhow::Result<LiveServer> {
-    let env = process_env();
+/// when no daemon is running. `env` is what the sources and the cache read
+/// (XDG directories, tokens): the process environment, or a fake one in
+/// tests. Needs a Tokio runtime: the sources, the config watch and the
+/// release check are spawned on it.
+pub fn start_live(config: Option<PathBuf>, env: Env) -> anyhow::Result<LiveServer> {
     let cache = cache_path(&*env);
     match &cache {
         Some(path) => info!(cache = %path.display(), "source cache enabled"),
@@ -99,7 +100,7 @@ pub async fn serve(options: ServeOptions) -> anyhow::Result<()> {
     validate_listen_addr(options.listen)?;
     init_tracing();
 
-    let server = start_live(options.config)?;
+    let server = start_live(options.config, process_env())?;
     let listener = TcpListener::bind(options.listen)
         .await
         .with_context(|| format!("binding {}", options.listen))?;

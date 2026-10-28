@@ -45,5 +45,7 @@ mod tests {
         assert!(throttle.due(at(60)), "a minute later");
         assert!(!throttle.due(at(119)), "counts from the last report");
         assert!(throttle.due(at(120)));
+        assert!(throttle.due(at(3600)), "after a long pause");
+        assert!(!throttle.due(at(3600)));
     }
 }

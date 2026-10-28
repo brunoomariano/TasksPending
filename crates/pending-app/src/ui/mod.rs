@@ -6,9 +6,11 @@ mod hero;
 mod icons;
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use anyhow::Context as _;
 use chrono::Local;
 use gtk4 as gtk;
 use gtk4::prelude::*;
@@ -16,11 +18,12 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use pending_core::WeatherReport;
 use pending_core::api::REFRESH_COOLDOWN;
+use pending_runtime::live::Env;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::activity::LookThrottle;
-use crate::backend::{Backend, Command, Event, spawn_worker};
+use crate::backend::{self, Command, Event, spawn_worker};
 use crate::present::{Page, page};
 use crate::state::ViewState;
 use crate::theme;
@@ -33,12 +36,18 @@ const WEATHER_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// How often the window asks whether a newer version was published; the
 /// daemon itself looks once a day.
 const UPDATE_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// The window's size when first opened: wide enough for the weather, which
+/// leaves narrower windows (see [`hero::WEATHER_MIN_WIDTH`]).
+const DEFAULT_WIDTH: i32 = 1440;
+const DEFAULT_HEIGHT: i32 = 860;
 
 /// Everything the window knows, shared by its widgets.
 pub struct Model {
     pub state: ViewState,
     pub view: View,
-    pub view_path: std::path::PathBuf,
+    /// Where the view is remembered; `None` when the environment names no
+    /// state directory, and it then lasts as long as the window.
+    view_path: Option<PathBuf>,
     /// The key of the state last drawn, so an unchanged snapshot does not
     /// rebuild the page.
     drawn: String,
@@ -50,6 +59,8 @@ pub struct Model {
     pub source_line: String,
     pub icons: icons::Cache,
     looks: LookThrottle,
+    /// The auto-refresh timer, replaced when the interval changes.
+    auto_refresh: Option<gtk::glib::SourceId>,
 }
 
 /// Shared by every widget: the model, the way to the dashboard, and the
@@ -80,7 +91,9 @@ impl Ctx {
             let mut model = self.model.borrow_mut();
             let before = model.view.auto_refresh_minutes;
             change(&mut model.view);
-            model.view.save(&model.view_path.clone());
+            if let Some(path) = &model.view_path {
+                model.view.save(path);
+            }
             (before, model.view.auto_refresh_minutes)
         };
         self.redraw(true);
@@ -105,7 +118,7 @@ impl Ctx {
         let changed = self.model.borrow().drawn != key;
         if changed || force {
             let position = widgets.scroller.vadjustment().value();
-            board::render(self, &widgets.page, &state, page_view.as_ref(), &view);
+            board::render(self, &widgets.page, &state, page_view.as_ref());
             self.model.borrow_mut().drawn = key;
             // Keep the reading position across a rebuild.
             let adjustment = widgets.scroller.vadjustment();
@@ -151,6 +164,21 @@ impl Ctx {
     }
 }
 
+/// A label that wraps onto more lines; the page and the dialogs build
+/// their texts from it.
+fn wrapped(label: &str, classes: &[&str]) -> gtk::Label {
+    let widget = gtk::Label::builder()
+        .label(label)
+        .xalign(0.0)
+        .wrap(true)
+        .wrap_mode(gtk::pango::WrapMode::WordChar)
+        .build();
+    for class in classes {
+        widget.add_css_class(class);
+    }
+    widget
+}
+
 /// When a screenshot's scene is set up (cards marked or snoozed): the
 /// first snapshot has arrived by then.
 const SCENE_AFTER: Duration = Duration::from_millis(2500);
@@ -160,39 +188,20 @@ const DIALOG_AFTER: Duration = Duration::from_millis(4200);
 /// When the picture is taken: the logos have arrived by then.
 const SCREENSHOT_AFTER: Duration = Duration::from_millis(6000);
 
-/// Runs the GTK application over `backend` and returns its exit status.
-/// With `screenshot`, the window shows that scene, is pictured into that
-/// file and closed. A `unique` application hands over to an instance
-/// already running (opening the app twice focuses the window); the
-/// sandbox and a screenshot always open their own window.
+/// Finds the dashboard, opens the window over it and runs until it closes,
+/// returning the exit status. With `screenshot`, the window shows that
+/// scene, is pictured into that file and closed. A `unique` application
+/// hands over to an instance already running (opening the app twice
+/// focuses the window) before looking for the dashboard, so the second
+/// launch starts no sources of its own; the sandbox and a screenshot
+/// always open their own window.
 pub fn run(
     runtime: &Runtime,
-    backend: Backend,
-    screenshot: Option<(std::path::PathBuf, crate::Scene)>,
+    options: backend::Options,
+    env: Env,
+    screenshot: Option<(PathBuf, crate::Scene)>,
     unique: bool,
-) -> i32 {
-    let (commands, events) = spawn_worker(runtime, backend.client.clone());
-    let view_path = view_path(&state_dir());
-    let ctx = Rc::new(Ctx {
-        model: RefCell::new(Model {
-            state: ViewState::Loading,
-            view: View::load(&view_path),
-            view_path,
-            drawn: String::new(),
-            refresh_hold: None,
-            weather: None,
-            update: None,
-            source_line: backend.source.describe(),
-            icons: icons::Cache::default(),
-            looks: LookThrottle::default(),
-        }),
-        commands,
-        runtime_handle: runtime.handle().clone(),
-        widgets: RefCell::new(None),
-    });
-    // The backend (and its config watch) lives as long as the window.
-    let _backend = backend;
-
+) -> anyhow::Result<i32> {
     let flags = if unique {
         gtk::gio::ApplicationFlags::FLAGS_NONE
     } else {
@@ -202,6 +211,38 @@ pub fn run(
         .application_id(crate::APP_ID)
         .flags(flags)
         .build();
+    app.register(gtk::gio::Cancellable::NONE)
+        .context("registering the application")?;
+    if app.is_remote() {
+        // Another instance owns the window: `run` asks it to present the
+        // window and returns.
+        return Ok(i32::from(app.run_with_args::<&str>(&[])));
+    }
+
+    let backend = backend::resolve(runtime, options, env)?;
+    let (commands, events) = spawn_worker(runtime, backend.client.clone());
+    let view_path = state_dir().map(|dir| view_path(&dir));
+    let ctx = Rc::new(Ctx {
+        model: RefCell::new(Model {
+            state: ViewState::Loading,
+            view: view_path.as_deref().map(View::load).unwrap_or_default(),
+            view_path,
+            drawn: String::new(),
+            refresh_hold: None,
+            weather: None,
+            update: None,
+            source_line: backend.source.describe(),
+            icons: icons::Cache::default(),
+            looks: LookThrottle::default(),
+            auto_refresh: None,
+        }),
+        commands,
+        runtime_handle: runtime.handle().clone(),
+        widgets: RefCell::new(None),
+    });
+    // The backend (and its config watch) lives as long as the window.
+    let _backend = backend;
+
     let events = RefCell::new(Some(events));
     app.connect_activate(move |app| {
         if let Some(window) = app.active_window() {
@@ -250,7 +291,7 @@ pub fn run(
         }
     });
     // GTK must not read the process arguments: the CLI already did.
-    i32::from(app.run_with_args::<&str>(&[]))
+    Ok(i32::from(app.run_with_args::<&str>(&[])))
 }
 
 /// Loads the stylesheet for the current scheme, and again when it changes.
@@ -301,8 +342,8 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("TasksPending")
-        .default_width(1280)
-        .default_height(860)
+        .default_width(DEFAULT_WIDTH)
+        .default_height(DEFAULT_HEIGHT)
         .content(&content)
         .build();
     window.add_css_class("tasks-pending");
@@ -411,6 +452,9 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
                     if let Some(widgets) = ctx.widgets.borrow().as_ref() {
                         hero::show_note(widgets, &format!("Could not apply the change ({error})"));
                     }
+                    // No snapshot follows a refused change: rebuild the
+                    // page as it was, so the button pressed is usable again.
+                    ctx.redraw(true);
                 }
                 Event::Acted(Ok(())) => {}
                 Event::Update(version) => {
@@ -454,27 +498,26 @@ fn schedule_polling(ctx: &Rc<Ctx>) {
 /// Refreshes every source at the interval the settings ask for, while the
 /// window is shown. Called again when the interval changes.
 fn schedule_auto_refresh(ctx: &Rc<Ctx>) {
-    thread_local! {
-        static TIMER: RefCell<Option<gtk::glib::SourceId>> = const { RefCell::new(None) };
+    let minutes = {
+        let mut model = ctx.model.borrow_mut();
+        if let Some(timer) = model.auto_refresh.take() {
+            timer.remove();
+        }
+        model.view.auto_refresh_minutes
+    };
+    if minutes == 0 {
+        return;
     }
-    TIMER.with(|timer| {
-        if let Some(id) = timer.borrow_mut().take() {
-            id.remove();
-        }
-        let minutes = ctx.model.borrow().view.auto_refresh_minutes;
-        if minutes == 0 {
-            return;
-        }
+    let timer = {
         let ctx = ctx.clone();
-        let id =
-            gtk::glib::timeout_add_local(Duration::from_secs(u64::from(minutes) * 60), move || {
-                if !is_hidden(&ctx) {
-                    ctx.send(Command::Refresh);
-                }
-                gtk::glib::ControlFlow::Continue
-            });
-        *timer.borrow_mut() = Some(id);
-    });
+        gtk::glib::timeout_add_local(Duration::from_secs(u64::from(minutes) * 60), move || {
+            if !is_hidden(&ctx) {
+                ctx.send(Command::Refresh);
+            }
+            gtk::glib::ControlFlow::Continue
+        })
+    };
+    ctx.model.borrow_mut().auto_refresh = Some(timer);
 }
 
 fn is_hidden(ctx: &Ctx) -> bool {

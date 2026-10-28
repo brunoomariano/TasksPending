@@ -286,6 +286,17 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
         .halign(gtk::Align::Fill)
         .build();
     header.add_css_class("stack-header");
+    if stack.collapsed {
+        header.add_css_class("collapsed");
+    }
+    {
+        let ctx = ctx.clone();
+        let key = stack.key.clone();
+        header.connect_clicked(move |_| {
+            let key = key.clone();
+            ctx.change_view(|view| flip(&mut view.collapsed, &key));
+        });
+    }
     widget.append(&header);
     if stack.collapsed {
         return widget;

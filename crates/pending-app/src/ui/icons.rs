@@ -12,6 +12,20 @@ use pending_core::{Icon, is_http_url};
 
 use super::Ctx;
 
+/// The icon sizes the window uses, in pixels, so that like things match.
+pub mod size {
+    /// Beside small text: a card's source, the update time, a toggle.
+    pub const SMALL: i32 = 13;
+    /// Beside body text: a stack's name, a section title, a status.
+    pub const TEXT: i32 = 14;
+    /// In a control button, and a logo in a Settings row.
+    pub const CONTROL: i32 = 16;
+    /// A source's logo heading its group or its row in Sources.
+    pub const LOGO: i32 = 18;
+    /// The weather beside the temperature.
+    pub const WEATHER: i32 = 28;
+}
+
 /// Largest logo fetched; anything bigger is not a logo.
 const MAX_ICON_BYTES: usize = 1024 * 1024;
 /// Longest wait for a logo.

@@ -8,7 +8,7 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use super::board::{clear, notice, tracked};
-use super::icons::{source_icon, symbolic};
+use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped as text};
 use crate::backend::Command;
 use crate::present::{
@@ -19,6 +19,8 @@ use crate::view::{View, flip};
 /// Every dialog's width: enough for a source's message or a stack's name
 /// on one line, and the same for all three so they open in one place.
 const DIALOG_WIDTH: i32 = 600;
+/// How far each level of the show/hide tree is set in from the one above.
+const INDENT: i32 = 18;
 
 /// A dialog titled `title` over the window, holding `content`.
 fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) {
@@ -66,7 +68,7 @@ pub fn show_sources(ctx: &Rc<Ctx>) {
         let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
         row.add_css_class("row-card");
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        top.append(&source_icon(ctx, source.icon.as_ref(), 18));
+        top.append(&source_icon(ctx, source.icon.as_ref(), size::LOGO));
         let name = text(&source.name, &[]);
         name.add_css_class("card-title");
         top.append(&name);
@@ -81,7 +83,7 @@ pub fn show_sources(ctx: &Rc<Ctx>) {
             .build();
         status.add_css_class("status");
         status.add_css_class(source.status_class);
-        status.append(&symbolic(source.status_icon, 14));
+        status.append(&symbolic(source.status_icon, size::TEXT));
         status.append(&gtk::Label::new(Some(source.status_text)));
         top.append(&status);
         row.append(&top);
@@ -126,7 +128,7 @@ fn snoozed_dialog(ctx: &Rc<Ctx>) -> Option<adw::Dialog> {
         texts.append(&body);
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         footer.add_css_class("card-source");
-        footer.append(&source_icon(ctx, entry.icon.as_ref(), 13));
+        footer.append(&source_icon(ctx, entry.icon.as_ref(), size::SMALL));
         footer.append(&text(&entry.footer(), &[]));
         texts.append(&footer);
         row.append(&texts);
@@ -262,13 +264,13 @@ fn visibility(ctx: &Rc<Ctx>, rebuild: &Rc<dyn Fn()>, boards: &[BoardSwitches]) -
         for group in &board.groups {
             let group_box = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
-                .margin_start(18)
+                .margin_start(INDENT)
                 .build();
-            let logo = source_icon(ctx, group.icon.as_ref(), 16);
+            let logo = source_icon(ctx, group.icon.as_ref(), size::CONTROL);
             group_box.append(&switch_row(ctx, rebuild, &group.group, Some(logo), false));
             for stack in &group.stacks {
                 let row = switch_row(ctx, rebuild, stack, None, false);
-                row.set_margin_start(18);
+                row.set_margin_start(INDENT);
                 group_box.append(&row);
             }
             board_box.append(&group_box);

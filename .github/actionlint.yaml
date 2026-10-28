@@ -1,0 +1,8 @@
+# actionlint 1.7.12 and earlier do not know the GITHUB_TOKEN scope that
+# reads Dependabot alerts; GitHub documents it ("vulnerability-alerts: Read
+# Dependabot alerts"). Ignored there alone, and only that scope: any other
+# unknown one still fails.
+paths:
+  .github/workflows/dependabot-issues.yml:
+    ignore:
+      - 'unknown permission scope "vulnerability-alerts"'

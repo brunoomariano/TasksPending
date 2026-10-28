@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap doctor ci ci-check test fmt lint build up app sandbox screenshots changelog-check install-test release-installer-test release-assets-test release-local release-smoke install uninstall deploy
+.PHONY: help bootstrap doctor ci ci-check test fmt lint build up app sandbox screenshots changelog-check install-test release-installer-test release-assets-test dependabot-issues-test release-local release-smoke install uninstall deploy
 
 help: ## Show this list of targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -20,7 +20,7 @@ doctor: ## Check that the required tools and libraries are installed
 
 ci: fmt ci-check ## Format, then run the verification gate
 
-ci-check: lint test changelog-check install-test release-installer-test release-assets-test ## Verification gate: lint, tests and the install scripts (read-only)
+ci-check: lint test changelog-check install-test release-installer-test release-assets-test dependabot-issues-test ## Verification gate: lint, tests and the scripts (read-only)
 
 fmt: ## Format the Rust code
 	cargo fmt --all
@@ -66,6 +66,9 @@ release-installer-test: ## Check the public release installer without network ac
 
 release-assets-test: ## Check the stable release download aliases and checksums
 	./scripts/test-release-assets.sh
+
+dependabot-issues-test: ## Check the script that keeps Dependabot alerts as issues, against a stand-in gh
+	./scripts/test-dependabot-issues.sh
 
 release-local: ## Build a release bundle for this machine under dist/
 	./scripts/release-local.sh

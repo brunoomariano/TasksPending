@@ -25,6 +25,7 @@ Use the vocabulary in `crates/pending-core`: `DashboardSnapshot`, `Board` (a fil
 - `make screenshots`: regenerate the README pictures in `docs/assets` from the sandbox window (`tasks-pending sandbox --screenshot <file> --scene board|light|sources|settings|snoozed`); run it after a change that alters how the window looks. It needs a display that is drawing frames (not one on DPMS off). Without one, GTK's Broadway backend works headless at 1024×768: `gtk4-broadwayd :5 &` then `GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 make screenshots`.
 - `make changelog-check`: check `CHANGELOG.md`'s sections (and run that check's own harness, `scripts/test-check-changelog.sh`).
 - `make install-test` / `make release-installer-test` / `make release-assets-test`: validate the source installer, the public release installer and its stable download aliases without network access or changes to the machine.
+- `make dependabot-issues-test`: check `scripts/dependabot-issues.sh` against a stand-in `gh`.
 - `make release-local` / `make release-smoke`: build the release bundle under `dist/`, and smoke test it.
 - `make install` / `make uninstall`: build a release and install it under `PREFIX` (default `~/.local`) with the desktop entry, icon and user service, or remove it.
 - `make deploy`: build, install under `~/.local`, (re)start the daemon and check that it answers; the idempotent way to put a checkout to work on this machine.
@@ -92,3 +93,7 @@ The app's tests need no display (CI has none): what they check lives outside the
   - Run it by hand (`workflow_dispatch`, dry run by default) to build without publishing.
 - **How users get it:** the public installer (`scripts/install-release.sh`, published as `tasks-pending-install.sh`) installs the package on Arch and the bundle under `~/.local/lib/tasks-pending` elsewhere, then runs `tasks-pending setup`; `tasks-pending upgrade` fetches the next release the same way. Keep the installer, `upgrade` and `setup` in step: they share the directory layout, the environment variables and the `install.sh --start` hand-over.
 - **Local checks:** `make release-local` builds the bundle for this machine; `make deploy` installs this checkout and restarts the daemon.
+
+## Dependencies
+
+Dependabot raises alerts but opens no pull requests: its security updates are off in the repository settings, and there is no `.github/dependabot.yml`. `.github/workflows/dependabot-issues.yml` runs `scripts/dependabot-issues.sh` daily on `master` (and by hand), keeping one issue labelled `dependabot` per package with open alerts, edited as they change and closed once none is open. Fix one with a pull request into `develop` like any other change; Dependabot reads `master`, so the alert, and with it the issue, closes once the fix is released. To drop an alert without fixing it, dismiss it in Dependabot: an issue closed by hand comes back on the next run while its alerts are open.

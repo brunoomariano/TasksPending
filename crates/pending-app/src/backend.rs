@@ -5,6 +5,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -16,6 +17,7 @@ use pending_runtime::config::Origin;
 use pending_runtime::live::{Env, Watch};
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
+use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::info;
 
@@ -198,47 +200,25 @@ async fn serve_here(router: Router) -> anyhow::Result<(Client, SocketAddr)> {
     Ok((client, address))
 }
 
-/// Runs the window's commands against `client`, one at a time, on the
-/// runtime, and reports back through the returned receiver.
+/// Runs the window's commands against `client` on the runtime, and reports
+/// back through the returned receiver. Changes run one at a time, in
+/// order. Reads run beside them, so a change never waits for a slow read,
+/// and a read asked for again before it was made is made once.
 pub fn spawn_worker(
     runtime: &Runtime,
     client: Client,
 ) -> (UnboundedSender<Command>, UnboundedReceiver<Event>) {
     let (commands, mut inbox) = unbounded_channel::<Command>();
     let (events, outbox) = unbounded_channel::<Event>();
-    let later = commands.clone();
+    let (changes, change_inbox) = unbounded_channel::<Command>();
+    let reads = Arc::new(ReadQueue::default());
+    runtime.spawn(read_lane(client.clone(), reads.clone(), events.clone()));
+    runtime.spawn(change_lane(client, change_inbox, reads.clone(), events));
     runtime.spawn(async move {
         while let Some(command) = inbox.recv().await {
-            let event = match command {
-                Command::Poll => Event::Snapshot(client.snapshot().await.map_err(text)),
-                Command::Look => {
-                    if client.look().await.is_err() {
-                        continue;
-                    }
-                    Event::Snapshot(client.snapshot().await.map_err(text))
-                }
-                Command::Weather => Event::Weather(client.weather().await.ok().flatten()),
-                Command::Version => {
-                    Event::Update(client.version().await.ok().and_then(|v| v.available))
-                }
-                Command::Refresh => {
-                    let result = client.refresh().await.map_err(text);
-                    if result.is_ok() {
-                        let later = later.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(AFTER_REFRESH).await;
-                            let _ = later.send(Command::Poll);
-                        });
-                    }
-                    Event::Refreshed(result)
-                }
-                Command::SetMark { id, marked } => {
-                    acted(&later, client.set_mark(&id, marked).await)
-                }
-                Command::Snooze { id, until } => acted(&later, client.snooze(&id, until).await),
-                Command::Wake { id } => acted(&later, client.wake(&id).await),
-            };
-            if events.send(event).is_err() {
+            if let Some(change) = reads.ask(command)
+                && changes.send(change).is_err()
+            {
                 break;
             }
         }
@@ -246,12 +226,122 @@ pub fn spawn_worker(
     (commands, outbox)
 }
 
-/// After a change went through, the snapshot holds the result: read it.
-fn acted(later: &UnboundedSender<Command>, result: Result<(), Error>) -> Event {
-    if result.is_ok() {
-        let _ = later.send(Command::Poll);
+/// Reads asked for and not made yet, each once however often it was
+/// asked for.
+#[derive(Debug, Default)]
+struct Reads {
+    look: bool,
+    poll: bool,
+    weather: bool,
+    version: bool,
+}
+
+impl Reads {
+    /// Makes the reads, telling `events`; false once nobody listens.
+    async fn run(self, client: &Client, events: &UnboundedSender<Event>) -> bool {
+        // The look first, so the snapshot read after it counts changes
+        // from now. A look that failed reads nothing by itself: the daemon
+        // is not answering, and the next poll says so.
+        let mut poll = self.poll;
+        if self.look {
+            poll |= client.look().await.is_ok();
+        }
+        if poll {
+            let snapshot = client.snapshot().await.map_err(text);
+            if events.send(Event::Snapshot(snapshot)).is_err() {
+                return false;
+            }
+        }
+        if self.weather {
+            let report = client.weather().await.ok().flatten();
+            if events.send(Event::Weather(report)).is_err() {
+                return false;
+            }
+        }
+        if self.version {
+            let available = client.version().await.ok().and_then(|v| v.available);
+            if events.send(Event::Update(available)).is_err() {
+                return false;
+            }
+        }
+        true
     }
-    Event::Acted(result.map_err(text))
+}
+
+/// The reads waiting for the read lane, and the signal that there are some.
+#[derive(Debug, Default)]
+struct ReadQueue {
+    pending: Mutex<Reads>,
+    ready: Notify,
+}
+
+impl ReadQueue {
+    /// Queues `command` if it is a read, and gives it back if it is not.
+    fn ask(&self, command: Command) -> Option<Command> {
+        {
+            let mut pending = self.pending.lock().expect("read queue");
+            match command {
+                Command::Poll => pending.poll = true,
+                Command::Look => pending.look = true,
+                Command::Weather => pending.weather = true,
+                Command::Version => pending.version = true,
+                change => return Some(change),
+            }
+        }
+        self.ready.notify_one();
+        None
+    }
+
+    /// The reads asked for since the last call, once there are any.
+    async fn next(&self) -> Reads {
+        self.ready.notified().await;
+        std::mem::take(&mut *self.pending.lock().expect("read queue"))
+    }
+}
+
+async fn read_lane(client: Client, reads: Arc<ReadQueue>, events: UnboundedSender<Event>) {
+    while reads.next().await.run(&client, &events).await {}
+}
+
+/// Makes the changes one at a time. After one went through, the snapshot
+/// holds its result: it is read once the window has been told, right away
+/// or, after a refresh, once the sources have had a moment.
+async fn change_lane(
+    client: Client,
+    mut inbox: UnboundedReceiver<Command>,
+    reads: Arc<ReadQueue>,
+    events: UnboundedSender<Event>,
+) {
+    while let Some(command) = inbox.recv().await {
+        let (event, read_after) = match command {
+            Command::Refresh => {
+                let result = client.refresh().await.map_err(text);
+                let read_after = result.is_ok().then_some(AFTER_REFRESH);
+                (Event::Refreshed(result), read_after)
+            }
+            Command::SetMark { id, marked } => acted(client.set_mark(&id, marked).await),
+            Command::Snooze { id, until } => acted(client.snooze(&id, until).await),
+            Command::Wake { id } => acted(client.wake(&id).await),
+            // The read lane makes these.
+            Command::Poll | Command::Look | Command::Weather | Command::Version => continue,
+        };
+        if events.send(event).is_err() {
+            return;
+        }
+        if let Some(wait) = read_after {
+            let reads = reads.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(wait).await;
+                reads.ask(Command::Poll);
+            });
+        }
+    }
+}
+
+/// The event for a change, and when to read the snapshot after it.
+fn acted(result: Result<(), Error>) -> (Event, Option<Duration>) {
+    let read_after = result.is_ok().then_some(Duration::ZERO);
+    (Event::Acted(result.map_err(text)), read_after)
 }
 
 fn text(error: Error) -> String {
@@ -260,8 +350,6 @@ fn text(error: Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
 
     fn runtime() -> Runtime {
@@ -314,6 +402,196 @@ mod tests {
         let address = listener.local_addr().unwrap();
         runtime.spawn(async move { serve_router(listener, router).await });
         format!("http://{address}")
+    }
+
+    /// What a stand-in daemon answers to a method and path: how long it
+    /// waits, the status and the body.
+    type Answer = fn(&str, &str) -> (Duration, u16, String);
+
+    /// A stand-in daemon on a loopback port, recording every request as
+    /// "METHOD path".
+    struct Fake {
+        url: String,
+        hits: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Fake {
+        fn start(answer: Answer) -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let hits = Arc::new(Mutex::new(Vec::new()));
+            let recorded = hits.clone();
+            std::thread::spawn(move || {
+                for stream in listener.incoming().flatten() {
+                    let hits = recorded.clone();
+                    std::thread::spawn(move || answer_one(stream, answer, &hits));
+                }
+            });
+            Self { url, hits }
+        }
+
+        fn client(&self) -> Client {
+            Client::new(&self.url).unwrap()
+        }
+
+        fn count(&self, request: &str) -> usize {
+            let hits = self.hits.lock().unwrap();
+            hits.iter().filter(|hit| *hit == request).count()
+        }
+    }
+
+    /// Reads one request from `stream` and answers it, then closes.
+    fn answer_one(mut stream: std::net::TcpStream, answer: Answer, hits: &Mutex<Vec<String>>) {
+        use std::io::{Read, Write};
+        let mut data = Vec::new();
+        let mut buffer = [0; 4096];
+        let mut read = |data: &mut Vec<u8>| match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => false,
+            Ok(count) => {
+                data.extend_from_slice(&buffer[..count]);
+                true
+            }
+        };
+        let head = loop {
+            if let Some(end) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                break end + 4;
+            }
+            if !read(&mut data) {
+                return;
+            }
+        };
+        let text = String::from_utf8_lossy(&data[..head]).into_owned();
+        let length = text
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().unwrap_or(0))
+            })
+            .unwrap_or(0);
+        while data.len() < head + length {
+            if !read(&mut data) {
+                return;
+            }
+        }
+        let mut words = text.split_whitespace();
+        let (method, path) = (words.next().unwrap_or(""), words.next().unwrap_or(""));
+        hits.lock().unwrap().push(format!("{method} {path}"));
+        let (wait, status, body) = answer(method, path);
+        std::thread::sleep(wait);
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\n\
+             content-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+    }
+
+    fn snapshot_json() -> String {
+        serde_json::to_string(&pending_core::sandbox_snapshot()).unwrap()
+    }
+
+    /// The next event, failing the test after a while instead of hanging.
+    fn next(runtime: &Runtime, events: &mut UnboundedReceiver<Event>) -> Event {
+        runtime
+            .block_on(async { tokio::time::timeout(Duration::from_secs(10), events.recv()).await })
+            .expect("an event in time")
+            .expect("the worker is running")
+    }
+
+    /// A change goes through while a slow read still waits for its answer.
+    #[test]
+    fn a_change_does_not_wait_behind_a_slow_read() {
+        let runtime = runtime();
+        let fake = Fake::start(|method, path| match (method, path) {
+            ("GET", "/api/v1/snapshot") => (Duration::from_secs(3), 200, snapshot_json()),
+            _ => (Duration::ZERO, 200, "{}".to_owned()),
+        });
+        let (commands, mut events) = spawn_worker(&runtime, fake.client());
+        commands.send(Command::Poll).unwrap();
+        commands
+            .send(Command::SetMark {
+                id: "x".to_owned(),
+                marked: true,
+            })
+            .unwrap();
+        let first = next(&runtime, &mut events);
+        assert!(matches!(first, Event::Acted(Ok(()))), "{first:?}");
+    }
+
+    /// Polls asked for while one is under way are made once, not queued:
+    /// five in a row against a slow daemon are at most two requests.
+    #[test]
+    fn polls_asked_for_meanwhile_are_made_once() {
+        let runtime = runtime();
+        let fake = Fake::start(|method, path| match (method, path) {
+            ("GET", "/api/v1/snapshot") => (Duration::from_millis(300), 200, snapshot_json()),
+            _ => (Duration::ZERO, 500, String::new()),
+        });
+        let (commands, mut events) = spawn_worker(&runtime, fake.client());
+        for _ in 0..5 {
+            commands.send(Command::Poll).unwrap();
+        }
+        commands.send(Command::Version).unwrap();
+        let mut snapshots = 0;
+        loop {
+            match next(&runtime, &mut events) {
+                Event::Snapshot(Ok(_)) => snapshots += 1,
+                Event::Update(None) => break,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert!(snapshots <= 2, "{snapshots} snapshots");
+        assert_eq!(fake.count("GET /api/v1/snapshot"), snapshots);
+    }
+
+    /// An accepted refresh is followed, a moment later, by a read of the
+    /// snapshot the sources are filling.
+    #[test]
+    fn reads_the_snapshot_after_a_refresh() {
+        let runtime = runtime();
+        let fake = Fake::start(|method, path| match (method, path) {
+            ("GET", "/api/v1/snapshot") => (Duration::ZERO, 200, snapshot_json()),
+            _ => (Duration::ZERO, 200, "{}".to_owned()),
+        });
+        let (commands, mut events) = spawn_worker(&runtime, fake.client());
+        commands.send(Command::Refresh).unwrap();
+        let refreshed = next(&runtime, &mut events);
+        assert!(
+            matches!(refreshed, Event::Refreshed(Ok(()))),
+            "{refreshed:?}"
+        );
+        let read = next(&runtime, &mut events);
+        assert!(matches!(read, Event::Snapshot(Ok(_))), "{read:?}");
+    }
+
+    /// A change the daemon refuses says why, and reads nothing: there is
+    /// no new snapshot to show. A look that fails reads nothing either.
+    #[test]
+    fn a_refused_change_or_look_reads_nothing() {
+        let runtime = runtime();
+        let fake = Fake::start(|method, path| match (method, path) {
+            ("GET", "/api/v1/snapshot") => (Duration::ZERO, 200, snapshot_json()),
+            _ => (Duration::ZERO, 500, String::new()),
+        });
+        let (commands, mut events) = spawn_worker(&runtime, fake.client());
+        commands
+            .send(Command::SetMark {
+                id: "x".to_owned(),
+                marked: true,
+            })
+            .unwrap();
+        let refused = next(&runtime, &mut events);
+        assert!(
+            matches!(&refused, Event::Acted(Err(error)) if error == "HTTP 500"),
+            "{refused:?}"
+        );
+        commands.send(Command::Look).unwrap();
+        commands.send(Command::Weather).unwrap();
+        let weather = next(&runtime, &mut events);
+        assert!(matches!(weather, Event::Weather(None)), "{weather:?}");
+        assert_eq!(fake.count("POST /api/v1/look"), 1);
+        assert_eq!(fake.count("GET /api/v1/snapshot"), 0);
     }
 
     /// A port nothing listens on.

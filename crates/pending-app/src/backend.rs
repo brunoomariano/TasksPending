@@ -717,9 +717,21 @@ mod tests {
     /// snapshot after the change is one read once it went through.
     #[test]
     fn a_snapshot_read_during_a_change_is_not_shown() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static READS: AtomicUsize = AtomicUsize::new(0);
         let runtime = runtime();
+        // The first read is made before the mark lands, the next ones after.
         let fake = Fake::start(|method, path| match (method, path) {
-            ("GET", "/api/v1/snapshot") => (Duration::from_millis(400), 200, snapshot_json()),
+            ("GET", "/api/v1/snapshot") => {
+                let mut snapshot = pending_core::sandbox_snapshot();
+                snapshot.marked = if READS.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Vec::new()
+                } else {
+                    vec!["x".to_owned()]
+                };
+                let body = serde_json::to_string(&snapshot).unwrap();
+                (Duration::from_millis(400), 200, body)
+            }
             _ => (Duration::from_millis(100), 200, "{}".to_owned()),
         });
         let (commands, mut events) = spawn_worker(&runtime, fake.client());
@@ -732,11 +744,12 @@ mod tests {
             .unwrap();
         let acted = next(&runtime, &mut events);
         assert!(matches!(acted, Event::Acted(Ok(()))), "{acted:?}");
-        let read = next(&runtime, &mut events);
-        assert!(matches!(read, Event::Snapshot(Ok(_))), "{read:?}");
+        let Event::Snapshot(Ok(shown)) = next(&runtime, &mut events) else {
+            panic!("a snapshot after the mark");
+        };
         assert_eq!(
-            fake.count("GET /api/v1/snapshot"),
-            2,
+            shown.marked,
+            ["x"],
             "the snapshot shown was read before the mark went through"
         );
     }

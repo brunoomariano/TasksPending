@@ -134,28 +134,50 @@ enum UserManager {
     Missing,
     /// systemctl is there, but no user manager answers it.
     Unreachable,
-    Running,
+    /// It answers, with the environment its services start from
+    /// (`show-environment`'s `KEY=value` lines).
+    Running(String),
 }
 
-/// Asks `systemctl` (run with the given arguments, saying whether it
-/// succeeded) whether a user manager answers.
-fn user_manager(systemctl: impl Fn(&[&str]) -> std::io::Result<bool>) -> UserManager {
+/// Asks `systemctl` (run with the given arguments, giving its output when
+/// it succeeded) whether a user manager answers.
+fn user_manager(systemctl: impl Fn(&[&str]) -> std::io::Result<Option<String>>) -> UserManager {
     match systemctl(&["--user", "show-environment"]) {
         Err(_) => UserManager::Missing,
-        Ok(false) => UserManager::Unreachable,
-        Ok(true) => UserManager::Running,
+        Ok(None) => UserManager::Unreachable,
+        Ok(Some(environment)) => UserManager::Running(environment),
     }
 }
 
-/// `systemctl` with its output silenced, saying whether it succeeded.
-fn quiet_systemctl(args: &[&str]) -> std::io::Result<bool> {
-    Command::new("systemctl")
+/// `systemctl`'s output when it succeeded; its errors are silenced.
+fn systemctl_output(args: &[&str]) -> std::io::Result<Option<String>> {
+    let output = Command::new("systemctl")
         .args(args)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
+        .output()?;
+    Ok(output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned()))
+}
+
+/// The variables that decide where the daemon reads, as the service sees
+/// them: `XDG_CONFIG_HOME` from the user manager when one answers (the
+/// unit's `%E`, and the daemon's own), whether or not this shell has
+/// another; the rest from `shell`. A value systemd had to quote (`$'…'`)
+/// is not an absolute path, and is ignored like any other.
+fn service_env<'a>(
+    shell: &'a dyn Fn(&str) -> Option<OsString>,
+    manager: &'a UserManager,
+) -> impl Fn(&str) -> Option<OsString> + 'a {
+    move |key| match manager {
+        UserManager::Running(environment) if key == "XDG_CONFIG_HOME" => environment
+            .lines()
+            .find_map(|line| line.strip_prefix("XDG_CONFIG_HOME="))
+            .map(OsString::from),
+        _ => shell(key),
+    }
 }
 
 /// What setup reports once the service was started or restarted, from
@@ -276,7 +298,9 @@ fn data_home() -> Option<PathBuf> {
 
 pub fn run(options: Options) -> anyhow::Result<()> {
     refuse_root("setup")?;
-    let paths = setup_paths(&|key: &str| std::env::var_os(key))?;
+    let manager = user_manager(systemctl_output);
+    let shell = |key: &str| std::env::var_os(key);
+    let paths = setup_paths(&service_env(&shell, &manager))?;
     let config = &paths.config;
     if ensure_file(config, CONFIG_EXAMPLE, 0o644)? {
         println!(
@@ -309,8 +333,8 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     }
     // Without a user manager there is no service to start: the files are
     // in place, and the daemon is the user's to run.
-    match user_manager(quiet_systemctl) {
-        UserManager::Running => {}
+    match manager {
+        UserManager::Running(_) => {}
         UserManager::Missing => {
             println!(
                 "systemctl not found, so no user service: run `tasks-pending serve` yourself, then open the window"
@@ -397,16 +421,49 @@ mod tests {
         let missing = |_: &[&str]| Err(std::io::Error::from(std::io::ErrorKind::NotFound));
         assert_eq!(user_manager(missing), UserManager::Missing);
         assert_eq!(
-            user_manager(|_: &[&str]| Ok(false)),
+            user_manager(|_: &[&str]| Ok(None)),
             UserManager::Unreachable
         );
         let asked = std::cell::RefCell::new(Vec::new());
         let running = |args: &[&str]| {
             asked.borrow_mut().push(args.join(" "));
-            Ok(true)
+            Ok(Some("HOME=/home/me\n".to_owned()))
         };
-        assert_eq!(user_manager(running), UserManager::Running);
+        assert_eq!(
+            user_manager(running),
+            UserManager::Running("HOME=/home/me\n".to_owned())
+        );
         assert_eq!(asked.into_inner(), ["--user show-environment"]);
+    }
+
+    /// The service starts from the user manager's environment, not this
+    /// shell's: the env file goes where its `%E` points, and the config
+    /// where the daemon looks, both under the manager's XDG_CONFIG_HOME,
+    /// or ~/.config when the manager has none. Without a manager the
+    /// shell's is all there is.
+    #[test]
+    fn reads_the_config_home_the_service_sees() {
+        let shell = env_of(&[("HOME", "/home/me"), ("XDG_CONFIG_HOME", "/shell/cfg")]);
+
+        let manager = UserManager::Running("HOME=/home/me\nXDG_CONFIG_HOME=/srv/cfg\n".to_owned());
+        let paths = setup_paths(&service_env(&shell, &manager)).unwrap();
+        assert_eq!(paths.env, PathBuf::from("/srv/cfg/tasks-pending/env"));
+        assert_eq!(
+            paths.config,
+            PathBuf::from("/srv/cfg/tasks-pending/config.toml")
+        );
+
+        let manager = UserManager::Running("HOME=/home/me\nPATH=/usr/bin\n".to_owned());
+        let paths = setup_paths(&service_env(&shell, &manager)).unwrap();
+        assert_eq!(
+            paths.env,
+            PathBuf::from("/home/me/.config/tasks-pending/env")
+        );
+
+        for manager in [UserManager::Missing, UserManager::Unreachable] {
+            let paths = setup_paths(&service_env(&shell, &manager)).unwrap();
+            assert_eq!(paths.env, PathBuf::from("/shell/cfg/tasks-pending/env"));
+        }
     }
 
     /// Once the service is started, the daemon must answer, and as this

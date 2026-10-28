@@ -105,7 +105,7 @@ Every key, per kind, is in [`config.example.toml`](../config.example.toml) and [
 
 ## 3. Tokens
 
-Tokens never go in `config.toml`. The daemon reads them from its environment: `~/.config/tasks-pending/env` (or `$XDG_CONFIG_HOME/tasks-pending/env`, as the user service sees `XDG_CONFIG_HOME`), one `KEY=value` per line, readable only by you. `tasks-pending setup` creates it from the example (mode 600); `TASKS_PENDING_CONFIG` moves the config file setup creates, never the env file, which stays where the unit reads it. By hand:
+Tokens never go in `config.toml`. The daemon reads them from its environment: `~/.config/tasks-pending/env` (or `$XDG_CONFIG_HOME/tasks-pending/env`, as the user service sees `XDG_CONFIG_HOME`), one `KEY=value` per line, readable only by you. `tasks-pending setup` creates it from the example (mode 600), under the `XDG_CONFIG_HOME` the user manager has (`systemctl --user show-environment`), not your shell's; `TASKS_PENDING_CONFIG` moves the config file setup creates, never the env file, which stays where the unit reads it. By hand:
 
 ```sh
 cp -n ~/.local/share/tasks-pending/env.example ~/.config/tasks-pending/env

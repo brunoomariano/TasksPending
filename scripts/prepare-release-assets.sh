@@ -21,7 +21,10 @@ for target in "${TARGETS[@]}"; do
   )
 done
 
-versioned_package="$ARTIFACTS/tasks-pending-bin-$VERSION-1-x86_64.pkg.tar.zst"
+# The package's release number is the PKGBUILD's, not always 1.
+pkgrel="$(sed -n 's/^pkgrel=//p' "$ROOT/packaging/arch/PKGBUILD" | head -n 1)"
+test -n "$pkgrel"
+versioned_package="$ARTIFACTS/tasks-pending-bin-$VERSION-$pkgrel-x86_64.pkg.tar.zst"
 stable_package="$ARTIFACTS/tasks-pending-bin-x86_64.pkg.tar.zst"
 test -f "$versioned_package"
 cp "$versioned_package" "$stable_package"

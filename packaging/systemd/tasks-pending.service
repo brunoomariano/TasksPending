@@ -21,6 +21,9 @@ EnvironmentFile=-%h/.config/tasks-pending/env
 # two are where Omarchy keeps the commands behind the weather widget.
 Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin:/usr/share/omarchy/bin:%h/.local/share/omarchy/bin
 Environment=RUST_LOG=info
+# The daemon runs user code paths only (HTTP to the providers, files under
+# the home); nothing it starts may gain privileges.
+NoNewPrivileges=yes
 Restart=on-failure
 RestartSec=5
 

@@ -9,10 +9,11 @@ VERSION=0.6.0
 trap 'rm -rf "$WORK"' EXIT
 
 TARGET=x86_64-unknown-linux-gnu
+PKGREL="$(sed -n 's/^pkgrel=//p' "$ROOT/packaging/arch/PKGBUILD" | head -n 1)"
 
 mkdir -p "$ARTIFACTS"
 printf '%s\n' "$TARGET" >"$ARTIFACTS/tasks-pending-$VERSION-$TARGET.tar.gz"
-printf 'arch package\n' >"$ARTIFACTS/tasks-pending-bin-$VERSION-1-x86_64.pkg.tar.zst"
+printf 'arch package\n' >"$ARTIFACTS/tasks-pending-bin-$VERSION-$PKGREL-x86_64.pkg.tar.zst"
 
 "$ROOT/scripts/prepare-release-assets.sh" "$VERSION" "$ARTIFACTS"
 
@@ -23,7 +24,7 @@ cmp "$ARTIFACTS/tasks-pending-$VERSION-$TARGET.tar.gz" "$ARTIFACTS/$asset"
   sha256sum -c "$asset.sha256"
 )
 
-cmp "$ARTIFACTS/tasks-pending-bin-$VERSION-1-x86_64.pkg.tar.zst" \
+cmp "$ARTIFACTS/tasks-pending-bin-$VERSION-$PKGREL-x86_64.pkg.tar.zst" \
   "$ARTIFACTS/tasks-pending-bin-x86_64.pkg.tar.zst"
 (
   cd "$ARTIFACTS"

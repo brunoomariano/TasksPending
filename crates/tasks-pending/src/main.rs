@@ -14,11 +14,24 @@ use pending_core::api::DEFAULT_LISTEN_ADDR;
 #[command(
     name = "tasks-pending",
     about = "TasksPending: your pending work, in one window",
-    version
+    version,
+    args_conflicts_with_subcommands = true
 )]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+    /// The window's options, for `tasks-pending` without a command; clap
+    /// fills in their defaults here, which it does not for a value built
+    /// in code.
+    #[command(flatten)]
+    app: AppCommand,
+}
+
+impl Cli {
+    /// What to run: the window when no command is named.
+    fn into_command(self) -> Command {
+        self.command.unwrap_or(Command::App(self.app))
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -93,7 +106,7 @@ impl From<SceneArg> for Scene {
     }
 }
 
-#[derive(Debug, Args, Default)]
+#[derive(Debug, Args)]
 struct AppCommand {
     /// Config file for the sources when no daemon runs. Defaults to
     /// $TASKS_PENDING_CONFIG, then $XDG_CONFIG_HOME/tasks-pending/config.toml,
@@ -122,20 +135,19 @@ struct ServeCommand {
 }
 
 fn main() -> anyhow::Result<()> {
-    match Cli::parse().command {
-        None => run_app(AppCommand::default()),
-        Some(Command::App(command)) => run_app(command),
-        Some(Command::Serve(command)) => run_serve(command),
-        Some(Command::Sandbox(command)) => pending_app::run(AppOptions {
+    match Cli::parse().into_command() {
+        Command::App(command) => run_app(command),
+        Command::Serve(command) => run_serve(command),
+        Command::Sandbox(command) => pending_app::run(AppOptions {
             sandbox: true,
             screenshot: command.screenshot,
             scene: command.scene.into(),
             ..AppOptions::default()
         }),
-        Some(Command::Setup(command)) => setup::run(setup::Options {
+        Command::Setup(command) => setup::run(setup::Options {
             no_start: command.no_start,
         }),
-        Some(Command::Upgrade(command)) => upgrade::run(upgrade::Options {
+        Command::Upgrade(command) => upgrade::run(upgrade::Options {
             check: command.check,
             version: command.version,
             allow_downgrade: command.allow_downgrade,
@@ -164,9 +176,11 @@ fn run_serve(command: ServeCommand) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use clap::{CommandFactory, Parser};
 
-    use super::{Cli, Command};
+    use super::{AppCommand, Cli, Command};
 
     #[test]
     fn cli_exposes_the_window_the_daemon_and_the_sandbox() {
@@ -261,19 +275,61 @@ mod tests {
         assert!(command.allow_downgrade);
     }
 
-    /// Without a subcommand the window opens, looking for the daemon at
-    /// its default address.
+    /// The window `tasks-pending` with these arguments opens.
+    fn window(args: &[&str]) -> AppCommand {
+        let cli = Cli::try_parse_from(std::iter::once("tasks-pending").chain(args.iter().copied()))
+            .unwrap_or_else(|error| panic!("{args:?}: {error}"));
+        match cli.into_command() {
+            Command::App(command) => command,
+            other => panic!("{args:?} runs {other:?}, not the window"),
+        }
+    }
+
+    /// Without a subcommand the window opens, as with `app`, looking for
+    /// the daemon at its default address.
     #[test]
     fn the_window_is_the_default_and_finds_the_daemon() {
-        let cli = Cli::try_parse_from(["tasks-pending"]).unwrap();
-        assert!(cli.command.is_none());
+        for args in [&[][..], &["app"]] {
+            let command = window(args);
+            assert_eq!(command.daemon, "http://127.0.0.1:61000", "{args:?}");
+            assert!(!command.no_daemon, "{args:?}");
+            assert_eq!(command.config, None, "{args:?}");
+        }
+    }
 
-        let cli = Cli::try_parse_from(["tasks-pending", "app"]).unwrap();
-        let Some(Command::App(command)) = cli.command else {
-            panic!("expected the app command");
-        };
-        assert_eq!(command.daemon, "http://127.0.0.1:61000");
-        assert!(!command.no_daemon);
+    /// The window's options work without naming `app`, as the docs show
+    /// them, and not before another command.
+    #[test]
+    fn the_window_takes_its_options_without_the_app_command() {
+        let command = window(&["--daemon", "http://127.0.0.1:8090"]);
+        assert_eq!(command.daemon, "http://127.0.0.1:8090");
+        let command = window(&["--no-daemon", "--config", "dashboard.toml"]);
+        assert!(command.no_daemon);
+        assert_eq!(command.config, Some(PathBuf::from("dashboard.toml")));
+        assert!(Cli::try_parse_from(["tasks-pending", "--no-daemon", "serve"]).is_err());
+    }
+
+    /// The launcher's command line, as the package installs it, opens the
+    /// window and finds the daemon.
+    #[test]
+    fn the_launcher_opens_the_window() {
+        let entry = include_str!(
+            "../../../packaging/applications/io.github.brunoomariano.TasksPending.desktop"
+        );
+        let exec = entry
+            .lines()
+            .find_map(|line| line.strip_prefix("Exec="))
+            .expect("the desktop entry has an Exec line");
+        let mut words = exec.split_whitespace();
+        assert!(
+            words
+                .next()
+                .is_some_and(|program| program.ends_with("/tasks-pending")),
+            "{exec}"
+        );
+        // Field codes such as %U stand for files the launcher may pass.
+        let args: Vec<&str> = words.filter(|word| !word.starts_with('%')).collect();
+        assert_eq!(window(&args).daemon, "http://127.0.0.1:61000", "{exec}");
     }
 
     #[test]

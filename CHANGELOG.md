@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `tasks-pending` without a command opens the window, and with it the TasksPending entry in the app launcher. In 0.6.0 and 0.6.1 it stopped at once with `daemon address  is not a local http address`, so the launcher opened nothing; `tasks-pending app` was not affected. The window's options (`--daemon`, `--no-daemon`, `--config`) also work without naming `app`, as the docs show them.
+
 ## 0.6.1
 
 ### Security

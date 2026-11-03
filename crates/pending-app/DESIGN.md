@@ -92,7 +92,7 @@ components:
 
 The window is for one person at their desk, several times a day, often for a few seconds: what is waiting for me, did anything change. Personality: a quiet board. Nothing moves unless something changed, nothing is coloured unless it means something, and the only large element is the clock. Density 6 of 10 (a wall of small cards, with air between groups). Variance 3 of 10 (symmetrical, predictable, the same card everywhere). Motion 2 of 10 (short state transitions, one quiet fade for news).
 
-Direction card, "The quiet board": the hero opens with the thing most characteristic of the subject, the time, drawn in the block font of a terminal clock, with the weather on one side and the controls on the other. Below it, the board: one group per source, stacks inside, cards inside stacks. The one bold thing is the clock; everything else is ink on dark paper. Risk: GTK CSS has no layout, so rhythm comes from widget spacing, and no blur, so overlays are opaque surfaces with a border.
+Direction card, "The quiet board": the hero opens with the thing most characteristic of the subject, the time, drawn in the block font of a terminal clock, with the weather on one side and the controls on the other. Below it, two tabs: Activity, the picked cards in three stages, and the Board, one group per source, stacks inside, cards inside stacks. The one bold thing is the clock; everything else is ink on dark paper. Risk: GTK CSS has no layout, so rhythm comes from widget spacing, and no blur, so overlays are opaque surfaces with a border.
 
 ## Colors
 
@@ -104,12 +104,12 @@ Dark, the default:
 - Card hover (#23272e): a card under the pointer.
 - Border (#262a31): every 1px line; Strong border (#343a43) under the pointer.
 - Text (#e7e9ee), Text 2 (#a4abb8) for bodies and stack names, Text 3 (#6d7482) for captions and idle controls.
-- Accent (#7c8cff): the clock, the changed dot, the pin when pressed, the Now row, the primary button, focus rings. Nowhere else.
+- Accent (#7c8cff): the clock, the changed dot, the picked card, the tab that is open, the primary button, focus rings. Nowhere else.
 - OK (#4ccb8f), Warning (#f2c14e), Danger (#f2667a): source status, attention on the Sources button, notices. Cards never carry them.
 
 Light, when the system asks: Page (#f6f7f9), Group (#ffffff), Card (#f1f3f6), Card hover (#e8ebf0), Border (#e4e7ec), Strong border (#d3d8e0), Text (#15181e), Text 2 (#555d6b), Text 3 (#8a91a0), Accent (#4f5ee8), OK (#16a36a), Warning (#c98a06), Danger (#d9364e).
 
-Borders carry the structure; shadows only lift the snooze popover and the dialogs, and never blur anything behind them.
+Borders carry the structure; shadows only lift the card menu and the dialogs, and never blur anything behind them.
 
 ## Typography
 
@@ -119,19 +119,22 @@ The clock is not text: it is the "bricks" font drawn as blocks (6 wide, 5 tall, 
 
 ## Layout
 
-Hero: a centre box, weather at the start (hidden under 1440px), the clock in a clamp in the middle, the controls column at the end; 24px top, 28px sides, 20px bottom, a 1px border below. Board: a flow box of groups at least 290px wide, 20px apart, 28px side gutters, wrapping onto more rows when the window is narrow; a group keeps its natural height. Inside a group: a header row (logo in a tile, name, board badge, empty toggle at the end), then stacks 14px apart with a 1px rule between them; cards 8px apart. The Now row is a group-like box above the board with cards in a homogeneous flow.
+Hero: a centre box, weather at the start (hidden under 1440px), the clock in a clamp in the middle, the controls column at the end; 24px top, 28px sides, 20px bottom, a 1px border below. Under it, a row of two tab pills, Activity and Board, each with a count pill when it holds cards. Activity: three stage columns of equal width (Picked, Doing, Done / to mark), at least 240px, 20px apart, each a group-like box with an upper-case title and a count, cards 8px apart; when nothing is picked, one line of Text 3 with a link to the Board. Board: a flow box of groups at least 290px wide, 20px apart, 28px side gutters, wrapping onto more rows when the window is narrow; a group keeps its natural height; the Todo group comes first. Inside a group: a header row (logo in a tile, name, board badge, empty toggle at the end), then stacks 14px apart with a 1px rule between them; cards 8px apart.
 
 ## Elevation & Depth
 
-Flat. Three surfaces in a ladder (page, group, card), told apart by colour and a 1px border, no shadow at rest. The snooze popover and the dialogs float: a border plus one soft shadow (0 8px 24px at 45% black). Pressed and hovered states change the fill, never the elevation.
+Flat. Three surfaces in a ladder (page, group, card), told apart by colour and a 1px border, no shadow at rest. The card menu and the dialogs float: a border plus one soft shadow (0 8px 24px at 45% black). Pressed and hovered states change the fill, never the elevation.
 
 ## Shapes
 
-Soft corners: 12px for groups, the Now row and dialog rows at 8px, cards at 10px, controls at 8px, pills for badges, counts, filters and snooze choices. The changed dot is a 6px circle. The marked card has a 2px accent line inset on its left edge instead of a coloured background alone.
+Soft corners: 12px for groups and stage columns, dialog rows at 8px, cards at 10px, controls and the card menu at 8px, pills for badges, counts, tabs and filters. The changed dot is a 6px circle. The marked card has a 2px accent line inset on its left edge instead of a coloured background alone.
 
 ## Components
 
-- Card: card surface, 1px border, 10px radius, 10/12px padding; title (a link when the item has one, same colour, accent on hover), two lines of body in Text 2, pin and moon buttons that appear on hover. Marked: accent tint and the inset accent line. Changed: a dot before the title.
+- Card: card surface, 1px border, 10px radius, 10/12px padding; title (a link when the item has one, same colour, accent on hover), two lines of body in Text 2, and one three-dot button at the end that appears on hover and stays while its menu is open. The menu holds every action: the stage moves (on Activity), send to or remove from Activity, Snooze (on the Board), Alert me about, Cancel the alert, and Edit and Delete for a todo. Picked: accent tint and the inset accent line. Changed: a dot before the title. Alert: a caption line in Text 3 with an alarm icon and the time.
+- Tabs: pill buttons on the group surface with a 1px border; the open one is filled with the accent tint and outlined with the accent, and carries its count in a pill.
+- Stage: a group-like box with the stack label style for its name and a count pill; an empty one says so in Text 3.
+- Todo group: the group with a check icon in its tile, a "not saved" badge and a New control; its dialog is two entries, the note about not saving in Text 3, Cancel and the one primary button.
 - Stack header: a flat button with a chevron (rotated when collapsed), the upper-case name, a count pill, and the dot when a card inside changed.
 - Group: group surface, 1px border, 12px radius; the logo sits in a 28px tile on the card surface.
 - Controls: 34px buttons with a 1px border on the group surface; Refresh is the one filled with accent; the gear carries a 7px accent dot while a filter is on.
@@ -142,11 +145,11 @@ Soft corners: 12px for groups, the Now row and dialog rows at 8px, cards at 10px
 
 ## Motion
 
-Signature: news arrives quietly. A changed dot fades in over 400ms when it appears; nothing else announces it. Hovers change colour over 120ms, the chevron rotates over 120ms, pins and moons fade in over 120ms. No animation loops, nothing moves on its own, and the clock redraws without transition. With animations disabled by the toolkit, every state still reads from colour alone.
+Signature: news arrives quietly. A changed dot fades in over 400ms when it appears; nothing else announces it. Hovers change colour over 120ms, the chevron rotates over 120ms, the card's menu button fades in over 120ms. No animation loops, nothing moves on its own, and the clock redraws without transition. With animations disabled by the toolkit, every state still reads from colour alone.
 
 ## Do's and Don'ts
 
-- Do keep accent to meaning: the clock, news, pins, Now, the one primary action.
+- Do keep accent to meaning: the clock, news, picked cards, the open tab, the one primary action.
 - Do use borders for structure and leave shadows to things that float.
 - Do let the system font and the system's symbolic icons through; they are the integration with the desktop.
 - Don't colour cards by severity, don't add counts or badges to news, don't add a header bar.

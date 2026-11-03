@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- The window opens on an **Activity** tab: the cards you are working on, in three stages, Picked, Doing and Done / to mark. A card's menu sends it there (which marks it, as the pin did) and moves it between the stages; the stage is the window's choice, kept in `app-view.json` and dropped with the mark. The groups of stacks are the **Board** tab, where picked cards stay highlighted. The Now row is gone.
+- Every card has one three-dot button that opens its menu, in place of the pin and moon buttons: send to or remove from Activity, the stage moves, Snooze, Alert me about, and Edit and Delete for a todo.
+- **Alert me about** rings a desktop notification about a card in 15 minutes, 30 minutes, an hour or three hours; the card says when until then, and the menu cancels it. The alerts are looked at every 30 seconds by the wall clock, so one the machine slept through rings on waking; they last as long as the window.
+- A **Todo** group, first on the Board, holds cards you write down in the window (a title and optional details). A todo has the same menu as the other cards, and is kept only while the window is open, as its badge and the dialog say.
+- `tasks-pending sandbox --scene` gains `activity` (the default), `board` and `todo`, and `make screenshots` pictures them.
+
 ## 0.6.2
 
 ### Fixed

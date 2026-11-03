@@ -129,8 +129,25 @@ fn source_tile(ctx: &Rc<Ctx>, icon: Option<&pending_core::Icon>, local: bool) ->
     tile
 }
 
+/// Lets go of the keyboard focus when it is inside `page_box`, before the
+/// page is torn down. Otherwise the window keeps pointing at the destroyed
+/// widget that had it (a card's menu button, or an entry of its menu), and
+/// the next focus move reads that pointer.
+fn release_focus(page_box: &gtk::Box) {
+    let Some(root) = page_box.root() else {
+        return;
+    };
+    if root
+        .focus()
+        .is_some_and(|focus| focus.is_ancestor(page_box))
+    {
+        root.set_focus(None::<&gtk::Widget>);
+    }
+}
+
 /// Draws `page` into `page_box`.
 pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
+    release_focus(page_box);
     clear(page_box);
     match &page.notice {
         Some(Notice::Loading) => {

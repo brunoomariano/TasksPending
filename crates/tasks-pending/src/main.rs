@@ -75,17 +75,19 @@ struct SandboxCommand {
     #[arg(long)]
     screenshot: Option<PathBuf>,
     /// What the picture shows.
-    #[arg(long, default_value = "board", requires = "screenshot")]
+    #[arg(long, default_value = "activity", requires = "screenshot")]
     scene: SceneArg,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 enum SceneArg {
-    /// The board, with two cards marked as in progress.
+    /// The Activity area, with a card at each stage.
     #[default]
-    Board,
+    Activity,
     /// The same in the light scheme.
     Light,
+    /// The Board, with two cards picked.
+    Board,
     /// The Sources dialog.
     Sources,
     /// The Settings dialog.
@@ -97,8 +99,9 @@ enum SceneArg {
 impl From<SceneArg> for Scene {
     fn from(scene: SceneArg) -> Self {
         match scene {
-            SceneArg::Board => Self::Board,
+            SceneArg::Activity => Self::Activity,
             SceneArg::Light => Self::Light,
+            SceneArg::Board => Self::Board,
             SceneArg::Sources => Self::Sources,
             SceneArg::Settings => Self::Settings,
             SceneArg::Snoozed => Self::Snoozed,
@@ -162,7 +165,7 @@ fn run_app(command: AppCommand) -> anyhow::Result<()> {
         no_daemon: command.no_daemon,
         sandbox: false,
         screenshot: None,
-        scene: Scene::Board,
+        scene: Scene::Activity,
     })
 }
 

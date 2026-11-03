@@ -50,6 +50,7 @@ screenshots: ## Regenerate the README pictures from the sandbox window
 	cargo build -p tasks-pending
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-sandbox.png
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-sandbox-light.png --scene light
+	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-board.png --scene board
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-sources.png --scene sources
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-settings.png --scene settings
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-snoozed.png --scene snoozed

@@ -4,6 +4,7 @@ mod board;
 mod dialogs;
 mod hero;
 mod icons;
+mod tabs;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -24,13 +25,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::activity::LookThrottle;
 use crate::backend::{self, Command, Event, spawn_worker};
 use crate::present::{
-    BoardView, CardAction, Page, Timer, auto_refresh_every, board_view, lasting, on_timer, page,
-    refreshed,
+    BoardView, CardAction, Page, Tab, Timer, auto_refresh_every, board_view, lasting, on_timer,
+    page, refreshed,
 };
 use crate::snooze::until;
 use crate::state::ViewState;
 use crate::theme;
-use crate::view::View;
+use crate::view::{Stage, View};
 
 /// How often the snapshot is read while the window is shown.
 const POLL_INTERVAL: Duration = Duration::from_secs(15);
@@ -54,6 +55,8 @@ const PAGE_SPACING: i32 = 20;
 pub struct Model {
     pub state: ViewState,
     pub view: View,
+    /// The tab in front; the window opens on the Activity.
+    pub tab: Tab,
     /// Where the view is remembered; `None` for the sandbox, a screenshot,
     /// or an environment that names no state directory, and it then lasts
     /// as long as the window.
@@ -86,6 +89,7 @@ pub struct Ctx {
 pub struct Widgets {
     pub window: adw::ApplicationWindow,
     pub hero: hero::Hero,
+    pub tabs: tabs::Tabs,
     pub page: gtk::Box,
     pub scroller: gtk::ScrolledWindow,
 }
@@ -119,13 +123,18 @@ impl Ctx {
         let Some(widgets) = widgets.as_ref() else {
             return;
         };
-        let (state, view) = {
+        let (state, view, tab) = {
             let model = self.model.borrow();
-            (model.state.clone(), model.view.clone())
+            (model.state.clone(), model.view.clone(), model.tab)
         };
         let page_view = state.snapshot().map(|snapshot| page(snapshot, &view));
         hero::update_controls(self, widgets, page_view.as_ref(), &view);
-        let board = board_view(&state, page_view.as_ref());
+        tabs::update(
+            &widgets.tabs,
+            &crate::present::tabs(page_view.as_ref()),
+            tab,
+        );
+        let board = board_view(&state, page_view.as_ref(), tab);
         let changed = self.model.borrow().drawn.as_ref() != Some(&board);
         if changed || force {
             let position = widgets.scroller.vadjustment().value();
@@ -144,12 +153,24 @@ impl Ctx {
         let Some(widgets) = widgets.as_ref() else {
             return;
         };
-        let (state, view) = {
+        let (state, view, tab) = {
             let model = self.model.borrow();
-            (model.state.clone(), model.view.clone())
+            (model.state.clone(), model.view.clone(), model.tab)
         };
         let page_view = state.snapshot().map(|snapshot| page(snapshot, &view));
         hero::update_controls(self, widgets, page_view.as_ref(), &view);
+        tabs::update(
+            &widgets.tabs,
+            &crate::present::tabs(page_view.as_ref()),
+            tab,
+        );
+    }
+
+    /// Brings `tab` to the front.
+    pub fn show_tab(self: &Rc<Self>, tab: Tab) {
+        if std::mem::replace(&mut self.model.borrow_mut().tab, tab) != tab {
+            self.redraw(false);
+        }
     }
 
     /// The page for the current model, if there is a snapshot.
@@ -173,6 +194,7 @@ impl Ctx {
         match action {
             CardAction::Pick => self.send(Command::SetMark { id, marked: true }),
             CardAction::Unpick => self.send(Command::SetMark { id, marked: false }),
+            CardAction::Stage(stage) => self.change_view(|view| view.set_stage(&id, stage)),
             CardAction::Snooze(choice) => self.send(Command::Snooze {
                 id,
                 until: until(choice, &Local::now()).map(|at| at.with_timezone(&Utc)),
@@ -253,6 +275,7 @@ pub fn run(
         model: RefCell::new(Model {
             state: ViewState::Loading,
             view: view_path.as_deref().map(View::load).unwrap_or_default(),
+            tab: Tab::default(),
             view_path,
             drawn: None,
             refresh_hold: None,
@@ -359,6 +382,7 @@ fn load_stylesheet() {
 
 fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
     let hero = hero::build(ctx);
+    let tabs = tabs::build(ctx);
     let page = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(PAGE_SPACING)
@@ -374,6 +398,7 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
         .build();
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.append(&hero.root);
+    content.append(&tabs.root);
     content.append(&scroller);
 
     let window = adw::ApplicationWindow::builder()
@@ -406,6 +431,7 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
     *ctx.widgets.borrow_mut() = Some(Widgets {
         window: window.clone(),
         hero,
+        tabs,
         page,
         scroller,
     });
@@ -472,6 +498,15 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
                         let mut model = ctx.model.borrow_mut();
                         let state = std::mem::replace(&mut model.state, ViewState::Loading);
                         model.state = state.next(result, Local::now());
+                        // A card unpicked, or finished at its source, loses
+                        // its stage: picked again, it starts over.
+                        let picked = model.state.snapshot().map(|s| s.marked.clone());
+                        if let Some(picked) = picked
+                            && model.view.keep_stages_of(&picked)
+                            && let Some(path) = model.view_path.clone()
+                        {
+                            model.view.save(&path);
+                        }
                     }
                     ctx.redraw(false);
                 }
@@ -561,9 +596,10 @@ fn is_hidden(ctx: &Ctx) -> bool {
     ctx.window().is_some_and(|window| window.is_suspended())
 }
 
-/// Sets a screenshot's scene up once the first snapshot is in: two cards
-/// marked for the board, one snoozed for the snoozed list, and the dialog
-/// opened a moment later.
+/// Sets a screenshot's scene up once the first snapshot is in: three cards
+/// picked and moved along the stages for the Activity, two picked for the
+/// Board, one snoozed for the snoozed list, and the dialog opened a moment
+/// later.
 fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
     use crate::Scene;
     let ctx = ctx.clone();
@@ -585,7 +621,18 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
             })
             .unwrap_or_default();
         match scene {
-            Scene::Board | Scene::Light | Scene::Settings | Scene::Sources => {
+            Scene::Activity | Scene::Light => {
+                let stages = [Stage::Picked, Stage::Doing, Stage::Done];
+                for (id, stage) in ids.into_iter().zip(stages) {
+                    ctx.send(Command::SetMark {
+                        id: id.clone(),
+                        marked: true,
+                    });
+                    ctx.change_view(|view| view.set_stage(&id, stage));
+                }
+            }
+            Scene::Board | Scene::Settings | Scene::Sources => {
+                ctx.show_tab(Tab::Board);
                 for id in ids.into_iter().take(2) {
                     ctx.send(Command::SetMark { id, marked: true });
                 }
@@ -601,7 +648,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
             Scene::Sources => dialogs::show_sources(&ctx),
             Scene::Settings => dialogs::show_settings(&ctx),
             Scene::Snoozed => dialogs::show_snoozed(&ctx),
-            Scene::Board | Scene::Light => {}
+            Scene::Activity | Scene::Board | Scene::Light => {}
         });
     });
 }

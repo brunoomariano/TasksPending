@@ -1,7 +1,7 @@
 //! What the window shows, worked out from the snapshot and the view, with
-//! no widgets involved: the groups and stacks to draw, the cards marked as
-//! in progress, the control strip, and the words and icon names the
-//! widgets put on screen.
+//! no widgets involved: the Activity area and its stages, the groups and
+//! stacks of the Board, the control strip, and the words and icon names
+//! the widgets put on screen.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -15,7 +15,7 @@ use pending_core::{
 use crate::backend::{Command, Refusal};
 use crate::snooze::{self, until_text};
 use crate::state::ViewState;
-use crate::view::{AUTO_REFRESH_CHOICES, View, column_key, group_key, hide_key};
+use crate::view::{AUTO_REFRESH_CHOICES, Stage, View, column_key, group_key, hide_key};
 
 /// Cards a stack shows before "show more".
 pub const COLUMN_LIMIT: usize = 5;
@@ -30,8 +30,16 @@ pub struct CardView {
     /// An http(s) link for the title, when the card has one.
     pub url: Option<String>,
     pub body: String,
-    pub marked: bool,
+    /// Where the card stands in the Activity area, once picked.
+    pub stage: Option<Stage>,
     pub changed: bool,
+}
+
+impl CardView {
+    /// Picked: in the Activity area.
+    pub fn picked(&self) -> bool {
+        self.stage.is_some()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,30 +116,99 @@ fn more_label(count: usize, more: usize, open: bool) -> Option<String> {
     }
 }
 
-/// A card marked as in progress, with where it comes from.
+/// A picked card in the Activity area, with where it comes from.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NowItem {
+pub struct ActivityItem {
     pub card: CardView,
     pub source: String,
     pub icon: Option<Icon>,
 }
 
+/// One column of the Activity area: a stage and the cards at it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StageView {
+    pub stage: Stage,
+    pub name: &'static str,
+    pub cards: Vec<ActivityItem>,
+    /// What to say when there are none.
+    pub empty_note: &'static str,
+}
+
+/// The Activity area: the picked cards by stage, in picking order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivityView {
+    pub stages: Vec<StageView>,
+    pub count: usize,
+    /// What to say under the stages while nothing is picked.
+    pub hint: Option<&'static str>,
+}
+
+/// The hint under an empty Activity area.
+pub const ACTIVITY_HINT: &str = "Pick cards on the Board to bring them here.";
+
+/// What a stage says when no card is at it.
+fn stage_empty_note(stage: Stage) -> &'static str {
+    match stage {
+        Stage::Picked => "Nothing picked",
+        Stage::Doing => "Nothing under way",
+        Stage::Done => "Nothing to mark",
+    }
+}
+
+/// The two parts of the page under the hero.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tab {
+    /// The picked cards by stage: the main screen.
+    #[default]
+    Activity,
+    /// Every source's stacks, where cards are picked.
+    Board,
+}
+
+/// A tab's button: its name and, for the Activity, how many cards it holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TabView {
+    pub tab: Tab,
+    pub label: &'static str,
+    pub count: Option<usize>,
+}
+
+/// The tab buttons for `page`.
+pub fn tabs(page: Option<&Page>) -> [TabView; 2] {
+    [
+        TabView {
+            tab: Tab::Activity,
+            label: "Activity",
+            count: page
+                .map(|page| page.activity.count)
+                .filter(|count| *count > 0),
+        },
+        TabView {
+            tab: Tab::Board,
+            label: "Board",
+            count: None,
+        },
+    ]
+}
+
 /// Where a card is drawn, which decides what its menu offers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
-    /// In its stack.
+    /// In its stack on the Board.
     Board,
-    /// In the Now row.
+    /// In the Activity area.
     Activity,
 }
 
 /// What the user can do to a card from its menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CardAction {
-    /// Mark the card as in progress.
+    /// Pick the card: it goes to the Activity area.
     Pick,
-    /// Unmark it.
+    /// Unpick it: it leaves the Activity area.
     Unpick,
+    /// Move it to this stage of the Activity area.
+    Stage(Stage),
     Snooze(snooze::Choice),
 }
 
@@ -157,14 +234,31 @@ impl MenuItem {
     }
 }
 
-/// The menu behind a card's three dots at `place`: marking the card as in
-/// progress or unmarking it, and, on the Board, snoozing it.
+/// The menu behind a card's three dots at `place`: sending the card to the
+/// Activity area or taking it back; in the Activity area, moving it on to
+/// the next stage or back; on the Board, snoozing it.
 pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
-    let mut items = vec![if card.marked {
-        MenuItem::action("Unmark as in progress", CardAction::Unpick)
+    let mut items = Vec::new();
+    if let Some(stage) = card.stage.filter(|_| place == Place::Activity) {
+        for other in Stage::ALL {
+            if other != stage {
+                let label = if other > stage {
+                    format!("Move to {}", stage_short_name(other))
+                } else {
+                    format!("Back to {}", stage_short_name(other))
+                };
+                items.push(MenuItem::Action {
+                    label,
+                    action: CardAction::Stage(other),
+                });
+            }
+        }
+    }
+    items.push(if card.picked() {
+        MenuItem::action("Remove from Activity", CardAction::Unpick)
     } else {
-        MenuItem::action("Mark as in progress", CardAction::Pick)
-    }];
+        MenuItem::action("Send to Activity", CardAction::Pick)
+    });
     if place == Place::Board {
         items.push(MenuItem::Submenu {
             label: "Snooze".to_owned(),
@@ -175,6 +269,14 @@ pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
         });
     }
     items
+}
+
+/// A stage's name in a menu entry, where "Done / to mark" is too long.
+fn stage_short_name(stage: Stage) -> &'static str {
+    match stage {
+        Stage::Done => "Done",
+        other => other.name(),
+    }
 }
 
 /// One source in the Sources dialog.
@@ -211,7 +313,7 @@ impl SnoozedView {
 /// The whole page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Page {
-    pub now: Vec<NowItem>,
+    pub activity: ActivityView,
     pub groups: Vec<GroupView>,
     pub sources: Vec<SourceView>,
     pub snoozed: Vec<SnoozedView>,
@@ -362,18 +464,23 @@ pub enum Notice {
     Stale(String),
 }
 
-/// What the page under the hero draws. The window rebuilds the page only
-/// when this changes, so a fetch that changed nothing on it (only the
-/// sources' fetch times, say) keeps the focus and the reading position.
+/// What the page under the hero draws: the tab in front, with what it
+/// shows. The window rebuilds the page only when this changes, so a fetch
+/// that changed nothing on it (only the sources' fetch times, say) keeps
+/// the focus and the reading position.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoardView {
     pub notice: Option<Notice>,
-    pub now: Vec<NowItem>,
+    pub tab: Tab,
+    /// The Activity area, drawn on its tab.
+    pub activity: Option<ActivityView>,
+    /// The groups, drawn on the Board tab.
     pub groups: Vec<GroupView>,
 }
 
-/// The board for `state`, whose snapshot `page` was worked out from.
-pub fn board_view(state: &ViewState, page: Option<&Page>) -> BoardView {
+/// The page for `state` with `tab` in front, whose snapshot `page` was
+/// worked out from.
+pub fn board_view(state: &ViewState, page: Option<&Page>, tab: Tab) -> BoardView {
     let notice = match state {
         ViewState::Loading => Some(Notice::Loading),
         ViewState::Unavailable { error } => Some(Notice::Unavailable(error.clone())),
@@ -384,7 +491,8 @@ pub fn board_view(state: &ViewState, page: Option<&Page>) -> BoardView {
     };
     BoardView {
         notice,
-        now: page.map(|page| page.now.clone()).unwrap_or_default(),
+        tab,
+        activity: page.map(|page| page.activity.clone()),
         groups: page.map(|page| page.groups.clone()).unwrap_or_default(),
     }
 }
@@ -522,17 +630,20 @@ fn status_class(status: SourceStatus) -> &'static str {
     }
 }
 
-/// The ids the snapshot flags, for building card views.
+/// The ids the snapshot flags, and the view's stages, for building card
+/// views.
 struct Flags<'a> {
     marked: HashSet<&'a str>,
     changed: HashSet<&'a str>,
+    view: &'a View,
 }
 
 impl<'a> Flags<'a> {
-    fn of(snapshot: &'a DashboardSnapshot) -> Self {
+    fn of(snapshot: &'a DashboardSnapshot, view: &'a View) -> Self {
         Self {
             marked: snapshot.marked.iter().map(String::as_str).collect(),
             changed: snapshot.changed.iter().map(String::as_str).collect(),
+            view,
         }
     }
 
@@ -547,7 +658,10 @@ impl<'a> Flags<'a> {
                 .filter(|url| is_http_url(url))
                 .map(str::to_owned),
             body: card.body.clone(),
-            marked: self.marked.contains(card.id.as_str()),
+            stage: self
+                .marked
+                .contains(card.id.as_str())
+                .then(|| self.view.stage(&card.id)),
             changed: self.changed.contains(card.id.as_str()),
         }
     }
@@ -555,7 +669,7 @@ impl<'a> Flags<'a> {
 
 /// The page for `snapshot` as `view` wants it.
 pub fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
-    let flags = Flags::of(snapshot);
+    let flags = Flags::of(snapshot, view);
     let icons: HashMap<&str, Option<Icon>> = snapshot
         .boards
         .iter()
@@ -569,7 +683,7 @@ pub fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
             .any(|source| matches!(source.status, SourceStatus::Degraded | SourceStatus::Failed));
 
     Page {
-        now: now(snapshot, &flags),
+        activity: activity(snapshot, &flags),
         groups: groups(snapshot, view, &flags),
         sources: sources(snapshot, &icons),
         snoozed: snoozed(snapshot, &flags, &icons),
@@ -688,9 +802,10 @@ fn groups(snapshot: &DashboardSnapshot, view: &View, flags: &Flags) -> Vec<Group
     groups.into_iter().map(|(_, group)| group).collect()
 }
 
-/// The marked cards, in marking order and once each, whatever the filter:
-/// marking is an explicit choice. An id that is on no board is skipped.
-fn now(snapshot: &DashboardSnapshot, flags: &Flags) -> Vec<NowItem> {
+/// The picked cards by stage, in picking order and once each, whatever
+/// the filter: picking is an explicit choice. An id that is on no board is
+/// skipped.
+fn activity(snapshot: &DashboardSnapshot, flags: &Flags) -> ActivityView {
     let mut found: HashMap<&str, (&PendingCard, &str, &Option<Icon>)> = HashMap::new();
     for board in &snapshot.boards {
         for group in &board.groups {
@@ -705,16 +820,35 @@ fn now(snapshot: &DashboardSnapshot, flags: &Flags) -> Vec<NowItem> {
             }
         }
     }
-    snapshot
+    let items: Vec<ActivityItem> = snapshot
         .marked
         .iter()
         .filter_map(|id| found.get(id.as_str()))
-        .map(|(card, source, icon)| NowItem {
+        .map(|(card, source, icon)| ActivityItem {
             card: flags.card(card),
             source: (*source).to_owned(),
             icon: (*icon).clone(),
         })
-        .collect()
+        .collect();
+    let count = items.len();
+    let stages = Stage::ALL
+        .into_iter()
+        .map(|stage| StageView {
+            stage,
+            name: stage.name(),
+            cards: items
+                .iter()
+                .filter(|item| item.card.stage == Some(stage))
+                .cloned()
+                .collect(),
+            empty_note: stage_empty_note(stage),
+        })
+        .collect();
+    ActivityView {
+        stages,
+        count,
+        hint: (count == 0).then_some(ACTIVITY_HINT),
+    }
 }
 
 /// Every source as the Sources dialog lists it, in config order.
@@ -860,7 +994,8 @@ mod tests {
         assert_eq!((review.count, review.cards.len(), review.more), (7, 5, 2));
         assert!(review.changed, "gh:3 changed");
         assert!(review.cards[2].changed);
-        assert!(review.cards[1].marked);
+        assert_eq!(review.cards[1].stage, Some(Stage::Picked));
+        assert_eq!(review.cards[0].stage, None);
         assert_eq!(
             review.cards[0].url.as_deref(),
             Some("https://example.com/gh:1")
@@ -880,17 +1015,20 @@ mod tests {
         );
     }
 
-    /// A card's menu marks it as in progress, or unmarks it when it is;
-    /// in a stack it also snoozes the card, with the four snooze choices,
-    /// and in the Now row it does not.
+    /// A card's menu sends it to the Activity area, or takes it back when
+    /// it is there; on the Board it also snoozes the card, with the four
+    /// snooze choices. In the Activity area it moves the card on to the
+    /// stages ahead or back to the ones behind, and never snoozes.
     #[test]
     fn menus_offer_what_fits_the_card() {
-        let shown = page(&snapshot(), &View::default());
+        let mut view = View::default();
+        view.set_stage("gh:2", Stage::Done);
+        let shown = page(&snapshot(), &view);
         let review = &shown.groups[1].stacks[0];
         let plain = card_menu(&review.cards[0], Place::Board);
         assert_eq!(
             plain[0],
-            MenuItem::action("Mark as in progress", CardAction::Pick)
+            MenuItem::action("Send to Activity", CardAction::Pick)
         );
         let MenuItem::Submenu { label, items } = &plain[1] else {
             panic!("expected the snooze submenu, got {:?}", plain[1]);
@@ -916,18 +1054,52 @@ mod tests {
         let picked = card_menu(&review.cards[1], Place::Board);
         assert_eq!(
             picked[0],
-            MenuItem::action("Unmark as in progress", CardAction::Unpick)
+            MenuItem::action("Remove from Activity", CardAction::Unpick)
         );
-        assert_eq!(picked.len(), 2, "a marked card in a stack still snoozes");
-
-        let in_activity = card_menu(&shown.now[0].card, Place::Activity);
         assert_eq!(
-            in_activity,
-            [MenuItem::action(
-                "Unmark as in progress",
-                CardAction::Unpick
-            )],
-            "no snooze in the Now row"
+            picked.len(),
+            2,
+            "a picked card on the Board still snoozes, and does not move"
+        );
+
+        let labels = |items: Vec<MenuItem>| {
+            items
+                .into_iter()
+                .map(|item| match item {
+                    MenuItem::Action { label, action } => (label, Some(action)),
+                    MenuItem::Submenu { label, .. } => (label, None),
+                })
+                .collect::<Vec<_>>()
+        };
+        let just_picked = &shown.activity.stages[0].cards[0].card;
+        assert_eq!(
+            labels(card_menu(just_picked, Place::Activity)),
+            [
+                (
+                    "Move to Doing".to_owned(),
+                    Some(CardAction::Stage(Stage::Doing))
+                ),
+                (
+                    "Move to Done".to_owned(),
+                    Some(CardAction::Stage(Stage::Done))
+                ),
+                ("Remove from Activity".to_owned(), Some(CardAction::Unpick)),
+            ]
+        );
+        let done = &shown.activity.stages[2].cards[0].card;
+        assert_eq!(
+            labels(card_menu(done, Place::Activity)),
+            [
+                (
+                    "Back to Picked".to_owned(),
+                    Some(CardAction::Stage(Stage::Picked))
+                ),
+                (
+                    "Back to Doing".to_owned(),
+                    Some(CardAction::Stage(Stage::Doing))
+                ),
+                ("Remove from Activity".to_owned(), Some(CardAction::Unpick)),
+            ]
         );
     }
 
@@ -955,11 +1127,78 @@ mod tests {
         );
     }
 
-    /// The board filter and hidden items leave groups out; the marked cards
-    /// stay in "Now" whatever the filter, in marking order, skipping ids
-    /// that are not on the boards.
+    /// The Activity area has three stages, Picked, Doing and Done / to
+    /// mark; a picked card is at Picked until moved, and the cards at a
+    /// stage keep their picking order. Each empty stage says so, and while
+    /// nothing is picked a hint points to the Board; the Activity tab
+    /// counts the picked cards and the Board tab counts nothing.
     #[test]
-    fn filters_groups_but_not_the_marked_cards() {
+    fn lays_out_the_activity_by_stage() {
+        let mut view = View::default();
+        view.set_stage("gh:2", Stage::Doing);
+        view.set_stage("gh:3", Stage::Done);
+        let shown = page(&snapshot(), &view);
+        let activity = &shown.activity;
+        assert_eq!(activity.count, 2);
+        assert_eq!(activity.hint, None);
+        let stages: Vec<_> = activity
+            .stages
+            .iter()
+            .map(|stage| {
+                (
+                    stage.name,
+                    stage
+                        .cards
+                        .iter()
+                        .map(|item| item.card.id.as_str())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            stages,
+            [
+                ("Picked", vec!["j:1"]),
+                ("Doing", vec!["gh:2"]),
+                ("Done / to mark", vec![]),
+            ],
+            "gh:3 is not picked, so its stage means nothing"
+        );
+        assert_eq!(activity.stages[0].stage, Stage::Picked);
+        assert_eq!(activity.stages[2].empty_note, "Nothing to mark");
+        assert_eq!(activity.stages[1].cards[0].card.stage, Some(Stage::Doing));
+        assert_eq!(
+            tabs(Some(&shown)).map(|tab| (tab.label, tab.count)),
+            [("Activity", Some(2)), ("Board", None)]
+        );
+
+        let mut unpicked = snapshot();
+        unpicked.marked.clear();
+        let shown = page(&unpicked, &view);
+        assert_eq!(shown.activity.count, 0);
+        assert_eq!(shown.activity.hint, Some(ACTIVITY_HINT));
+        assert_eq!(shown.activity.stages[0].empty_note, "Nothing picked");
+        assert_eq!(shown.activity.stages[1].empty_note, "Nothing under way");
+        assert!(
+            shown
+                .activity
+                .stages
+                .iter()
+                .all(|stage| stage.cards.is_empty())
+        );
+        assert_eq!(
+            tabs(Some(&shown)).map(|tab| tab.count),
+            [None, None],
+            "no count on an empty Activity"
+        );
+        assert_eq!(tabs(None)[0].count, None);
+    }
+
+    /// The board filter and hidden items leave groups out; the picked cards
+    /// stay in the Activity area whatever the filter, in picking order,
+    /// skipping ids that are not on the boards.
+    #[test]
+    fn filters_groups_but_not_the_picked_cards() {
         let view = View {
             board: Some("Work".to_owned()),
             ..View::default()
@@ -967,10 +1206,11 @@ mod tests {
         let shown = page(&snapshot(), &view);
         assert_eq!(shown.groups.len(), 1);
         assert_eq!(shown.groups[0].source, "github");
-        let now: Vec<_> = shown.now.iter().map(|n| n.card.id.as_str()).collect();
-        assert_eq!(now, ["j:1", "gh:2"]);
-        assert_eq!(shown.now[0].source, "jira");
-        assert!(shown.now[0].icon.is_some());
+        let picked = &shown.activity.stages[0].cards;
+        let ids: Vec<_> = picked.iter().map(|n| n.card.id.as_str()).collect();
+        assert_eq!(ids, ["j:1", "gh:2"]);
+        assert_eq!(picked[0].source, "jira");
+        assert!(picked[0].icon.is_some());
 
         let mut view = View::default();
         view.hidden
@@ -1022,7 +1262,11 @@ mod tests {
     }
 
     fn drawn(state: &ViewState, view: &View) -> BoardView {
-        board_view(state, state.snapshot().map(|s| page(s, view)).as_ref())
+        drawn_tab(state, view, Tab::Board)
+    }
+
+    fn drawn_tab(state: &ViewState, view: &View, tab: Tab) -> BoardView {
+        board_view(state, state.snapshot().map(|s| page(s, view)).as_ref(), tab)
     }
 
     /// A fetch that only moved the snapshot's time and the sources' fetch
@@ -1060,6 +1304,16 @@ mod tests {
             drawn(&first, &View::default()),
             drawn(&stale, &View::default())
         );
+        assert_ne!(
+            drawn_tab(&first, &View::default(), Tab::Activity),
+            drawn(&first, &View::default()),
+            "switching tabs redraws"
+        );
+        assert_eq!(
+            Tab::default(),
+            Tab::Activity,
+            "the window opens on the Activity"
+        );
     }
 
     /// Loading and an unreachable daemon stand instead of the board; a
@@ -1070,7 +1324,7 @@ mod tests {
         let view = View::default();
         let loading = drawn(&ViewState::Loading, &view);
         assert_eq!(loading.notice, Some(Notice::Loading));
-        assert!(loading.groups.is_empty() && loading.now.is_empty());
+        assert!(loading.groups.is_empty() && loading.activity.is_none());
 
         let unavailable = ViewState::Loading.next(Err("refused".to_owned()), at);
         let unavailable = drawn(&unavailable, &view);
@@ -1091,7 +1345,7 @@ mod tests {
             ))
         );
         assert_eq!(stale.groups.len(), 2);
-        assert_eq!(stale.now.len(), 2);
+        assert_eq!(stale.activity.map(|a| a.count), Some(2));
     }
 
     /// A refresh the daemon took holds the button until it would take

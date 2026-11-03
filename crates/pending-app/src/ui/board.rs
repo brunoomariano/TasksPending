@@ -432,6 +432,13 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
         body.set_tooltip_text(Some(&card.body));
         widget.append(&body);
     }
+    if let Some(alert) = &card.alert {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        row.add_css_class("card-alert");
+        row.append(&symbolic("alarm-symbolic", size::SMALL));
+        row.append(&line(alert, &[]));
+        widget.append(&row);
+    }
     widget
 }
 
@@ -447,8 +454,8 @@ fn menu_button(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::MenuButton 
         entries += 1;
         let simple = gtk::gio::SimpleAction::new(&name, None);
         let ctx = ctx.clone();
-        let id = card.id.clone();
-        simple.connect_activate(move |_, _| ctx.act(&id, action));
+        let card = card.clone();
+        simple.connect_activate(move |_, _| ctx.act(&card, action));
         actions.add_action(&simple);
         menu.append(Some(label), Some(&format!("card.{name}")));
     };

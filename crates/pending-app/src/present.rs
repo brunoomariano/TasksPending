@@ -12,7 +12,9 @@ use pending_core::{
     DashboardSnapshot, Icon, PendingCard, SourceHealth, SourceStatus, WeatherCondition, is_http_url,
 };
 
+use crate::alert;
 use crate::backend::{Command, Refusal};
+use crate::session::Session;
 use crate::snooze::{self, until_text};
 use crate::state::ViewState;
 use crate::view::{AUTO_REFRESH_CHOICES, Stage, View, column_key, group_key, hide_key};
@@ -30,9 +32,13 @@ pub struct CardView {
     /// An http(s) link for the title, when the card has one.
     pub url: Option<String>,
     pub body: String,
+    /// The configured name of the source the card comes from.
+    pub source: String,
     /// Where the card stands in the Activity area, once picked.
     pub stage: Option<Stage>,
     pub changed: bool,
+    /// "Alert at 15:45", while an alert is set on the card.
+    pub alert: Option<String>,
 }
 
 impl CardView {
@@ -210,6 +216,9 @@ pub enum CardAction {
     /// Move it to this stage of the Activity area.
     Stage(Stage),
     Snooze(snooze::Choice),
+    /// Be reminded of the card in a while.
+    Alert(alert::Choice),
+    CancelAlert,
 }
 
 /// One entry of a card's menu.
@@ -236,7 +245,8 @@ impl MenuItem {
 
 /// The menu behind a card's three dots at `place`: sending the card to the
 /// Activity area or taking it back; in the Activity area, moving it on to
-/// the next stage or back; on the Board, snoozing it.
+/// the next stage or back; on the Board, snoozing it; anywhere, being
+/// reminded of it in a while, and calling that off while it is set.
 pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
     let mut items = Vec::new();
     if let Some(stage) = card.stage.filter(|_| place == Place::Activity) {
@@ -267,6 +277,19 @@ pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
                 .map(|(choice, label)| ((*label).to_owned(), CardAction::Snooze(*choice)))
                 .collect(),
         });
+    }
+    items.push(MenuItem::Submenu {
+        label: "Alert me about".to_owned(),
+        items: alert::CHOICES
+            .iter()
+            .map(|(choice, label)| ((*label).to_owned(), CardAction::Alert(*choice)))
+            .collect(),
+    });
+    if card.alert.is_some() {
+        items.push(MenuItem::action(
+            "Cancel the alert",
+            CardAction::CancelAlert,
+        ));
     }
     items
 }
@@ -630,20 +653,22 @@ fn status_class(status: SourceStatus) -> &'static str {
     }
 }
 
-/// The ids the snapshot flags, and the view's stages, for building card
-/// views.
+/// The ids the snapshot flags, the view's stages and the session's
+/// alerts, for building card views.
 struct Flags<'a> {
     marked: HashSet<&'a str>,
     changed: HashSet<&'a str>,
     view: &'a View,
+    session: &'a Session,
 }
 
 impl<'a> Flags<'a> {
-    fn of(snapshot: &'a DashboardSnapshot, view: &'a View) -> Self {
+    fn of(snapshot: &'a DashboardSnapshot, view: &'a View, session: &'a Session) -> Self {
         Self {
             marked: snapshot.marked.iter().map(String::as_str).collect(),
             changed: snapshot.changed.iter().map(String::as_str).collect(),
             view,
+            session,
         }
     }
 
@@ -658,18 +683,20 @@ impl<'a> Flags<'a> {
                 .filter(|url| is_http_url(url))
                 .map(str::to_owned),
             body: card.body.clone(),
+            source: card.source.clone(),
             stage: self
                 .marked
                 .contains(card.id.as_str())
                 .then(|| self.view.stage(&card.id)),
             changed: self.changed.contains(card.id.as_str()),
+            alert: self.session.alerts.text_for(&card.id),
         }
     }
 }
 
-/// The page for `snapshot` as `view` wants it.
-pub fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
-    let flags = Flags::of(snapshot, view);
+/// The page for `snapshot` as `view` wants it, with what `session` adds.
+pub fn page(snapshot: &DashboardSnapshot, view: &View, session: &Session) -> Page {
+    let flags = Flags::of(snapshot, view, session);
     let icons: HashMap<&str, Option<Icon>> = snapshot
         .boards
         .iter()
@@ -905,6 +932,11 @@ mod tests {
     use pending_core::{Board, CardSeverity, Column, Group};
 
     use super::*;
+    use crate::alert::Alert;
+
+    fn page(snapshot: &DashboardSnapshot, view: &View) -> Page {
+        super::page(snapshot, view, &Session::default())
+    }
 
     fn card(id: &str, title: &str) -> PendingCard {
         PendingCard {
@@ -1018,7 +1050,8 @@ mod tests {
     /// A card's menu sends it to the Activity area, or takes it back when
     /// it is there; on the Board it also snoozes the card, with the four
     /// snooze choices. In the Activity area it moves the card on to the
-    /// stages ahead or back to the ones behind, and never snoozes.
+    /// stages ahead or back to the ones behind, and never snoozes. Anywhere
+    /// it sets an alert, with the four waits.
     #[test]
     fn menus_offer_what_fits_the_card() {
         let mut view = View::default();
@@ -1049,7 +1082,23 @@ mod tests {
                 ),
             ]
         );
-        assert_eq!(plain.len(), 2);
+        let MenuItem::Submenu { label, items } = &plain[2] else {
+            panic!("expected the alert submenu, got {:?}", plain[2]);
+        };
+        assert_eq!(label, "Alert me about");
+        assert_eq!(
+            items
+                .iter()
+                .map(|(label, action)| (label.as_str(), *action))
+                .collect::<Vec<_>>(),
+            [
+                ("in 15 min", CardAction::Alert(alert::Choice::Quarter)),
+                ("in 30 min", CardAction::Alert(alert::Choice::Half)),
+                ("in 1 hour", CardAction::Alert(alert::Choice::Hour)),
+                ("in 3 hours", CardAction::Alert(alert::Choice::ThreeHours)),
+            ]
+        );
+        assert_eq!(plain.len(), 3);
 
         let picked = card_menu(&review.cards[1], Place::Board);
         assert_eq!(
@@ -1058,7 +1107,7 @@ mod tests {
         );
         assert_eq!(
             picked.len(),
-            2,
+            3,
             "a picked card on the Board still snoozes, and does not move"
         );
 
@@ -1084,6 +1133,7 @@ mod tests {
                     Some(CardAction::Stage(Stage::Done))
                 ),
                 ("Remove from Activity".to_owned(), Some(CardAction::Unpick)),
+                ("Alert me about".to_owned(), None),
             ]
         );
         let done = &shown.activity.stages[2].cards[0].card;
@@ -1099,8 +1149,51 @@ mod tests {
                     Some(CardAction::Stage(Stage::Doing))
                 ),
                 ("Remove from Activity".to_owned(), Some(CardAction::Unpick)),
+                ("Alert me about".to_owned(), None),
             ]
         );
+    }
+
+    /// A card with an alert set says when it rings, wherever it is drawn,
+    /// and its menu can call the alert off; without one, there is nothing
+    /// to call off. The alert changes the page, so it is redrawn.
+    #[test]
+    fn shows_the_alert_set_on_a_card() {
+        let at = Local.with_ymd_and_hms(2026, 10, 7, 15, 45, 0).unwrap();
+        let mut session = Session::default();
+        let before = super::page(&snapshot(), &View::default(), &session);
+        session.alerts.set(
+            "gh:2",
+            Alert {
+                at,
+                title: "PR".to_owned(),
+                source: "github".to_owned(),
+            },
+        );
+        let shown = super::page(&snapshot(), &View::default(), &session);
+        assert_ne!(
+            board_view(&ViewState::Loading, Some(&before), Tab::Board),
+            board_view(&ViewState::Loading, Some(&shown), Tab::Board)
+        );
+        let in_stack = &shown.groups[1].stacks[0].cards[1];
+        assert_eq!(in_stack.alert.as_deref(), Some("Alert at 15:45"));
+        assert_eq!(in_stack.source, "x");
+        assert_eq!(
+            shown.activity.stages[0].cards[1].card.alert.as_deref(),
+            Some("Alert at 15:45")
+        );
+        assert_eq!(shown.groups[1].stacks[0].cards[0].alert, None);
+        let menu = card_menu(in_stack, Place::Board);
+        assert_eq!(
+            menu.last(),
+            Some(&MenuItem::action(
+                "Cancel the alert",
+                CardAction::CancelAlert
+            ))
+        );
+        assert_eq!(menu.len(), 4);
+        let without = card_menu(&shown.groups[1].stacks[0].cards[0], Place::Board);
+        assert_eq!(without.len(), 3, "nothing to call off");
     }
 
     /// Only an http(s) URL becomes a link: a source could hand the window

@@ -7,6 +7,7 @@ use std::rc::Rc;
 use gtk4 as gtk;
 use gtk4::prelude::*;
 
+use super::dialogs;
 use super::hero::show_note;
 use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped};
@@ -112,14 +113,19 @@ fn empty_state(message: &str) -> gtk::Box {
     state
 }
 
-/// The source's logo in a small tile, for group headers.
-fn source_tile(ctx: &Rc<Ctx>, icon: Option<&pending_core::Icon>) -> gtk::Box {
+/// The source's logo in a small tile, for group headers; the todos get a
+/// check box instead of a logo.
+fn source_tile(ctx: &Rc<Ctx>, icon: Option<&pending_core::Icon>, local: bool) -> gtk::Box {
     let tile = gtk::Box::builder()
         .halign(gtk::Align::Center)
         .valign(gtk::Align::Center)
         .build();
     tile.add_css_class("source-tile");
-    tile.append(&source_icon(ctx, icon, size::LOGO));
+    if local {
+        tile.append(&symbolic("checkbox-checked-symbolic", size::LOGO));
+    } else {
+        tile.append(&source_icon(ctx, icon, size::LOGO));
+    }
     tile
 }
 
@@ -258,12 +264,27 @@ fn group_widget(ctx: &Rc<Ctx>, group: &GroupView) -> gtk::Box {
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     let title = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     title.add_css_class("group-title");
-    title.append(&source_tile(ctx, group.icon.as_ref()));
+    title.append(&source_tile(ctx, group.icon.as_ref(), group.local));
     title.append(&line(&group.source, &[]));
     header.append(&title);
     let board = gtk::Label::new(Some(&group.board));
     board.add_css_class("badge");
     header.append(&board);
+    if group.local {
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        content.append(&symbolic("list-add-symbolic", size::SMALL));
+        content.append(&gtk::Label::new(Some("New")));
+        let add = gtk::Button::builder()
+            .child(&content)
+            .halign(gtk::Align::End)
+            .hexpand(true)
+            .tooltip_text("Write down a todo")
+            .build();
+        add.add_css_class("empty-toggle");
+        let ctx = ctx.clone();
+        add.connect_clicked(move |_| dialogs::show_todo(&ctx, None));
+        header.append(&add);
+    }
     if let Some(empty) = &group.empty_toggle {
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         content.append(&symbolic(empty.icon, size::SMALL));

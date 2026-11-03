@@ -478,6 +478,39 @@ dialog.tasks-pending headerbar {
   font-weight: 600;
 }
 
+.dialog-note {
+  margin-top: 6px;
+  color: {{text-3}};
+  font-size: 0.85em;
+}
+
+dialog.tasks-pending entry {
+  min-height: 34px;
+  border: 1px solid {{border}};
+  border-radius: 8px;
+  background: {{surface-2}};
+  color: {{text}};
+}
+
+dialog.tasks-pending entry:focus-within {
+  border-color: {{accent}};
+  outline: none;
+}
+
+.tasks-pending button.control.wake.primary {
+  border-color: transparent;
+  background: {{accent}};
+  color: #ffffff;
+}
+
+.tasks-pending button.control.wake.primary:hover {
+  background: {{accent-hover}};
+}
+
+.tasks-pending button.control.wake.primary:disabled {
+  opacity: 0.6;
+}
+
 .row-card {
   padding: 10px 12px;
   border: 1px solid {{border}};

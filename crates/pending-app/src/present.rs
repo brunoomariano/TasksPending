@@ -14,7 +14,7 @@ use pending_core::{
 
 use crate::alert;
 use crate::backend::{Command, Refusal};
-use crate::session::Session;
+use crate::session::{Session, Todo};
 use crate::snooze::{self, until_text};
 use crate::state::ViewState;
 use crate::view::{AUTO_REFRESH_CHOICES, Stage, View, column_key, group_key, hide_key};
@@ -39,6 +39,8 @@ pub struct CardView {
     pub changed: bool,
     /// "Alert at 15:45", while an alert is set on the card.
     pub alert: Option<String>,
+    /// A todo written down in the window, on no source.
+    pub local: bool,
 }
 
 impl CardView {
@@ -70,9 +72,13 @@ pub struct StackView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupView {
     pub key: String,
+    /// The badge after the name: the board, or for the todos that they are
+    /// not saved.
     pub board: String,
     pub source: String,
     pub icon: Option<Icon>,
+    /// The todos written down in the window, with a button to add one.
+    pub local: bool,
     /// Showing the empty stacks too.
     pub expanded: bool,
     /// Stacks without cards, shown or not.
@@ -219,6 +225,10 @@ pub enum CardAction {
     /// Be reminded of the card in a while.
     Alert(alert::Choice),
     CancelAlert,
+    /// Rewrite a todo.
+    Edit,
+    /// Forget a todo.
+    Delete,
 }
 
 /// One entry of a card's menu.
@@ -246,7 +256,9 @@ impl MenuItem {
 /// The menu behind a card's three dots at `place`: sending the card to the
 /// Activity area or taking it back; in the Activity area, moving it on to
 /// the next stage or back; on the Board, snoozing it; anywhere, being
-/// reminded of it in a while, and calling that off while it is set.
+/// reminded of it in a while, and calling that off while it is set. A
+/// todo is not snoozed (it is the window's own) but can be rewritten or
+/// forgotten.
 pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
     let mut items = Vec::new();
     if let Some(stage) = card.stage.filter(|_| place == Place::Activity) {
@@ -269,7 +281,7 @@ pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
     } else {
         MenuItem::action("Send to Activity", CardAction::Pick)
     });
-    if place == Place::Board {
+    if place == Place::Board && !card.local {
         items.push(MenuItem::Submenu {
             label: "Snooze".to_owned(),
             items: snooze::CHOICES
@@ -291,7 +303,31 @@ pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
             CardAction::CancelAlert,
         ));
     }
+    if card.local {
+        items.push(MenuItem::action("Edit", CardAction::Edit));
+        items.push(MenuItem::action("Delete", CardAction::Delete));
+    }
     items
+}
+
+/// The group of the todos written down in the window.
+pub const TODO_GROUP: &str = "Todo";
+/// Its one stack.
+pub const TODO_STACK: &str = "This session";
+/// Its badge, where a group shows its board.
+pub const TODO_BADGE: &str = "not saved";
+/// What the todo dialog says about keeping them.
+pub const TODO_NOTE: &str =
+    "Kept only while the window is open: closing TasksPending forgets every todo.";
+
+/// The todo dialog's title and button, for a new todo or one being
+/// rewritten.
+pub fn todo_dialog_words(editing: bool) -> (&'static str, &'static str) {
+    if editing {
+        ("Edit todo", "Save")
+    } else {
+        ("New todo", "Add")
+    }
 }
 
 /// A stage's name in a menu entry, where "Done / to mark" is too long.
@@ -690,6 +726,21 @@ impl<'a> Flags<'a> {
                 .then(|| self.view.stage(&card.id)),
             changed: self.changed.contains(card.id.as_str()),
             alert: self.session.alerts.text_for(&card.id),
+            local: false,
+        }
+    }
+
+    fn todo(&self, todo: &Todo) -> CardView {
+        CardView {
+            id: todo.id.clone(),
+            title: todo.title.clone(),
+            url: None,
+            body: todo.body.clone(),
+            source: TODO_GROUP.to_owned(),
+            stage: todo.stage,
+            changed: false,
+            alert: self.session.alerts.text_for(&todo.id),
+            local: true,
         }
     }
 }
@@ -711,7 +762,9 @@ pub fn page(snapshot: &DashboardSnapshot, view: &View, session: &Session) -> Pag
 
     Page {
         activity: activity(snapshot, &flags),
-        groups: groups(snapshot, view, &flags),
+        groups: std::iter::once(todo_group(view, &flags))
+            .chain(groups(snapshot, view, &flags))
+            .collect(),
         sources: sources(snapshot, &icons),
         snoozed: snoozed(snapshot, &flags, &icons),
         attention,
@@ -775,39 +828,15 @@ fn groups(snapshot: &DashboardSnapshot, view: &View, flags: &Flags) -> Vec<Group
                 .filter(|column| !column.cards.is_empty() || expanded)
                 .map(|column| {
                     let key = column_key(&board.name, &group.source, &column.name);
-                    let open = view.open_columns.contains(&key);
-                    let shown = if open {
-                        column.cards.len()
-                    } else {
-                        column.cards.len().min(COLUMN_LIMIT)
-                    };
-                    StackView {
-                        changed: column
-                            .cards
-                            .iter()
-                            .any(|c| flags.changed.contains(c.id.as_str())),
-                        collapsed: view.collapsed.contains(&key),
-                        open,
-                        count: column.cards.len(),
-                        more: column.cards.len() - shown,
-                        more_label: more_label(
-                            column.cards.len(),
-                            column.cards.len() - shown,
-                            open,
-                        ),
-                        cards: column.cards[..shown]
-                            .iter()
-                            .map(|card| flags.card(card))
-                            .collect(),
-                        empty_note: column.cards.is_empty().then(|| {
-                            source_health.and_then(|h| h.last_refresh_at).map_or_else(
-                                || "not refreshed yet".to_owned(),
-                                |at| format!("updated {}", local_time(at)),
-                            )
-                        }),
-                        key,
-                        name: column.name.clone(),
-                    }
+                    let cards: Vec<CardView> =
+                        column.cards.iter().map(|card| flags.card(card)).collect();
+                    let empty_note = column.cards.is_empty().then(|| {
+                        source_health.and_then(|h| h.last_refresh_at).map_or_else(
+                            || "not refreshed yet".to_owned(),
+                            |at| format!("updated {}", local_time(at)),
+                        )
+                    });
+                    stack_view(key, &column.name, cards, view, empty_note)
                 })
                 .collect();
             groups.push((
@@ -817,6 +846,7 @@ fn groups(snapshot: &DashboardSnapshot, view: &View, flags: &Flags) -> Vec<Group
                     board: board.name.clone(),
                     source: group.source.clone(),
                     icon: group.icon.clone(),
+                    local: false,
                     expanded,
                     empty,
                     empty_toggle: EmptyToggle::new(empty, expanded),
@@ -829,9 +859,65 @@ fn groups(snapshot: &DashboardSnapshot, view: &View, flags: &Flags) -> Vec<Group
     groups.into_iter().map(|(_, group)| group).collect()
 }
 
+/// The stack `name` at `key` holding `cards`: the first [`COLUMN_LIMIT`]
+/// unless the view opened it, collapsed when the view says so.
+fn stack_view(
+    key: String,
+    name: &str,
+    cards: Vec<CardView>,
+    view: &View,
+    empty_note: Option<String>,
+) -> StackView {
+    let open = view.open_columns.contains(&key);
+    let count = cards.len();
+    let shown = if open { count } else { count.min(COLUMN_LIMIT) };
+    StackView {
+        changed: cards.iter().any(|card| card.changed),
+        collapsed: view.collapsed.contains(&key),
+        open,
+        count,
+        more: count - shown,
+        more_label: more_label(count, count - shown, open),
+        cards: cards.into_iter().take(shown).collect(),
+        empty_note,
+        key,
+        name: name.to_owned(),
+    }
+}
+
+/// The group of the todos written down in the window, first on the
+/// Board whatever the filter: it is on no board.
+fn todo_group(view: &View, flags: &Flags) -> GroupView {
+    let key = group_key(TODO_BADGE, TODO_GROUP);
+    let cards: Vec<CardView> = flags
+        .session
+        .todos
+        .iter()
+        .map(|todo| flags.todo(todo))
+        .collect();
+    let empty_note = cards.is_empty().then(|| "nothing written down".to_owned());
+    GroupView {
+        stacks: vec![stack_view(
+            column_key(TODO_BADGE, TODO_GROUP, TODO_STACK),
+            TODO_STACK,
+            cards,
+            view,
+            empty_note,
+        )],
+        key,
+        board: TODO_BADGE.to_owned(),
+        source: TODO_GROUP.to_owned(),
+        icon: None,
+        local: true,
+        expanded: false,
+        empty: 0,
+        empty_toggle: None,
+    }
+}
+
 /// The picked cards by stage, in picking order and once each, whatever
 /// the filter: picking is an explicit choice. An id that is on no board is
-/// skipped.
+/// skipped. The picked todos follow them.
 fn activity(snapshot: &DashboardSnapshot, flags: &Flags) -> ActivityView {
     let mut found: HashMap<&str, (&PendingCard, &str, &Option<Icon>)> = HashMap::new();
     for board in &snapshot.boards {
@@ -856,6 +942,18 @@ fn activity(snapshot: &DashboardSnapshot, flags: &Flags) -> ActivityView {
             source: (*source).to_owned(),
             icon: (*icon).clone(),
         })
+        .chain(
+            flags
+                .session
+                .todos
+                .iter()
+                .filter(|todo| todo.stage.is_some())
+                .map(|todo| ActivityItem {
+                    card: flags.todo(todo),
+                    source: TODO_GROUP.to_owned(),
+                    icon: None,
+                }),
+        )
         .collect();
     let count = items.len();
     let stages = Stage::ALL
@@ -1010,15 +1108,16 @@ mod tests {
         }
     }
 
-    /// Groups follow config order; a stack shows five cards and counts the
-    /// rest; the empty stack is counted but not shown until expanded.
+    /// Groups follow config order, after the todos; a stack shows five
+    /// cards and counts the rest; the empty stack is counted but not shown
+    /// until expanded.
     #[test]
     fn lays_out_groups_and_stacks() {
         let shown = page(&snapshot(), &View::default());
         let sources: Vec<_> = shown.groups.iter().map(|g| g.source.as_str()).collect();
-        assert_eq!(sources, ["jira", "github"]);
+        assert_eq!(sources, ["Todo", "jira", "github"]);
 
-        let github = &shown.groups[1];
+        let github = &shown.groups[2];
         assert_eq!(github.key, "Work/github");
         assert_eq!(github.empty, 1);
         assert_eq!(github.stacks.len(), 1, "the empty stack is hidden");
@@ -1037,7 +1136,7 @@ mod tests {
         view.expanded.insert("Work/github".to_owned());
         view.open_columns.insert("Work/github/Review".to_owned());
         let shown = page(&snapshot(), &view);
-        let github = &shown.groups[1];
+        let github = &shown.groups[2];
         assert_eq!(github.stacks.len(), 2);
         assert_eq!(github.stacks[0].more, 0);
         assert_eq!(github.stacks[0].cards.len(), 7);
@@ -1057,7 +1156,7 @@ mod tests {
         let mut view = View::default();
         view.set_stage("gh:2", Stage::Done);
         let shown = page(&snapshot(), &view);
-        let review = &shown.groups[1].stacks[0];
+        let review = &shown.groups[2].stacks[0];
         let plain = card_menu(&review.cards[0], Place::Board);
         assert_eq!(
             plain[0],
@@ -1175,14 +1274,14 @@ mod tests {
             board_view(&ViewState::Loading, Some(&before), Tab::Board),
             board_view(&ViewState::Loading, Some(&shown), Tab::Board)
         );
-        let in_stack = &shown.groups[1].stacks[0].cards[1];
+        let in_stack = &shown.groups[2].stacks[0].cards[1];
         assert_eq!(in_stack.alert.as_deref(), Some("Alert at 15:45"));
         assert_eq!(in_stack.source, "x");
         assert_eq!(
             shown.activity.stages[0].cards[1].card.alert.as_deref(),
             Some("Alert at 15:45")
         );
-        assert_eq!(shown.groups[1].stacks[0].cards[0].alert, None);
+        assert_eq!(shown.groups[2].stacks[0].cards[0].alert, None);
         let menu = card_menu(in_stack, Place::Board);
         assert_eq!(
             menu.last(),
@@ -1192,8 +1291,103 @@ mod tests {
             ))
         );
         assert_eq!(menu.len(), 4);
-        let without = card_menu(&shown.groups[1].stacks[0].cards[0], Place::Board);
+        let without = card_menu(&shown.groups[2].stacks[0].cards[0], Place::Board);
         assert_eq!(without.len(), 3, "nothing to call off");
+    }
+
+    /// The todos written down in the window are a group of their own,
+    /// first on the Board whatever the filter, badged as not saved, with
+    /// one stack; a picked todo joins the Activity area at its stage,
+    /// after the cards from the sources. A todo's menu rewrites or forgets
+    /// it and never snoozes it, since no source has it.
+    #[test]
+    fn lists_the_todos_with_the_groups() {
+        let mut session = Session::default();
+        let shown = super::page(&snapshot(), &View::default(), &session);
+        let todos = &shown.groups[0];
+        assert!(todos.local);
+        assert_eq!(
+            (todos.source.as_str(), todos.board.as_str()),
+            ("Todo", "not saved")
+        );
+        assert_eq!(todos.empty_toggle, None);
+        assert_eq!(todos.stacks.len(), 1);
+        assert_eq!(todos.stacks[0].name, "This session");
+        assert_eq!(
+            todos.stacks[0].empty_note.as_deref(),
+            Some("nothing written down")
+        );
+
+        let first = session
+            .todos
+            .add("Write the release notes", "for 0.7")
+            .unwrap();
+        let second = session.todos.add("Call the bank", "").unwrap();
+        session.todos.pick(&second, Some(Stage::Doing));
+        let view = View {
+            board: Some("Work".to_owned()),
+            ..View::default()
+        };
+        let shown = super::page(&snapshot(), &view, &session);
+        assert_eq!(shown.groups[0].source, "Todo", "whatever the filter");
+        let stack = &shown.groups[0].stacks[0];
+        assert_eq!(stack.count, 2);
+        assert_eq!(stack.empty_note, None);
+        let card = &stack.cards[0];
+        assert_eq!(
+            (card.id.as_str(), card.title.as_str()),
+            (first.as_str(), "Write the release notes")
+        );
+        assert_eq!(
+            (card.body.as_str(), card.source.as_str()),
+            ("for 0.7", "Todo")
+        );
+        assert!(card.local && card.url.is_none() && card.stage.is_none());
+        assert_eq!(stack.cards[1].stage, Some(Stage::Doing));
+
+        let doing = &shown.activity.stages[1];
+        assert_eq!(doing.cards.len(), 1);
+        assert_eq!(doing.cards[0].card.id, second);
+        assert_eq!(doing.cards[0].source, "Todo");
+        assert_eq!(doing.cards[0].icon, None);
+        assert_eq!(shown.activity.count, 3);
+        let picked: Vec<_> = shown.activity.stages[0]
+            .cards
+            .iter()
+            .map(|item| item.card.id.as_str())
+            .collect();
+        assert_eq!(
+            picked,
+            ["j:1", "gh:2"],
+            "the todos come after the sources' cards"
+        );
+
+        let labels = |items: Vec<MenuItem>| {
+            items
+                .into_iter()
+                .map(|item| match item {
+                    MenuItem::Action { label, .. } | MenuItem::Submenu { label, .. } => label,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            labels(card_menu(card, Place::Board)),
+            ["Send to Activity", "Alert me about", "Edit", "Delete"]
+        );
+        assert_eq!(
+            labels(card_menu(&doing.cards[0].card, Place::Activity)),
+            [
+                "Back to Picked",
+                "Move to Done",
+                "Remove from Activity",
+                "Alert me about",
+                "Edit",
+                "Delete"
+            ]
+        );
+        assert_eq!(todo_dialog_words(false), ("New todo", "Add"));
+        assert_eq!(todo_dialog_words(true), ("Edit todo", "Save"));
+        assert!(TODO_NOTE.contains("closing TasksPending forgets"));
     }
 
     /// Only an http(s) URL becomes a link: a source could hand the window
@@ -1209,7 +1403,7 @@ mod tests {
         cards[2].url = Some(" HTTPS://example.com/ok ".to_owned());
         cards[3].url = None;
         let shown = page(&snapshot, &View::default());
-        let urls: Vec<_> = shown.groups[1].stacks[0].cards[..4]
+        let urls: Vec<_> = shown.groups[2].stacks[0].cards[..4]
             .iter()
             .map(|card| card.url.as_deref())
             .collect();
@@ -1297,8 +1491,8 @@ mod tests {
             ..View::default()
         };
         let shown = page(&snapshot(), &view);
-        assert_eq!(shown.groups.len(), 1);
-        assert_eq!(shown.groups[0].source, "github");
+        assert_eq!(shown.groups.len(), 2);
+        assert_eq!(shown.groups[1].source, "github");
         let picked = &shown.activity.stages[0].cards;
         let ids: Vec<_> = picked.iter().map(|n| n.card.id.as_str()).collect();
         assert_eq!(ids, ["j:1", "gh:2"]);
@@ -1313,10 +1507,10 @@ mod tests {
         let shown = page(&snapshot(), &view);
         assert_eq!(
             shown.groups.len(),
-            1,
+            2,
             "a group with every stack hidden is gone"
         );
-        assert_eq!(shown.groups[0].source, "jira");
+        assert_eq!(shown.groups[1].source, "jira");
     }
 
     /// The controls know when a source needs attention, and the dialogs
@@ -1437,7 +1631,7 @@ mod tests {
                 "Dashboard unreachable (refused); showing data from 28 Sep 10:30".to_owned()
             ))
         );
-        assert_eq!(stale.groups.len(), 2);
+        assert_eq!(stale.groups.len(), 3);
         assert_eq!(stale.activity.map(|a| a.count), Some(2));
     }
 
@@ -1521,7 +1715,7 @@ mod tests {
     #[test]
     fn labels_the_toggles() {
         let shown = page(&snapshot(), &View::default());
-        let github = &shown.groups[1];
+        let github = &shown.groups[2];
         assert_eq!(
             github.empty_toggle,
             Some(EmptyToggle {
@@ -1530,15 +1724,15 @@ mod tests {
                 tooltip: "Show empty stacks",
             })
         );
-        assert_eq!(shown.groups[0].empty_toggle, None, "jira has none");
+        assert_eq!(shown.groups[1].empty_toggle, None, "jira has none");
         assert_eq!(github.stacks[0].more_label.as_deref(), Some("Show 2 more"));
-        assert_eq!(shown.groups[0].stacks[0].more_label, None);
+        assert_eq!(shown.groups[1].stacks[0].more_label, None);
 
         let mut view = View::default();
         view.expanded.insert("Work/github".to_owned());
         view.open_columns.insert("Work/github/Review".to_owned());
         let shown = page(&snapshot(), &view);
-        let github = &shown.groups[1];
+        let github = &shown.groups[2];
         let toggle = github.empty_toggle.as_ref().unwrap();
         assert_eq!(
             (toggle.icon, toggle.label.as_str(), toggle.tooltip),

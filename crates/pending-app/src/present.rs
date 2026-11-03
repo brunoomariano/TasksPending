@@ -13,7 +13,7 @@ use pending_core::{
 };
 
 use crate::backend::{Command, Refusal};
-use crate::snooze::until_text;
+use crate::snooze::{self, until_text};
 use crate::state::ViewState;
 use crate::view::{AUTO_REFRESH_CHOICES, View, column_key, group_key, hide_key};
 
@@ -114,6 +114,67 @@ pub struct NowItem {
     pub card: CardView,
     pub source: String,
     pub icon: Option<Icon>,
+}
+
+/// Where a card is drawn, which decides what its menu offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// In its stack.
+    Board,
+    /// In the Now row.
+    Activity,
+}
+
+/// What the user can do to a card from its menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardAction {
+    /// Mark the card as in progress.
+    Pick,
+    /// Unmark it.
+    Unpick,
+    Snooze(snooze::Choice),
+}
+
+/// One entry of a card's menu.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MenuItem {
+    Action {
+        label: String,
+        action: CardAction,
+    },
+    Submenu {
+        label: String,
+        items: Vec<(String, CardAction)>,
+    },
+}
+
+impl MenuItem {
+    fn action(label: &str, action: CardAction) -> Self {
+        Self::Action {
+            label: label.to_owned(),
+            action,
+        }
+    }
+}
+
+/// The menu behind a card's three dots at `place`: marking the card as in
+/// progress or unmarking it, and, on the Board, snoozing it.
+pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
+    let mut items = vec![if card.marked {
+        MenuItem::action("Unmark as in progress", CardAction::Unpick)
+    } else {
+        MenuItem::action("Mark as in progress", CardAction::Pick)
+    }];
+    if place == Place::Board {
+        items.push(MenuItem::Submenu {
+            label: "Snooze".to_owned(),
+            items: snooze::CHOICES
+                .iter()
+                .map(|(choice, label)| ((*label).to_owned(), CardAction::Snooze(*choice)))
+                .collect(),
+        });
+    }
+    items
 }
 
 /// One source in the Sources dialog.
@@ -816,6 +877,57 @@ mod tests {
         assert_eq!(
             github.stacks[1].empty_note.as_deref(),
             Some("not refreshed yet")
+        );
+    }
+
+    /// A card's menu marks it as in progress, or unmarks it when it is;
+    /// in a stack it also snoozes the card, with the four snooze choices,
+    /// and in the Now row it does not.
+    #[test]
+    fn menus_offer_what_fits_the_card() {
+        let shown = page(&snapshot(), &View::default());
+        let review = &shown.groups[1].stacks[0];
+        let plain = card_menu(&review.cards[0], Place::Board);
+        assert_eq!(
+            plain[0],
+            MenuItem::action("Mark as in progress", CardAction::Pick)
+        );
+        let MenuItem::Submenu { label, items } = &plain[1] else {
+            panic!("expected the snooze submenu, got {:?}", plain[1]);
+        };
+        assert_eq!(label, "Snooze");
+        assert_eq!(
+            items
+                .iter()
+                .map(|(label, action)| (label.as_str(), *action))
+                .collect::<Vec<_>>(),
+            [
+                ("1 hour", CardAction::Snooze(snooze::Choice::Hour)),
+                ("Tomorrow", CardAction::Snooze(snooze::Choice::Tomorrow)),
+                ("Next week", CardAction::Snooze(snooze::Choice::NextWeek)),
+                (
+                    "Until it changes",
+                    CardAction::Snooze(snooze::Choice::UntilChange)
+                ),
+            ]
+        );
+        assert_eq!(plain.len(), 2);
+
+        let picked = card_menu(&review.cards[1], Place::Board);
+        assert_eq!(
+            picked[0],
+            MenuItem::action("Unmark as in progress", CardAction::Unpick)
+        );
+        assert_eq!(picked.len(), 2, "a marked card in a stack still snoozes");
+
+        let in_activity = card_menu(&shown.now[0].card, Place::Activity);
+        assert_eq!(
+            in_activity,
+            [MenuItem::action(
+                "Unmark as in progress",
+                CardAction::Unpick
+            )],
+            "no snooze in the Now row"
         );
     }
 

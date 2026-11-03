@@ -82,6 +82,14 @@ impl Alerts {
         self.by_card.remove(id)
     }
 
+    /// Gives the alert on the card `id`, if it has one, the card's new
+    /// `title`, so that it rings with the name the card has now.
+    pub fn retitle(&mut self, id: &str, title: &str) {
+        if let Some(alert) = self.by_card.get_mut(id) {
+            alert.title = title.to_owned();
+        }
+    }
+
     /// The alerts due at `now`, soonest first, taken off their cards.
     pub fn due(&mut self, now: DateTime<Local>) -> Vec<(String, Alert)> {
         let mut due: Vec<(String, Alert)> = self

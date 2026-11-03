@@ -208,8 +208,14 @@ pub fn show_todo(ctx: &Rc<Ctx>, editing: Option<&str>) {
     dialog.set_default_widget(Some(&save));
     dialog.set_focus(Some(&what));
     {
-        let save = save.clone();
-        what.connect_changed(move |what| save.set_sensitive(!what.text().trim().is_empty()));
+        // The button's own closure holds the entries: this one holds the
+        // button weakly so the dialog's widgets are freed when it closes.
+        let save = save.downgrade();
+        what.connect_changed(move |what| {
+            if let Some(save) = save.upgrade() {
+                save.set_sensitive(!what.text().trim().is_empty());
+            }
+        });
     }
     {
         let dialog = dialog.downgrade();
@@ -227,7 +233,7 @@ pub fn show_todo(ctx: &Rc<Ctx>, editing: Option<&str>) {
             let title = what.text();
             let body = details.text();
             match &id {
-                Some(id) => ctx.change_todos(|todos| todos.edit(id, &title, &body)),
+                Some(id) => ctx.change_session(|session| session.edit_todo(id, &title, &body)),
                 None => ctx.change_todos(|todos| todos.add(&title, &body).is_some()),
             }
             if let Some(dialog) = dialog.upgrade() {

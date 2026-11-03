@@ -10,6 +10,30 @@ pub struct Session {
     pub todos: Todos,
 }
 
+impl Session {
+    /// Rewrites the todo `id`, and the alert set on it rings with the new
+    /// title. Says whether anything changed.
+    pub fn edit_todo(&mut self, id: &str, title: &str, body: &str) -> bool {
+        if !self.todos.edit(id, title, body) {
+            return false;
+        }
+        if let Some(todo) = self.todos.get(id) {
+            self.alerts.retitle(id, &todo.title);
+        }
+        true
+    }
+
+    /// Forgets the todo `id` and the alert set on it: a todo deleted on
+    /// purpose must not ring later, with no card left to cancel it from.
+    pub fn forget_todo(&mut self, id: &str) -> bool {
+        if !self.todos.remove(id) {
+            return false;
+        }
+        self.alerts.cancel(id);
+        true
+    }
+}
+
 /// A todo written down in the window: a card of the window's own, on no
 /// source, kept only while the window is open.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +118,50 @@ impl Todos {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{Local, TimeZone};
+
     use super::*;
+    use crate::alert::Alert;
+
+    /// An alert set on a todo goes with it: deleted, nothing rings about
+    /// it; rewritten, the alert rings with the new title.
+    #[test]
+    fn a_todo_takes_its_alert_along() {
+        let mut session = Session::default();
+        let id = session.todos.add("Call the bank", "").unwrap();
+        let at = Local.with_ymd_and_hms(2026, 10, 7, 16, 0, 0).unwrap();
+        session.alerts.set(
+            &id,
+            Alert {
+                at,
+                title: "Call the bank".to_owned(),
+                source: "Todo".to_owned(),
+            },
+        );
+
+        assert!(session.edit_todo(&id, "Call the bank about the card", ""));
+        assert_eq!(
+            session.alerts.cancel(&id).map(|alert| alert.title),
+            Some("Call the bank about the card".to_owned())
+        );
+        session.alerts.set(
+            &id,
+            Alert {
+                at,
+                title: "Call the bank about the card".to_owned(),
+                source: "Todo".to_owned(),
+            },
+        );
+        assert!(
+            !session.edit_todo(&id, " ", ""),
+            "a blank title changes nothing"
+        );
+
+        assert!(session.forget_todo(&id));
+        assert_eq!(session.todos.get(&id), None);
+        assert!(session.alerts.due(at).is_empty(), "nothing rings about it");
+        assert!(!session.forget_todo(&id));
+    }
 
     /// A todo needs a title; it keeps the title and the details without
     /// the blanks around them, can be rewritten and forgotten, and ids are

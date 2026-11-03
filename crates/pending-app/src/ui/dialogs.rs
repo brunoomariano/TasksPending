@@ -1,4 +1,4 @@
-//! The dialogs: sources, settings and the snoozed cards.
+//! The dialogs: sources, settings, the snoozed cards, and a todo.
 
 use std::rc::Rc;
 
@@ -12,7 +12,8 @@ use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped as text};
 use crate::backend::Command;
 use crate::present::{
-    BoardSwitches, Choice, SwitchView, board_choices, interval_choices, switches,
+    BoardSwitches, Choice, SwitchView, TODO_NOTE, board_choices, interval_choices, switches,
+    todo_dialog_words,
 };
 use crate::view::{View, flip};
 
@@ -157,6 +158,84 @@ fn snoozed_dialog(ctx: &Rc<Ctx>) -> Option<adw::Dialog> {
     let built = self::dialog("Snoozed", &content);
     dialog.set(Some(&built));
     Some(built)
+}
+
+/// Writing down a todo, or rewriting the one with id `editing`: a title,
+/// optional details, and the note that nothing is saved. Enter in a field
+/// is the button.
+pub fn show_todo(ctx: &Rc<Ctx>, editing: Option<&str>) {
+    let existing = editing.and_then(|id| ctx.model.borrow().session.todos.get(id).cloned());
+    if editing.is_some() && existing.is_none() {
+        return;
+    }
+    let (title, button) = todo_dialog_words(existing.is_some());
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    content.append(&heading("Todo"));
+    let what = gtk::Entry::builder()
+        .placeholder_text("What needs doing")
+        .text(existing.as_ref().map_or("", |todo| todo.title.as_str()))
+        .activates_default(true)
+        .build();
+    content.append(&what);
+    content.append(&heading("Details"));
+    let details = gtk::Entry::builder()
+        .placeholder_text("Optional")
+        .text(existing.as_ref().map_or("", |todo| todo.body.as_str()))
+        .activates_default(true)
+        .build();
+    content.append(&details);
+    content.append(&text(TODO_NOTE, &["dialog-note"]));
+
+    let buttons = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .halign(gtk::Align::End)
+        .margin_top(8)
+        .build();
+    let cancel = gtk::Button::with_label("Cancel");
+    cancel.add_css_class("control");
+    cancel.add_css_class("wake");
+    let save = gtk::Button::with_label(button);
+    save.add_css_class("control");
+    save.add_css_class("wake");
+    save.add_css_class("primary");
+    save.set_sensitive(!what.text().trim().is_empty());
+    buttons.append(&cancel);
+    buttons.append(&save);
+    content.append(&buttons);
+
+    let dialog = self::dialog(title, &content);
+    dialog.set_default_widget(Some(&save));
+    dialog.set_focus(Some(&what));
+    {
+        let save = save.clone();
+        what.connect_changed(move |what| save.set_sensitive(!what.text().trim().is_empty()));
+    }
+    {
+        let dialog = dialog.downgrade();
+        cancel.connect_clicked(move |_| {
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.close();
+            }
+        });
+    }
+    {
+        let ctx = ctx.clone();
+        let dialog = dialog.downgrade();
+        let id = existing.map(|todo| todo.id);
+        save.connect_clicked(move |_| {
+            let title = what.text();
+            let body = details.text();
+            match &id {
+                Some(id) => ctx.change_todos(|todos| todos.edit(id, &title, &body)),
+                None => ctx.change_todos(|todos| todos.add(&title, &body).is_some()),
+            }
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.close();
+            }
+        });
+    }
+    dialog.present(ctx.window().as_ref());
 }
 
 /// Settings: which board to show, the auto-refresh interval, and what to

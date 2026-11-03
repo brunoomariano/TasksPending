@@ -94,6 +94,8 @@ enum SceneArg {
     Settings,
     /// The Snoozed dialog, with one card snoozed.
     Snoozed,
+    /// The dialog that writes down a todo, over the Board.
+    Todo,
 }
 
 impl From<SceneArg> for Scene {
@@ -105,6 +107,7 @@ impl From<SceneArg> for Scene {
             SceneArg::Sources => Self::Sources,
             SceneArg::Settings => Self::Settings,
             SceneArg::Snoozed => Self::Snoozed,
+            SceneArg::Todo => Self::Todo,
         }
     }
 }

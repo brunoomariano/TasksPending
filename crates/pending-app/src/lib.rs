@@ -34,6 +34,7 @@ pub enum Scene {
     Sources,
     Settings,
     Snoozed,
+    Todo,
 }
 
 #[derive(Debug, Default)]

@@ -29,7 +29,7 @@ use crate::present::{
     BoardView, CardAction, CardView, Page, Tab, Timer, auto_refresh_every, board_view, lasting,
     on_timer, page, refreshed,
 };
-use crate::session::Session;
+use crate::session::{Session, Todos};
 use crate::snooze::until;
 use crate::state::ViewState;
 use crate::theme;
@@ -198,23 +198,45 @@ impl Ctx {
 
     /// Does `action` to `card`, as chosen in its menu. The snapshot holds
     /// the marks and snoozes: the dashboard is asked, and the page redraws
-    /// when the snapshot comes back with the change. Stages and alerts are
-    /// the window's own, and redraw at once.
+    /// when the snapshot comes back with the change. Stages, alerts and
+    /// the todos are the window's own, and redraw at once.
     pub fn act(self: &Rc<Self>, card: &CardView, action: CardAction) {
         let id = card.id.clone();
+        if card.local {
+            match action {
+                CardAction::Pick => self.change_todos(|todos| todos.pick(&id, Some(Stage::Picked))),
+                CardAction::Unpick => self.change_todos(|todos| todos.pick(&id, None)),
+                CardAction::Stage(stage) => {
+                    self.change_todos(|todos| todos.pick(&id, Some(stage)));
+                }
+                CardAction::Edit => dialogs::show_todo(self, Some(&id)),
+                CardAction::Delete => self.change_todos(|todos| todos.remove(&id)),
+                CardAction::Snooze(_) => {}
+                CardAction::Alert(_) | CardAction::CancelAlert => self.act_on_alert(card, action),
+            }
+            return;
+        }
         match action {
             CardAction::Pick => self.send(Command::SetMark { id, marked: true }),
             CardAction::Unpick => self.send(Command::SetMark { id, marked: false }),
             CardAction::Stage(stage) => self.change_view(|view| view.set_stage(&id, stage)),
+            CardAction::Edit | CardAction::Delete => {}
             CardAction::Snooze(choice) => self.send(Command::Snooze {
                 id,
                 until: until(choice, &Local::now()).map(|at| at.with_timezone(&Utc)),
             }),
+            CardAction::Alert(_) | CardAction::CancelAlert => self.act_on_alert(card, action),
+        }
+    }
+
+    /// Sets or calls off the alert on `card`.
+    fn act_on_alert(self: &Rc<Self>, card: &CardView, action: CardAction) {
+        match action {
             CardAction::Alert(choice) => {
                 let at = Local::now()
                     + chrono::TimeDelta::from_std(alert::wait(choice)).unwrap_or_default();
                 self.set_alert(
-                    &id,
+                    &card.id,
                     Alert {
                         at,
                         title: card.title.clone(),
@@ -223,9 +245,17 @@ impl Ctx {
                 );
             }
             CardAction::CancelAlert => {
-                self.model.borrow_mut().session.alerts.cancel(&id);
+                self.model.borrow_mut().session.alerts.cancel(&card.id);
                 self.redraw(true);
             }
+            _ => {}
+        }
+    }
+
+    /// Changes the todos and redraws.
+    pub fn change_todos(self: &Rc<Self>, change: impl FnOnce(&mut Todos) -> bool) {
+        if change(&mut self.model.borrow_mut().session.todos) {
+            self.redraw(true);
         }
     }
 
@@ -701,6 +731,15 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
             })
             .unwrap_or_default();
         let ids: Vec<String> = firsts.iter().map(|card| card.id.clone()).collect();
+        // A todo written down in the window, for every picture of the page.
+        ctx.change_todos(|todos| {
+            todos
+                .add(
+                    "Write the release notes",
+                    "Changelog, then the README picture",
+                )
+                .is_some()
+        });
         match scene {
             Scene::Activity | Scene::Light => {
                 let stages = [Stage::Picked, Stage::Doing, Stage::Done];
@@ -722,7 +761,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
                     }
                 }
             }
-            Scene::Board | Scene::Settings | Scene::Sources => {
+            Scene::Board | Scene::Todo | Scene::Settings | Scene::Sources => {
                 ctx.show_tab(Tab::Board);
                 for id in ids.into_iter().take(2) {
                     ctx.send(Command::SetMark { id, marked: true });
@@ -739,6 +778,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
             Scene::Sources => dialogs::show_sources(&ctx),
             Scene::Settings => dialogs::show_settings(&ctx),
             Scene::Snoozed => dialogs::show_snoozed(&ctx),
+            Scene::Todo => dialogs::show_todo(&ctx, None),
             Scene::Activity | Scene::Board | Scene::Light => {}
         });
     });

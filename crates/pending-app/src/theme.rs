@@ -132,6 +132,7 @@ mod tests {
     #[test]
     fn opens_dark_unless_asked_for_light() {
         assert_eq!(color_scheme(None), ColorScheme::PreferDark);
+        assert_eq!(color_scheme(Some(Scene::Activity)), ColorScheme::PreferDark);
         assert_eq!(color_scheme(Some(Scene::Board)), ColorScheme::PreferDark);
         assert_eq!(color_scheme(Some(Scene::Light)), ColorScheme::ForceLight);
     }

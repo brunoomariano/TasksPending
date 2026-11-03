@@ -20,13 +20,15 @@ use pending_runtime::live::{Env, process_env};
 /// its desktop entry.
 pub const APP_ID: &str = "io.github.brunoomariano.TasksPending";
 
-/// What a screenshot shows: the board with two cards marked, the same in
-/// the light scheme, or one of the dialogs.
+/// What a screenshot shows: the Activity area with cards at each stage,
+/// the same in the light scheme, the Board with two cards picked, or one
+/// of the dialogs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Scene {
     #[default]
-    Board,
+    Activity,
     Light,
+    Board,
     Sources,
     Settings,
     Snoozed,

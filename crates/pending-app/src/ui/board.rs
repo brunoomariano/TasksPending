@@ -1,5 +1,6 @@
-//! The page under the hero: notices, the marked cards, and the groups of
-//! stacks of cards. Rebuilt whenever what it shows changes.
+//! The page under the tabs: notices, then the Activity area (the picked
+//! cards by stage) or the Board (the groups of stacks of cards). Rebuilt
+//! whenever what it shows changes.
 
 use std::rc::Rc;
 
@@ -10,13 +11,16 @@ use super::hero::show_note;
 use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped};
 use crate::present::{
-    BoardView, CardAction, CardView, GroupView, MenuItem, Notice, NowItem, Place, StackView,
-    card_menu, link_note,
+    ActivityItem, ActivityView, BoardView, CardAction, CardView, GroupView, MenuItem, Notice,
+    Place, StackView, StageView, Tab, card_menu, link_note,
 };
 use crate::view::flip;
 
 /// Narrowest a group gets; the board wraps groups onto more rows instead.
 const GROUP_MIN_WIDTH: i32 = 290;
+/// Narrowest a stage of the Activity area gets: the three stay side by
+/// side, sharing the width, so each one may be narrower than a group.
+const STAGE_MIN_WIDTH: i32 = 240;
 /// Widest a card's text asks to be, in characters: wrapped labels would
 /// otherwise ask for their whole text on one line and make every group as
 /// wide as the window.
@@ -134,8 +138,14 @@ pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
         }
         None => {}
     }
-    if !page.now.is_empty() {
-        page_box.append(&now_section(ctx, &page.now));
+    match page.tab {
+        Tab::Activity => {
+            if let Some(activity) = &page.activity {
+                page_box.append(&activity_section(ctx, activity));
+            }
+            return;
+        }
+        Tab::Board => {}
     }
     if page.groups.is_empty() {
         return;
@@ -163,41 +173,75 @@ pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
     page_box.append(&board);
 }
 
-/// The cards marked as in progress, above the groups.
-fn now_section(ctx: &Rc<Ctx>, items: &[NowItem]) -> gtk::Box {
-    let section = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    section.add_css_class("now");
-    let title = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    title.add_css_class("now-title");
-    title.append(&symbolic("view-pin-symbolic", size::TEXT));
-    title.append(&tracked("Now", &[]));
-    let count = gtk::Label::new(Some(&items.len().to_string()));
-    count.add_css_class("count");
-    title.append(&count);
-    section.append(&title);
-    let cards = gtk::FlowBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
+/// The Activity area: a column per stage, side by side and as tall as the
+/// tallest, and a hint pointing to the Board while nothing is picked.
+fn activity_section(ctx: &Rc<Ctx>, activity: &ActivityView) -> gtk::Box {
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    let stages = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
         .homogeneous(true)
-        .column_spacing(8)
-        .row_spacing(8)
-        .min_children_per_line(1)
-        .max_children_per_line(6)
+        .spacing(20)
         .build();
-    for item in items {
-        let card = card_widget(ctx, &item.card, Place::Activity);
-        let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        footer.add_css_class("card-source");
-        footer.append(&source_icon(ctx, item.icon.as_ref(), size::SMALL));
-        footer.append(&line(&item.source, &[]));
-        card.append(&footer);
-        let child = gtk::FlowBoxChild::builder()
-            .child(&card)
-            .focusable(false)
-            .build();
-        cards.insert(&child, -1);
+    for stage in &activity.stages {
+        stages.append(&stage_widget(ctx, stage));
     }
-    section.append(&cards);
+    section.append(&stages);
+    if let Some(hint) = activity.hint {
+        let row = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(6)
+            .halign(gtk::Align::Center)
+            .build();
+        row.add_css_class("empty");
+        row.append(&text(hint, &[]));
+        let open = gtk::Button::builder().label("Open the Board").build();
+        open.add_css_class("link-button");
+        let ctx = ctx.clone();
+        open.connect_clicked(move |_| ctx.show_tab(Tab::Board));
+        row.append(&open);
+        section.append(&row);
+    }
     section
+}
+
+/// One stage of the Activity area: its name and count, then its cards.
+fn stage_widget(ctx: &Rc<Ctx>, stage: &StageView) -> gtk::Box {
+    let widget = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .width_request(STAGE_MIN_WIDTH)
+        .hexpand(true)
+        .build();
+    widget.add_css_class("group");
+    widget.add_css_class("stage");
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    header.add_css_class("stage-title");
+    header.append(&tracked(stage.name, &[]));
+    let count = gtk::Label::new(Some(&stage.cards.len().to_string()));
+    count.add_css_class("count");
+    header.append(&count);
+    widget.append(&header);
+    if stage.cards.is_empty() {
+        widget.append(&empty_line(stage.empty_note));
+        return widget;
+    }
+    let cards = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    for item in &stage.cards {
+        cards.append(&activity_card(ctx, item));
+    }
+    widget.append(&cards);
+    widget
+}
+
+/// A picked card, with its source under it.
+fn activity_card(ctx: &Rc<Ctx>, item: &ActivityItem) -> gtk::Box {
+    let card = card_widget(ctx, &item.card, Place::Activity);
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    footer.add_css_class("card-source");
+    footer.append(&source_icon(ctx, item.icon.as_ref(), size::SMALL));
+    footer.append(&line(&item.source, &[]));
+    card.append(&footer);
+    card
 }
 
 fn group_widget(ctx: &Rc<Ctx>, group: &GroupView) -> gtk::Box {
@@ -326,7 +370,7 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
         .hexpand(false)
         .build();
     widget.add_css_class("card");
-    if card.marked {
+    if card.picked() {
         widget.add_css_class("marked");
     }
 

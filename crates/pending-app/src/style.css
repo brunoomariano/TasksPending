@@ -170,16 +170,44 @@ window.tasks-pending {
   color: {{text-2}};
 }
 
-/* The marked cards, above the groups. */
-.now {
-  padding: 12px;
-  border: 1px solid mix({{border}}, {{accent}}, 0.45);
-  border-radius: 12px;
-  background: {{surface}};
+/* The tabs under the hero: Activity and Board. */
+.tabs {
+  padding: 16px 28px 0;
 }
 
-.now-title {
+button.tab {
+  min-height: 0;
+  padding: 5px 14px;
+  border: 1px solid {{border}};
+  border-radius: 999px;
+  background: transparent;
+  color: {{text-2}};
+  font-size: 0.85em;
+  font-weight: 500;
+  transition: color 120ms ease-out, border-color 120ms ease-out, background 120ms ease-out;
+}
+
+button.tab:hover {
+  color: {{text}};
+  border-color: {{border-strong}};
+  background: transparent;
+}
+
+button.tab:checked {
+  border-color: {{accent}};
+  background: {{accent-soft}};
   color: {{accent}};
+  font-weight: 600;
+}
+
+button.tab:checked .count {
+  background: alpha({{accent}}, 0.2);
+  color: {{accent}};
+}
+
+/* The stages of the Activity area. */
+.stage-title {
+  color: {{text-2}};
   font-size: 0.78em;
   font-weight: 600;
 }

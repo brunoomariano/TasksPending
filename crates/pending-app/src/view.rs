@@ -1,8 +1,9 @@
 //! Choices of the person looking at the dashboard that only this app
-//! keeps: the board filter, collapsed stacks, hidden items and the
-//! auto-refresh interval. Remembered in a small file; fine to lose.
+//! keeps: the board filter, collapsed stacks, hidden items, the
+//! auto-refresh interval and how far along each picked card is. Remembered
+//! in a small file; fine to lose.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,32 @@ use serde_json::Value;
 /// Intervals offered in Settings, in minutes; 0 is off.
 pub const AUTO_REFRESH_CHOICES: [u32; 5] = [0, 1, 5, 15, 30];
 pub const DEFAULT_AUTO_REFRESH_MINUTES: u32 = 1;
+
+/// How far along a card in the Activity area is: the three columns of its
+/// board, in order. A card arrives as picked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Stage {
+    #[default]
+    Picked,
+    Doing,
+    /// Done here; still to be marked done at its source.
+    Done,
+}
+
+impl Stage {
+    /// The columns in order.
+    pub const ALL: [Stage; 3] = [Stage::Picked, Stage::Doing, Stage::Done];
+
+    /// The column's name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Picked => "Picked",
+            Self::Doing => "Doing",
+            Self::Done => "Done / to mark",
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -32,6 +59,9 @@ pub struct View {
     pub hidden: BTreeSet<String>,
     /// Minutes between automatic refreshes of every source; 0 is off.
     pub auto_refresh_minutes: u32,
+    /// The stage of each picked card that moved on from [`Stage::Picked`],
+    /// by card id.
+    pub stages: BTreeMap<String, Stage>,
 }
 
 impl Default for View {
@@ -43,6 +73,7 @@ impl Default for View {
             collapsed: BTreeSet::new(),
             hidden: BTreeSet::new(),
             auto_refresh_minutes: DEFAULT_AUTO_REFRESH_MINUTES,
+            stages: BTreeMap::new(),
         }
     }
 }
@@ -79,7 +110,33 @@ impl View {
         if !AUTO_REFRESH_CHOICES.contains(&view.auto_refresh_minutes) {
             view.auto_refresh_minutes = DEFAULT_AUTO_REFRESH_MINUTES;
         }
+        saved.read("stages", &mut view.stages);
         view
+    }
+
+    /// The stage of the picked card `id`: where it was moved to, else
+    /// picked.
+    pub fn stage(&self, id: &str) -> Stage {
+        self.stages.get(id).copied().unwrap_or_default()
+    }
+
+    /// Moves the picked card `id` to `stage`; back to picked is forgetting
+    /// the move.
+    pub fn set_stage(&mut self, id: &str, stage: Stage) {
+        if stage == Stage::Picked {
+            self.stages.remove(id);
+        } else {
+            self.stages.insert(id.to_owned(), stage);
+        }
+    }
+
+    /// Forgets the stages of cards no longer among `picked` (unpicked, or
+    /// finished at their source): one picked again later starts over.
+    /// Says whether anything was forgotten.
+    pub fn keep_stages_of(&mut self, picked: &[String]) -> bool {
+        let before = self.stages.len();
+        self.stages.retain(|id, _| picked.contains(id));
+        self.stages.len() != before
     }
 
     /// Writes the view to `path`, creating its directory. A failure is
@@ -212,6 +269,7 @@ mod tests {
         view.expanded.insert("Work/github".to_owned());
         view.open_columns.insert("Work/github/Review".to_owned());
         view.hidden.insert("board:Personal".to_owned());
+        view.set_stage("gh:2", Stage::Doing);
         view.save(&path);
         assert_eq!(View::load(&path), view);
 
@@ -226,6 +284,53 @@ mod tests {
 
         fs::write(&path, "not json").unwrap();
         assert_eq!(View::load(&path), View::default());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A picked card starts in the Picked column and keeps the column it
+    /// was moved to; moving it back to Picked forgets the move. The stages
+    /// of cards that are no longer picked are forgotten together, so a
+    /// card picked again later starts over; those still picked are kept.
+    #[test]
+    fn remembers_how_far_along_each_picked_card_is() {
+        let mut view = View::default();
+        assert_eq!(view.stage("gh:1"), Stage::Picked);
+        view.set_stage("gh:1", Stage::Doing);
+        view.set_stage("gh:2", Stage::Done);
+        assert_eq!(view.stage("gh:1"), Stage::Doing);
+        assert_eq!(view.stage("gh:2"), Stage::Done);
+        view.set_stage("gh:1", Stage::Picked);
+        assert_eq!(view.stage("gh:1"), Stage::Picked);
+        assert!(
+            !view.stages.contains_key("gh:1"),
+            "back to picked is forgotten"
+        );
+
+        assert!(!view.keep_stages_of(&["gh:2".to_owned(), "gh:3".to_owned()]));
+        assert_eq!(view.stage("gh:2"), Stage::Done, "still picked: kept");
+        assert!(view.keep_stages_of(&["gh:3".to_owned()]));
+        assert_eq!(view.stage("gh:2"), Stage::Picked);
+        assert_eq!(
+            Stage::ALL.map(Stage::name),
+            ["Picked", "Doing", "Done / to mark"]
+        );
+    }
+
+    /// A stage saved under a name this version does not know costs only
+    /// the stages: the other settings are kept.
+    #[test]
+    fn forgets_stages_it_does_not_understand() {
+        let dir = temp_path("stages");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app-view.json");
+        fs::write(
+            &path,
+            r#"{"board": "Work", "stages": {"gh:1": "doing", "gh:2": "shipped"}}"#,
+        )
+        .unwrap();
+        let view = View::load(&path);
+        assert_eq!(view.board.as_deref(), Some("Work"));
+        assert!(view.stages.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
+
+The window opens on the work in progress: an Activity board in three stages, one menu per card, alerts as desktop notifications, and todos kept for as long as the window is open.
 
 ### Features
 

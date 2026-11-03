@@ -8,7 +8,7 @@
 - Every card has one three-dot button that opens its menu, in place of the pin and moon buttons: send to or remove from Activity, the stage moves, Snooze, Alert me about, and Edit and Delete for a todo.
 - **Alert me about** rings a desktop notification about a card in 15 minutes, 30 minutes, an hour or three hours; the card says when until then, and the menu cancels it. The alerts are looked at every 30 seconds by the wall clock, so one the machine slept through rings on waking; they last as long as the window.
 - A **Todo** group, first on the Board, holds cards you write down in the window (a title and optional details). A todo has the same menu as the other cards, and is kept only while the window is open, as its badge and the dialog say.
-- `tasks-pending sandbox --scene` gains `activity` (the default), `board` and `todo`, and `make screenshots` pictures them.
+- `tasks-pending sandbox --scene` gains `activity` (the default), `board` and `todo`, and `make screenshots` pictures them. The sandbox shows more: every kind of source on its two boards, cards that link somewhere, a stack left empty, a source whose token expired (its cards stay, under a warning), and it opens with three cards along the stages of the Activity and two todos written down.
 
 ## 0.6.2
 

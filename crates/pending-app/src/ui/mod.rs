@@ -378,6 +378,9 @@ pub fn run(
         return Ok(i32::from(app.run_with_args::<&str>(&[])));
     }
 
+    // The sandbox opens with something going on; a screenshot stages its
+    // own scene.
+    let demo = options.sandbox && screenshot.is_none();
     let backend = backend::resolve(runtime, options, env)?;
     let (commands, events) = spawn_worker(runtime, backend.client.clone());
     let ctx = Rc::new(Ctx {
@@ -429,6 +432,9 @@ pub fn run(
         }
         schedule_polling(&ctx);
         schedule_auto_refresh(&ctx);
+        if demo {
+            stage_demo(&ctx);
+        }
         if let Some((path, scene)) = screenshot.clone() {
             stage_scene(&ctx, scene);
             let app = app.clone();
@@ -712,6 +718,73 @@ fn is_hidden(ctx: &Ctx) -> bool {
     ctx.window().is_some_and(|window| window.is_suspended())
 }
 
+/// The first card of every stack on the page, in page order.
+fn first_cards(ctx: &Ctx) -> Vec<pending_core::PendingCard> {
+    ctx.model
+        .borrow()
+        .state
+        .snapshot()
+        .map(|snapshot| {
+            snapshot
+                .boards
+                .iter()
+                .flat_map(|board| &board.groups)
+                .flat_map(|group| &group.columns)
+                .filter_map(|column| column.cards.first())
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Sends `cards` to the Activity, one at each stage in turn, with an
+/// alert in an hour on the one under way when asked.
+fn pick_along_the_stages(ctx: &Rc<Ctx>, cards: &[pending_core::PendingCard], with_alert: bool) {
+    let stages = [Stage::Picked, Stage::Doing, Stage::Done];
+    for (card, stage) in cards.iter().zip(stages) {
+        ctx.send(Command::SetMark {
+            id: card.id.clone(),
+            marked: true,
+        });
+        ctx.change_view(|view| view.set_stage(&card.id, stage));
+        if with_alert && stage == Stage::Doing {
+            ctx.set_alert(
+                &card.id,
+                Alert {
+                    at: Local::now() + chrono::TimeDelta::hours(1),
+                    title: card.title.clone(),
+                    source: card.source.clone(),
+                },
+            );
+        }
+    }
+}
+
+/// The sandbox opens with something going on, once its first snapshot is
+/// in: three cards along the stages of the Activity and two todos, so the
+/// main screen is not empty before anything is picked. None of it is
+/// saved, as nothing of the sandbox is.
+fn stage_demo(ctx: &Rc<Ctx>) {
+    let ctx = ctx.clone();
+    gtk::glib::timeout_add_local_once(SCENE_AFTER, move || {
+        pick_along_the_stages(&ctx, &first_cards(&ctx), false);
+        ctx.change_todos(|todos| {
+            todos
+                .add(
+                    "Write the release notes",
+                    "Changelog, then the README picture",
+                )
+                .is_some()
+                | todos
+                    .add(
+                        "Try an alert",
+                        "15 min on a card in Doing: the desktop notification names it",
+                    )
+                    .is_some()
+        });
+    });
+}
+
 /// Sets a screenshot's scene up once the first snapshot is in: three cards
 /// picked and moved along the stages for the Activity, two picked for the
 /// Board, one snoozed for the snoozed list, and the dialog opened a moment
@@ -720,22 +793,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
     use crate::Scene;
     let ctx = ctx.clone();
     gtk::glib::timeout_add_local_once(SCENE_AFTER, move || {
-        let firsts: Vec<pending_core::PendingCard> = ctx
-            .model
-            .borrow()
-            .state
-            .snapshot()
-            .map(|snapshot| {
-                snapshot
-                    .boards
-                    .iter()
-                    .flat_map(|board| &board.groups)
-                    .flat_map(|group| &group.columns)
-                    .filter_map(|column| column.cards.first())
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default();
+        let firsts = first_cards(&ctx);
         let ids: Vec<String> = firsts.iter().map(|card| card.id.clone()).collect();
         // A todo written down in the window, for every picture of the page.
         ctx.change_todos(|todos| {
@@ -747,26 +805,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
                 .is_some()
         });
         match scene {
-            Scene::Activity | Scene::Light => {
-                let stages = [Stage::Picked, Stage::Doing, Stage::Done];
-                for (card, stage) in firsts.iter().zip(stages) {
-                    ctx.send(Command::SetMark {
-                        id: card.id.clone(),
-                        marked: true,
-                    });
-                    ctx.change_view(|view| view.set_stage(&card.id, stage));
-                    if stage == Stage::Doing {
-                        ctx.set_alert(
-                            &card.id,
-                            Alert {
-                                at: Local::now() + chrono::TimeDelta::hours(1),
-                                title: card.title.clone(),
-                                source: card.source.clone(),
-                            },
-                        );
-                    }
-                }
-            }
+            Scene::Activity | Scene::Light => pick_along_the_stages(&ctx, &firsts, true),
             Scene::Board | Scene::Todo | Scene::Settings | Scene::Sources => {
                 ctx.show_tab(Tab::Board);
                 for id in ids.into_iter().take(2) {

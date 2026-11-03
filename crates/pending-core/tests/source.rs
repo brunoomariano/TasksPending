@@ -33,7 +33,9 @@ fn sample_snapshot_is_built_from_the_sample_source() {
 }
 
 /// The documentation sandbox is deterministic, needs no credentials, and
-/// shows enough varied cards to exercise the dashboard's normal layout.
+/// shows enough varied cards to exercise the dashboard's normal layout,
+/// with one source degraded on purpose so the Sources dialog has
+/// something to say.
 #[test]
 fn sandbox_snapshot_has_simulated_cards_across_boards() {
     let snapshot = sandbox_snapshot();
@@ -54,7 +56,19 @@ fn sandbox_snapshot_has_simulated_cards_across_boards() {
         snapshot
             .sources
             .iter()
+            .filter(|source| source.name != "Jira demo")
             .all(|source| source.status == SourceStatus::Ready)
+    );
+    let jira = snapshot
+        .sources
+        .iter()
+        .find(|source| source.name == "Jira demo")
+        .expect("Jira demo health");
+    assert_eq!(jira.status, SourceStatus::Degraded);
+    assert!(
+        jira.message.as_deref().is_some_and(|m| m.contains("401")),
+        "{:?}",
+        jira.message
     );
 
     let github = snapshot
@@ -112,7 +126,8 @@ fn sandbox_shows_the_current_dashboard_features() {
             "Review requested",
             "Returned to you",
             "Ready to merge",
-            "Not approved yet"
+            "Not approved yet",
+            "Drafts"
         ]
     );
     let bodies: Vec<&str> = group("GitHub demo")

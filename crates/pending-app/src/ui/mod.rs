@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use chrono::Local;
+use chrono::{Local, Utc};
 use gtk4 as gtk;
 use gtk4::prelude::*;
 use libadwaita as adw;
@@ -24,8 +24,10 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::activity::LookThrottle;
 use crate::backend::{self, Command, Event, spawn_worker};
 use crate::present::{
-    BoardView, Page, Timer, auto_refresh_every, board_view, lasting, on_timer, page, refreshed,
+    BoardView, CardAction, Page, Timer, auto_refresh_every, board_view, lasting, on_timer, page,
+    refreshed,
 };
+use crate::snooze::until;
 use crate::state::ViewState;
 use crate::theme;
 use crate::view::View;
@@ -161,6 +163,21 @@ impl Ctx {
 
     pub fn window(&self) -> Option<adw::ApplicationWindow> {
         self.widgets.borrow().as_ref().map(|w| w.window.clone())
+    }
+
+    /// Does `action` to the card `id`, as chosen in its menu. The snapshot
+    /// holds the marks and snoozes: the dashboard is asked, and the page
+    /// redraws when the snapshot comes back with the change.
+    pub fn act(self: &Rc<Self>, id: &str, action: CardAction) {
+        let id = id.to_owned();
+        match action {
+            CardAction::Pick => self.send(Command::SetMark { id, marked: true }),
+            CardAction::Unpick => self.send(Command::SetMark { id, marked: false }),
+            CardAction::Snooze(choice) => self.send(Command::Snooze {
+                id,
+                until: until(choice, &Local::now()).map(|at| at.with_timezone(&Utc)),
+            }),
+        }
     }
 
     /// Activity on the window is "looking": the daemon flags what changed

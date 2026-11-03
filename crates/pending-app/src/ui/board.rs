@@ -476,7 +476,13 @@ fn menu_button(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::MenuButton 
         let simple = gtk::gio::SimpleAction::new(&name, None);
         let ctx = ctx.clone();
         let card = card.clone();
-        simple.connect_activate(move |_, _| ctx.act(&card, action));
+        simple.connect_activate(move |_, _| {
+            // A window-side action redraws the page, menu included: that
+            // waits until the popover is done with the click.
+            let ctx = ctx.clone();
+            let card = card.clone();
+            gtk::glib::idle_add_local_once(move || ctx.act(&card, action));
+        });
         actions.add_action(&simple);
         menu.append(Some(label), Some(&format!("card.{name}")));
     };

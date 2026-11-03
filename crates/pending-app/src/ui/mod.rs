@@ -23,11 +23,13 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::activity::LookThrottle;
+use crate::alert::{self, Alert, notification};
 use crate::backend::{self, Command, Event, spawn_worker};
 use crate::present::{
-    BoardView, CardAction, Page, Tab, Timer, auto_refresh_every, board_view, lasting, on_timer,
-    page, refreshed,
+    BoardView, CardAction, CardView, Page, Tab, Timer, auto_refresh_every, board_view, lasting,
+    on_timer, page, refreshed,
 };
+use crate::session::Session;
 use crate::snooze::until;
 use crate::state::ViewState;
 use crate::theme;
@@ -40,6 +42,9 @@ const WEATHER_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// How often the window asks whether a newer version was published; the
 /// daemon itself looks once a day.
 const UPDATE_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// How often the alerts are looked at, by the wall clock: an alert rings
+/// within this of its time, also after the machine slept through it.
+const ALERT_TICK: Duration = Duration::from_secs(30);
 /// The window's size when first opened: wide enough for the weather, which
 /// leaves narrower windows (see [`hero::WEATHER_MIN_WIDTH`]).
 const DEFAULT_WIDTH: i32 = 1440;
@@ -57,6 +62,8 @@ pub struct Model {
     pub view: View,
     /// The tab in front; the window opens on the Activity.
     pub tab: Tab,
+    /// What lasts as long as the window: the alerts.
+    pub session: Session,
     /// Where the view is remembered; `None` for the sandbox, a screenshot,
     /// or an environment that names no state directory, and it then lasts
     /// as long as the window.
@@ -123,11 +130,7 @@ impl Ctx {
         let Some(widgets) = widgets.as_ref() else {
             return;
         };
-        let (state, view, tab) = {
-            let model = self.model.borrow();
-            (model.state.clone(), model.view.clone(), model.tab)
-        };
-        let page_view = state.snapshot().map(|snapshot| page(snapshot, &view));
+        let (state, view, tab, page_view) = self.current();
         hero::update_controls(self, widgets, page_view.as_ref(), &view);
         tabs::update(
             &widgets.tabs,
@@ -153,17 +156,28 @@ impl Ctx {
         let Some(widgets) = widgets.as_ref() else {
             return;
         };
-        let (state, view, tab) = {
-            let model = self.model.borrow();
-            (model.state.clone(), model.view.clone(), model.tab)
-        };
-        let page_view = state.snapshot().map(|snapshot| page(snapshot, &view));
+        let (_, view, tab, page_view) = self.current();
         hero::update_controls(self, widgets, page_view.as_ref(), &view);
         tabs::update(
             &widgets.tabs,
             &crate::present::tabs(page_view.as_ref()),
             tab,
         );
+    }
+
+    /// The state, view and tab of the moment, and the page they make.
+    fn current(&self) -> (ViewState, View, Tab, Option<Page>) {
+        let model = self.model.borrow();
+        let page_view = model
+            .state
+            .snapshot()
+            .map(|snapshot| page(snapshot, &model.view, &model.session));
+        (
+            model.state.clone(),
+            model.view.clone(),
+            model.tab,
+            page_view,
+        )
     }
 
     /// Brings `tab` to the front.
@@ -175,22 +189,19 @@ impl Ctx {
 
     /// The page for the current model, if there is a snapshot.
     pub fn current_page(&self) -> Option<Page> {
-        let model = self.model.borrow();
-        model
-            .state
-            .snapshot()
-            .map(|snapshot| page(snapshot, &model.view))
+        self.current().3
     }
 
     pub fn window(&self) -> Option<adw::ApplicationWindow> {
         self.widgets.borrow().as_ref().map(|w| w.window.clone())
     }
 
-    /// Does `action` to the card `id`, as chosen in its menu. The snapshot
-    /// holds the marks and snoozes: the dashboard is asked, and the page
-    /// redraws when the snapshot comes back with the change.
-    pub fn act(self: &Rc<Self>, id: &str, action: CardAction) {
-        let id = id.to_owned();
+    /// Does `action` to `card`, as chosen in its menu. The snapshot holds
+    /// the marks and snoozes: the dashboard is asked, and the page redraws
+    /// when the snapshot comes back with the change. Stages and alerts are
+    /// the window's own, and redraw at once.
+    pub fn act(self: &Rc<Self>, card: &CardView, action: CardAction) {
+        let id = card.id.clone();
         match action {
             CardAction::Pick => self.send(Command::SetMark { id, marked: true }),
             CardAction::Unpick => self.send(Command::SetMark { id, marked: false }),
@@ -199,7 +210,42 @@ impl Ctx {
                 id,
                 until: until(choice, &Local::now()).map(|at| at.with_timezone(&Utc)),
             }),
+            CardAction::Alert(choice) => {
+                let at = Local::now()
+                    + chrono::TimeDelta::from_std(alert::wait(choice)).unwrap_or_default();
+                self.set_alert(
+                    &id,
+                    Alert {
+                        at,
+                        title: card.title.clone(),
+                        source: card.source.clone(),
+                    },
+                );
+            }
+            CardAction::CancelAlert => {
+                self.model.borrow_mut().session.alerts.cancel(&id);
+                self.redraw(true);
+            }
         }
+    }
+
+    /// Sets `alert` on the card `id` and shows it on the card.
+    pub fn set_alert(self: &Rc<Self>, id: &str, alert: Alert) {
+        self.model.borrow_mut().session.alerts.set(id, alert);
+        self.redraw(true);
+    }
+
+    /// Rings the alerts whose time has come: a desktop notification each,
+    /// and the cards no longer say they have one.
+    fn ring_due(self: &Rc<Self>) {
+        let due = self.model.borrow_mut().session.alerts.due(Local::now());
+        if due.is_empty() {
+            return;
+        }
+        for (id, alert) in &due {
+            notify(self, id, alert);
+        }
+        self.redraw(true);
     }
 
     /// Activity on the window is "looking": the daemon flags what changed
@@ -210,6 +256,22 @@ impl Ctx {
             self.send(Command::Look);
         }
     }
+}
+
+/// Sends the desktop notification for `alert`, named after the card so
+/// that an alert set again replaces the earlier notification. Clicking it
+/// brings the window up.
+fn notify(ctx: &Ctx, id: &str, alert: &Alert) {
+    let Some(app) = ctx.window().and_then(|window| window.application()) else {
+        return;
+    };
+    let (summary, body) = notification(alert);
+    let notification = gtk::gio::Notification::new(&summary);
+    notification.set_body(Some(&body));
+    notification.set_icon(&gtk::gio::ThemedIcon::new("alarm-symbolic"));
+    notification.set_priority(gtk::gio::NotificationPriority::High);
+    notification.set_default_action("app.show");
+    app.send_notification(Some(&format!("alert:{id}")), &notification);
 }
 
 /// A label that wraps onto more lines; the page and the dialogs build
@@ -261,6 +323,17 @@ pub fn run(
         .application_id(crate::APP_ID)
         .flags(flags)
         .build();
+    // What a notification's click does: bring the window up.
+    let show = gtk::gio::SimpleAction::new("show", None);
+    show.connect_activate({
+        let app = app.downgrade();
+        move |_, _| {
+            if let Some(app) = app.upgrade() {
+                app.activate();
+            }
+        }
+    });
+    app.add_action(&show);
     app.register(gtk::gio::Cancellable::NONE)
         .context("registering the application")?;
     if app.is_remote() {
@@ -276,6 +349,7 @@ pub fn run(
             state: ViewState::Loading,
             view: view_path.as_deref().map(View::load).unwrap_or_default(),
             tab: Tab::default(),
+            session: Session::default(),
             view_path,
             drawn: None,
             refresh_hold: None,
@@ -556,12 +630,18 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
 }
 
 /// Reads the snapshot now and then every [`POLL_INTERVAL`] while the
-/// window is shown; the weather every [`WEATHER_INTERVAL`].
+/// window is shown; the weather every [`WEATHER_INTERVAL`]. The alerts
+/// are looked at every [`ALERT_TICK`], shown or not.
 fn schedule_polling(ctx: &Rc<Ctx>) {
     ctx.send(Command::Poll);
     repeat(ctx, POLL_INTERVAL, Timer::Poll);
     repeat(ctx, WEATHER_INTERVAL, Timer::Weather);
     repeat(ctx, UPDATE_INTERVAL, Timer::Version);
+    let alerts = ctx.clone();
+    gtk::glib::timeout_add_local(ALERT_TICK, move || {
+        alerts.ring_due();
+        gtk::glib::ControlFlow::Continue
+    });
 }
 
 /// Fires `timer` every `interval`, sending what it asks of the daemon.
@@ -604,7 +684,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
     use crate::Scene;
     let ctx = ctx.clone();
     gtk::glib::timeout_add_local_once(SCENE_AFTER, move || {
-        let ids: Vec<String> = ctx
+        let firsts: Vec<pending_core::PendingCard> = ctx
             .model
             .borrow()
             .state
@@ -616,19 +696,30 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
                     .flat_map(|board| &board.groups)
                     .flat_map(|group| &group.columns)
                     .filter_map(|column| column.cards.first())
-                    .map(|card| card.id.clone())
+                    .cloned()
                     .collect()
             })
             .unwrap_or_default();
+        let ids: Vec<String> = firsts.iter().map(|card| card.id.clone()).collect();
         match scene {
             Scene::Activity | Scene::Light => {
                 let stages = [Stage::Picked, Stage::Doing, Stage::Done];
-                for (id, stage) in ids.into_iter().zip(stages) {
+                for (card, stage) in firsts.iter().zip(stages) {
                     ctx.send(Command::SetMark {
-                        id: id.clone(),
+                        id: card.id.clone(),
                         marked: true,
                     });
-                    ctx.change_view(|view| view.set_stage(&id, stage));
+                    ctx.change_view(|view| view.set_stage(&card.id, stage));
+                    if stage == Stage::Doing {
+                        ctx.set_alert(
+                            &card.id,
+                            Alert {
+                                at: Local::now() + chrono::TimeDelta::hours(1),
+                                title: card.title.clone(),
+                                source: card.source.clone(),
+                            },
+                        );
+                    }
                 }
             }
             Scene::Board | Scene::Settings | Scene::Sources => {

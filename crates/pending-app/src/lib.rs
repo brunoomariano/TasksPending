@@ -2,9 +2,11 @@
 //! API as the only way in.
 
 mod activity;
+mod alert;
 mod backend;
 mod clock;
 mod present;
+mod session;
 mod snooze;
 mod state;
 mod theme;

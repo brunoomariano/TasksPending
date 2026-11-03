@@ -385,6 +385,12 @@ button.link-button:hover {
   font-size: 0.78em;
 }
 
+.card-alert {
+  color: {{text-2}};
+  font-size: 0.78em;
+  font-feature-settings: "tnum";
+}
+
 /* The three dots of a card's menu: visible when the pointer is on the
    card, when focused, or while the menu is open. */
 menubutton.card-menu > button {

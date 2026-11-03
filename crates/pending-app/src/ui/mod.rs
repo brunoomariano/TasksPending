@@ -210,7 +210,7 @@ impl Ctx {
                     self.change_todos(|todos| todos.pick(&id, Some(stage)));
                 }
                 CardAction::Edit => dialogs::show_todo(self, Some(&id)),
-                CardAction::Delete => self.change_todos(|todos| todos.remove(&id)),
+                CardAction::Delete => self.change_session(|session| session.forget_todo(&id)),
                 CardAction::Snooze(_) => {}
                 CardAction::Alert(_) | CardAction::CancelAlert => self.act_on_alert(card, action),
             }
@@ -252,11 +252,17 @@ impl Ctx {
         }
     }
 
-    /// Changes the todos and redraws.
-    pub fn change_todos(self: &Rc<Self>, change: impl FnOnce(&mut Todos) -> bool) {
-        if change(&mut self.model.borrow_mut().session.todos) {
+    /// Changes what lasts as long as the window (todos, alerts) and
+    /// redraws when something did change.
+    pub fn change_session(self: &Rc<Self>, change: impl FnOnce(&mut Session) -> bool) {
+        if change(&mut self.model.borrow_mut().session) {
             self.redraw(true);
         }
+    }
+
+    /// Changes the todos and redraws.
+    pub fn change_todos(self: &Rc<Self>, change: impl FnOnce(&mut Todos) -> bool) {
+        self.change_session(|session| change(&mut session.todos));
     }
 
     /// Sets `alert` on the card `id` and shows it on the card.

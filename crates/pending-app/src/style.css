@@ -357,10 +357,9 @@ button.link-button:hover {
   font-size: 0.78em;
 }
 
-/* The pin and the snooze buttons: visible when the pointer is on the card,
-   when pressed, or when the menu is open. */
-button.mark,
-menubutton.mark > button {
+/* The three dots of a card's menu: visible when the pointer is on the
+   card, when focused, or while the menu is open. */
+menubutton.card-menu > button {
   min-width: 0;
   min-height: 0;
   padding: 3px;
@@ -372,23 +371,15 @@ menubutton.mark > button {
   transition: opacity 120ms ease-out, color 120ms ease-out;
 }
 
-.card:hover button.mark,
-.card:hover menubutton.mark > button,
-button.mark:checked,
-button.mark:focus-visible,
-menubutton.mark > button:checked,
-menubutton.mark > button:focus-visible {
+.card:hover menubutton.card-menu > button,
+menubutton.card-menu > button:checked,
+menubutton.card-menu > button:focus-visible {
   opacity: 1;
 }
 
-button.mark:hover,
-menubutton.mark > button:hover {
+menubutton.card-menu > button:hover,
+menubutton.card-menu > button:checked {
   color: {{text}};
-  background: transparent;
-}
-
-button.mark:checked {
-  color: {{accent}};
   background: transparent;
 }
 
@@ -401,8 +392,8 @@ button.mark:checked {
   animation: dot-in 400ms ease-out;
 }
 
-/* The snooze menu. */
-popover.snooze-menu > contents {
+/* A card's menu. */
+popover.card-menu > contents {
   padding: 6px;
   border: 1px solid {{border}};
   border-radius: 10px;
@@ -410,21 +401,22 @@ popover.snooze-menu > contents {
   box-shadow: 0 8px 24px {{shadow}};
 }
 
-popover.snooze-menu button {
+popover.card-menu modelbutton {
   min-height: 0;
-  padding: 4px 10px;
-  border: 1px solid {{border}};
-  border-radius: 999px;
-  background: {{surface}};
+  padding: 6px 10px;
+  border-radius: 6px;
   color: {{text-2}};
   font-size: 0.85em;
-  transition: color 120ms ease-out, border-color 120ms ease-out, background 120ms ease-out;
+  transition: color 120ms ease-out, background 120ms ease-out;
 }
 
-popover.snooze-menu button:hover {
-  border-color: {{border-strong}};
+popover.card-menu modelbutton:hover {
   color: {{text}};
   background: {{surface-2}};
+}
+
+popover.card-menu modelbutton arrow {
+  color: {{text-3}};
 }
 
 /* Dialogs: sources, settings and snoozed. */

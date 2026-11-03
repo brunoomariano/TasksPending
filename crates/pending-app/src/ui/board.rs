@@ -3,16 +3,16 @@
 
 use std::rc::Rc;
 
-use chrono::{Local, Utc};
 use gtk4 as gtk;
 use gtk4::prelude::*;
 
 use super::hero::show_note;
 use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped};
-use crate::backend::Command;
-use crate::present::{BoardView, CardView, GroupView, Notice, NowItem, StackView, link_note};
-use crate::snooze::{CHOICES, until};
+use crate::present::{
+    BoardView, CardAction, CardView, GroupView, MenuItem, Notice, NowItem, Place, StackView,
+    card_menu, link_note,
+};
 use crate::view::flip;
 
 /// Narrowest a group gets; the board wraps groups onto more rows instead.
@@ -184,7 +184,7 @@ fn now_section(ctx: &Rc<Ctx>, items: &[NowItem]) -> gtk::Box {
         .max_children_per_line(6)
         .build();
     for item in items {
-        let card = card_widget(ctx, &item.card, true);
+        let card = card_widget(ctx, &item.card, Place::Activity);
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         footer.add_css_class("card-source");
         footer.append(&source_icon(ctx, item.icon.as_ref(), size::SMALL));
@@ -297,7 +297,7 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
     }
     let cards = gtk::Box::new(gtk::Orientation::Vertical, 8);
     for card in &stack.cards {
-        cards.append(&card_widget(ctx, card, false));
+        cards.append(&card_widget(ctx, card, Place::Board));
     }
     if let Some(label) = &stack.more_label {
         let more = gtk::Button::builder()
@@ -317,9 +317,9 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
     widget
 }
 
-/// A card: its title (a link when it has one), the snooze and pin buttons,
-/// and two lines of its body with the whole text as a tooltip.
-fn card_widget(ctx: &Rc<Ctx>, card: &CardView, in_now: bool) -> gtk::Box {
+/// A card: its title (a link when it has one), the three-dot menu, and two
+/// lines of its body with the whole text as a tooltip.
+fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
     let widget = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(4)
@@ -331,7 +331,7 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, in_now: bool) -> gtk::Box {
     }
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    if card.changed && !in_now {
+    if card.changed && place == Place::Board {
         header.append(&dot());
     }
     let title = gtk::Label::builder()
@@ -378,40 +378,7 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, in_now: bool) -> gtk::Box {
     }
     header.append(&title);
 
-    let actions = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(2)
-        .valign(gtk::Align::Start)
-        .build();
-    if !in_now {
-        actions.append(&snooze_button(ctx, &card.id));
-    }
-    let mark = gtk::ToggleButton::builder()
-        .icon_name("view-pin-symbolic")
-        .active(card.marked)
-        .tooltip_text(if card.marked {
-            "Unmark as in progress"
-        } else {
-            "Mark as in progress"
-        })
-        .build();
-    mark.add_css_class("mark");
-    {
-        let ctx = ctx.clone();
-        let id = card.id.clone();
-        mark.connect_clicked(move |button| {
-            // The snapshot holds the marks: ask, then read it again. The
-            // button stays off until the page redraws, so a second click
-            // cannot send the same change twice.
-            button.set_sensitive(false);
-            ctx.send(Command::SetMark {
-                id: id.clone(),
-                marked: button.is_active(),
-            });
-        });
-    }
-    actions.append(&mark);
-    header.append(&actions);
+    header.append(&menu_button(ctx, card, place));
     widget.append(&header);
 
     if !card.body.is_empty() {
@@ -424,38 +391,45 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, in_now: bool) -> gtk::Box {
     widget
 }
 
-/// The moon button with the snooze choices in a popover.
-fn snooze_button(ctx: &Rc<Ctx>, id: &str) -> gtk::MenuButton {
-    let choices = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let popover = gtk::Popover::builder()
-        .child(&choices)
-        .has_arrow(false)
-        .build();
-    popover.add_css_class("snooze-menu");
-    for (choice, label) in CHOICES {
-        let button = gtk::Button::with_label(label);
+/// The three dots at a card's corner, with the menu of what can be done to
+/// it. Each entry is an action of the button's own group, so the popover
+/// finds them whatever card the button is on.
+fn menu_button(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::MenuButton {
+    let model = gtk::gio::Menu::new();
+    let actions = gtk::gio::SimpleActionGroup::new();
+    let mut entries = 0;
+    let mut add = |menu: &gtk::gio::Menu, label: &str, action: CardAction| {
+        let name = format!("item-{entries}");
+        entries += 1;
+        let simple = gtk::gio::SimpleAction::new(&name, None);
         let ctx = ctx.clone();
-        let id = id.to_owned();
-        // Weakly: the button lives inside the popover, and a strong
-        // reference would keep both alive after the page is rebuilt.
-        let popover = popover.downgrade();
-        button.connect_clicked(move |_| {
-            if let Some(popover) = popover.upgrade() {
-                popover.popdown();
+        let id = card.id.clone();
+        simple.connect_activate(move |_, _| ctx.act(&id, action));
+        actions.add_action(&simple);
+        menu.append(Some(label), Some(&format!("card.{name}")));
+    };
+    for item in card_menu(card, place) {
+        match item {
+            MenuItem::Action { label, action } => add(&model, &label, action),
+            MenuItem::Submenu { label, items } => {
+                let submenu = gtk::gio::Menu::new();
+                for (label, action) in items {
+                    add(&submenu, &label, action);
+                }
+                model.append_submenu(Some(&label), &submenu);
             }
-            ctx.send(Command::Snooze {
-                id: id.clone(),
-                until: until(choice, &Local::now()).map(|at| at.with_timezone(&Utc)),
-            });
-        });
-        choices.append(&button);
+        }
     }
-    let menu = gtk::MenuButton::builder()
-        .icon_name("weather-clear-night-symbolic")
+    let popover = gtk::PopoverMenu::from_model(Some(&model));
+    popover.add_css_class("card-menu");
+    popover.set_has_arrow(false);
+    let button = gtk::MenuButton::builder()
+        .icon_name("view-more-symbolic")
         .popover(&popover)
-        .tooltip_text("Snooze")
+        .tooltip_text("Card menu")
         .valign(gtk::Align::Start)
         .build();
-    menu.add_css_class("mark");
-    menu
+    button.add_css_class("card-menu");
+    button.insert_action_group("card", Some(&actions));
+    button
 }

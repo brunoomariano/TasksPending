@@ -24,6 +24,9 @@ pub struct Palette {
     pub text_2: Cow<'static, str>,
     pub text_3: Cow<'static, str>,
     pub accent: Cow<'static, str>,
+    /// The accent as text: the accent itself, unless a theme's is too
+    /// faint to read on the window's grounds.
+    pub accent_ink: Cow<'static, str>,
     /// The accent, lightened for a hover.
     pub accent_hover: Cow<'static, str>,
     /// The accent at low alpha, for tinted surfaces.
@@ -41,7 +44,7 @@ pub struct Palette {
 
 impl Palette {
     /// Each colour under the name the stylesheet gives it.
-    pub fn tokens(&self) -> [(&'static str, &str); 17] {
+    pub fn tokens(&self) -> [(&'static str, &str); 18] {
         [
             ("bg", &self.bg),
             ("surface", &self.surface),
@@ -52,6 +55,7 @@ impl Palette {
             ("text-2", &self.text_2),
             ("text-3", &self.text_3),
             ("accent", &self.accent),
+            ("accent-ink", &self.accent_ink),
             ("accent-hover", &self.accent_hover),
             ("accent-soft", &self.accent_soft),
             ("on-accent", &self.on_accent),
@@ -78,6 +82,7 @@ pub const DARK: Palette = Palette {
     text_2: fixed("#a4abb8"),
     text_3: fixed("#6d7482"),
     accent: fixed("#7c8cff"),
+    accent_ink: fixed("#7c8cff"),
     accent_hover: fixed("#8c9aff"),
     accent_soft: fixed("rgba(124, 140, 255, 0.14)"),
     on_accent: fixed("#ffffff"),
@@ -98,6 +103,7 @@ pub const LIGHT: Palette = Palette {
     text_2: fixed("#555d6b"),
     text_3: fixed("#8a91a0"),
     accent: fixed("#4f5ee8"),
+    accent_ink: fixed("#4f5ee8"),
     accent_hover: fixed("#6170ee"),
     accent_soft: fixed("rgba(79, 94, 232, 0.10)"),
     on_accent: fixed("#ffffff"),
@@ -268,7 +274,7 @@ struct Mix {
     own: Palette,
 }
 
-const DARK_MIX: Mix = Mix {
+static DARK_MIX: Mix = Mix {
     surface: 0.039,
     surface_2: 0.076,
     border: 0.125,
@@ -282,7 +288,7 @@ const DARK_MIX: Mix = Mix {
     own: DARK,
 };
 
-const LIGHT_MIX: Mix = Mix {
+static LIGHT_MIX: Mix = Mix {
     surface: 0.945,
     surface_2: 0.016,
     border: 0.069,
@@ -324,34 +330,214 @@ pub fn parse_omarchy(colors: &str) -> Result<OmarchyTheme, String> {
         _ => !bg.is_light(),
     };
     let mix = if dark { &DARK_MIX } else { &LIGHT_MIX };
-    let state = |key: &str, own: &Cow<'static, str>| -> Result<Cow<'static, str>, String> {
-        Ok(colour(key)?.map_or_else(|| own.clone(), |colour| colour.hex().into()))
+    // A state without hue cannot say what it means, and a grey one reads
+    // as switched off: it is drawn in the text colour instead.
+    let state = |key: &str, own: &str| -> Result<Rgb, String> {
+        Ok(match colour(key)? {
+            Some(state) if state.saturation() > HUE_FLOOR => state,
+            Some(_) => text,
+            None => own_colour(own),
+        })
     };
-    let surface_to = if dark { text } else { Rgb::WHITE };
-    let palette = Palette {
-        bg: bg.hex().into(),
-        surface: bg.mix(surface_to, mix.surface).hex().into(),
-        surface_2: bg.mix(text, mix.surface_2).hex().into(),
-        border: bg.mix(text, mix.border).hex().into(),
-        border_strong: bg.mix(text, mix.border_strong).hex().into(),
-        text: text.hex().into(),
-        text_2: text.mix(bg, mix.text_2).hex().into(),
-        text_3: text.mix(bg, mix.text_3).hex().into(),
-        accent: accent.hex().into(),
-        accent_hover: accent.mix(Rgb::WHITE, mix.accent_hover).hex().into(),
-        accent_soft: accent.rgba(mix.accent_soft_alpha).into(),
-        on_accent: on(accent, if dark { bg } else { text }).hex().into(),
-        ok: state("green", &mix.own.ok)?,
-        warn: state("yellow", &mix.own.warn)?,
-        danger: state("red", &mix.own.danger)?,
-        card_hover: bg.mix(text, mix.card_hover).hex().into(),
-        shadow: fixed(mix.shadow),
-    };
+    let states = [
+        state("green", &mix.own.ok)?,
+        state("yellow", &mix.own.warn)?,
+        state("red", &mix.own.danger)?,
+    ];
     Ok(OmarchyTheme {
         name: None,
         dark,
-        palette,
+        palette: Mixed::new(dark, bg, text, accent, states)
+            .readable()
+            .palette(),
     })
+}
+
+/// The contrast every colour written as text keeps with what it is
+/// written on: WCAG AA for text.
+const READS: f64 = 4.5;
+
+/// The saturation under which a theme's state colour is taken for a grey.
+const HUE_FLOOR: f64 = 0.2;
+
+/// How much of a state its chip is tinted with.
+const CHIP_TINT: f64 = 0.10;
+
+/// How much of its yellow or red a stale or unavailable notice is tinted
+/// with.
+const NOTICE_TINT: f64 = 0.08;
+
+/// `ink` walked towards `toward` only as far as it takes to `read`;
+/// walking towards white or black keeps the hue. `toward` itself when
+/// even that does not read.
+fn walked(ink: Rgb, toward: Rgb, read: impl Fn(Rgb) -> bool) -> Rgb {
+    if read(ink) {
+        return ink;
+    }
+    let (mut short, mut far) = (0.0, 1.0);
+    for _ in 0..16 {
+        let half = (short + far) / 2.0;
+        if read(ink.mix(toward, half)) {
+            far = half;
+        } else {
+            short = half;
+        }
+    }
+    ink.mix(toward, far)
+}
+
+/// Whether `ink` reads on every one of `grounds`.
+fn reads_on(ink: Rgb, grounds: &[Rgb]) -> bool {
+    grounds.iter().all(|ground| ink.contrast(*ground) >= READS)
+}
+
+/// One of the window's own colours, which are all written `#rrggbb`.
+fn own_colour(colour: &str) -> Rgb {
+    Rgb::parse(colour).expect("the window's own colours are colours")
+}
+
+/// A theme's colours in the window's own proportions.
+#[derive(Clone, Copy, Debug)]
+struct Mixed {
+    dark: bool,
+    bg: Rgb,
+    surface: Rgb,
+    surface_2: Rgb,
+    border: Rgb,
+    border_strong: Rgb,
+    card_hover: Rgb,
+    text: Rgb,
+    text_2: Rgb,
+    text_3: Rgb,
+    accent: Rgb,
+    accent_ink: Rgb,
+    on_accent: Rgb,
+    ok: Rgb,
+    warn: Rgb,
+    danger: Rgb,
+}
+
+impl Mixed {
+    /// The palette mixed from a theme's background, text and accent, with
+    /// its green, yellow and red as the states.
+    fn new(dark: bool, bg: Rgb, text: Rgb, accent: Rgb, [ok, warn, danger]: [Rgb; 3]) -> Mixed {
+        let mix = Mixed::proportions(dark);
+        let surface_to = if dark { text } else { Rgb::WHITE };
+        Mixed {
+            dark,
+            bg,
+            surface: bg.mix(surface_to, mix.surface),
+            surface_2: bg.mix(text, mix.surface_2),
+            border: bg.mix(text, mix.border),
+            border_strong: bg.mix(text, mix.border_strong),
+            card_hover: bg.mix(text, mix.card_hover),
+            text,
+            text_2: text.mix(bg, mix.text_2),
+            text_3: text.mix(bg, mix.text_3),
+            accent,
+            accent_ink: accent,
+            on_accent: on(accent, if dark { bg } else { text }),
+            ok,
+            warn,
+            danger,
+        }
+    }
+
+    /// The same palette with every colour written as text made to read
+    /// on the grounds the stylesheet writes it on: the states first, since
+    /// notices are tinted with them, then the accent as text, the text on
+    /// the accent and the texts. The second text keeps its place between
+    /// the text and the third, so the three keep their order.
+    fn readable(self) -> Mixed {
+        // Past this luminance, black stands out more on the background
+        // than white does: the way a colour can be made to read, whatever
+        // the theme says it is.
+        let toward = if self.bg.luminance() > 0.179 {
+            Rgb::BLACK
+        } else {
+            Rgb::WHITE
+        };
+        let soft = Mixed::proportions(self.dark).accent_soft_alpha;
+        // The page, a group, a card and a card under the pointer.
+        let plain = [self.bg, self.surface, self.surface_2, self.card_hover];
+        // A state is also written on its chip, on the page.
+        let state = |state: Rgb| {
+            walked(state, toward, |ink| {
+                reads_on(ink, &plain) && reads_on(ink, &[self.bg.mix(ink, CHIP_TINT)])
+            })
+        };
+        let [ok, warn, danger] = [self.ok, self.warn, self.danger].map(state);
+        // The accent is also written on a checked tab or filter.
+        let checked = self.bg.mix(self.accent, soft);
+        let accent_ink = walked(self.accent, toward, |ink| {
+            reads_on(ink, &plain) && reads_on(ink, &[checked])
+        });
+        let on_accent = if self.on_accent.contrast(self.accent) >= READS {
+            self.on_accent
+        } else {
+            let dark = if self.dark { self.bg } else { self.text };
+            let deeper = walked(dark, Rgb::BLACK, |ink| reads_on(ink, &[self.accent]));
+            if self.accent.contrast(Rgb::WHITE) >= self.accent.contrast(deeper) {
+                Rgb::WHITE
+            } else {
+                deeper
+            }
+        };
+        // The texts are also written on a marked card, on a count and on
+        // a stale or unavailable notice.
+        let mut texts = plain.to_vec();
+        texts.extend([
+            self.surface_2.mix(self.accent, soft),
+            self.border,
+            self.surface.mix(warn, NOTICE_TINT),
+            self.surface.mix(danger, NOTICE_TINT),
+        ]);
+        let text_ink = |ink: Rgb| walked(ink, toward, |ink| reads_on(ink, &texts));
+        let text = text_ink(self.text);
+        let text_3 = text_ink(self.text_3);
+        let mix = Mixed::proportions(self.dark);
+        let text_2 = text_ink(text.mix(text_3, mix.text_2 / mix.text_3));
+        Mixed {
+            text,
+            text_2,
+            text_3,
+            accent_ink,
+            on_accent,
+            ok,
+            warn,
+            danger,
+            ..self
+        }
+    }
+
+    fn proportions(dark: bool) -> &'static Mix {
+        if dark { &DARK_MIX } else { &LIGHT_MIX }
+    }
+
+    fn palette(&self) -> Palette {
+        let mix = Mixed::proportions(self.dark);
+        let hex = |colour: Rgb| -> Cow<'static, str> { colour.hex().into() };
+        Palette {
+            bg: hex(self.bg),
+            surface: hex(self.surface),
+            surface_2: hex(self.surface_2),
+            border: hex(self.border),
+            border_strong: hex(self.border_strong),
+            text: hex(self.text),
+            text_2: hex(self.text_2),
+            text_3: hex(self.text_3),
+            accent: hex(self.accent),
+            accent_ink: hex(self.accent_ink),
+            accent_hover: hex(self.accent.mix(Rgb::WHITE, mix.accent_hover)),
+            accent_soft: self.accent.rgba(mix.accent_soft_alpha).into(),
+            on_accent: hex(self.on_accent),
+            ok: hex(self.ok),
+            warn: hex(self.warn),
+            danger: hex(self.danger),
+            card_hover: hex(self.card_hover),
+            shadow: fixed(mix.shadow),
+        }
+    }
 }
 
 /// The text drawn on `accent`: white or the theme's `dark` colour,
@@ -370,6 +556,7 @@ struct Rgb([u8; 3]);
 
 impl Rgb {
     const WHITE: Rgb = Rgb([255; 3]);
+    const BLACK: Rgb = Rgb([0; 3]);
 
     /// `#rgb` or `#rrggbb`, or `#rrggbbaa` with its alpha left out.
     fn parse(text: &str) -> Option<Rgb> {
@@ -411,6 +598,17 @@ impl Rgb {
     fn is_light(self) -> bool {
         let [r, g, b] = self.0.map(f64::from);
         0.2126 * r + 0.7152 * g + 0.0722 * b > 127.5
+    }
+
+    /// How much colour it has, from 0 (a grey) to 1: its HSV saturation.
+    fn saturation(self) -> f64 {
+        let max = self.0.into_iter().max().unwrap_or(0);
+        let min = self.0.into_iter().min().unwrap_or(0);
+        if max == 0 {
+            0.0
+        } else {
+            f64::from(max - min) / f64::from(max)
+        }
     }
 
     /// Its relative luminance, as WCAG defines it.
@@ -492,17 +690,6 @@ mod tests {
         assert_eq!(palette(false, None), LIGHT);
     }
 
-    /// `colors.toml` with the main colours of `palette`, as Omarchy writes
-    /// one.
-    fn colors_of(mode: &str, palette: &Palette) -> String {
-        format!(
-            "# A theme\nmode = \"{mode}\"\n\naccent = \"{}\"\nbackground = \"{}\"\n\
-             foreground = \"{}\"\ngreen = \"{}\"\nyellow = \"{}\"\nred = \"{}\"\n\
-             muted = \"#53685B\"\n",
-            palette.accent, palette.bg, palette.text, palette.ok, palette.warn, palette.danger
-        )
-    }
-
     fn light_colors() -> String {
         "background = \"#faf4ed\"\nforeground = \"#575279\"\naccent = \"#d7827e\"\n".to_owned()
     }
@@ -518,13 +705,21 @@ mod tests {
     /// 255 (the window's own greys lean a little to blue, mixes do not).
     #[test]
     fn mixes_omarchy_colours_in_the_house_proportions() {
-        for (mode, house) in [("dark", DARK), ("light", LIGHT)] {
-            let theme = parse_omarchy(&colors_of(mode, &house)).unwrap();
-            assert_eq!(theme.dark, mode == "dark");
+        for (dark, house) in [(true, DARK), (false, LIGHT)] {
+            let colour = |colour: &str| Rgb::parse(colour).unwrap();
+            let states = [&house.ok, &house.warn, &house.danger].map(|state| colour(state));
+            let palette = Mixed::new(
+                dark,
+                colour(&house.bg),
+                colour(&house.text),
+                colour(&house.accent),
+                states,
+            )
+            .palette();
+            let mode = if dark { "dark" } else { "light" };
             // The window's own text on its accent is white by choice;
             // a theme's is whatever stands out more.
-            for ((name, mixed), (_, own)) in theme.palette.tokens().into_iter().zip(house.tokens())
-            {
+            for ((name, mixed), (_, own)) in palette.tokens().into_iter().zip(house.tokens()) {
                 if name == "on-accent" {
                     continue;
                 }
@@ -587,12 +782,16 @@ mod tests {
 
     /// Without `mode`, the background tells: a light one makes a light
     /// theme. A short `#rgb` colour is read; the states the theme leaves
-    /// out are the window's own.
+    /// out are the window's own, deepened where the theme's ground needs
+    /// it (the window's own light green is under 4.5 to 1 on white).
     #[test]
     fn works_out_what_a_theme_leaves_out() {
         let light = parse_omarchy(&light_colors()).unwrap();
         assert!(!light.dark);
-        assert_eq!(light.palette.ok, LIGHT.ok);
+        let (own, drawn) = (colour(&LIGHT.ok), colour(&light.palette.ok));
+        assert!(own.contrast(colour(&light.palette.bg)) < 4.5);
+        assert!(drawn.contrast(colour(&light.palette.bg)) >= 4.5);
+        assert!((hue(own) - hue(drawn)).abs() <= 6.0, "{drawn:?}");
         let short =
             parse_omarchy("background = \"#111\"\nforeground = \"#eee\"\naccent = \"#7aa2f7\"")
                 .unwrap();
@@ -618,6 +817,239 @@ mod tests {
             "x".repeat(10_000)
         );
         assert!(parse_omarchy(&long).unwrap_err().len() < 100);
+    }
+
+    /// Contrast is measured the way WCAG measures it.
+    #[test]
+    fn measures_contrast_as_wcag_does() {
+        let black = Rgb([0; 3]);
+        assert!((Rgb::WHITE.contrast(black) - 21.0).abs() < 1e-9);
+        assert!((Rgb::WHITE.contrast(Rgb::WHITE) - 1.0).abs() < 1e-9);
+        let grey = Rgb::parse("#777777").unwrap();
+        assert!((grey.contrast(Rgb::WHITE) - 4.48).abs() < 0.01);
+    }
+
+    /// Themes from Omarchy's own set that leave some of their colours
+    /// hard to read on the window's grounds, as `colors.toml` has them:
+    /// mode, background, foreground, accent, green, yellow and red.
+    const HARD: [[&str; 7]; 9] = [
+        [
+            "light", "#faf4ed", "#575279", "#56949f", "#286983", "#ea9d34", "#b4637a",
+        ],
+        [
+            "light", "#eff1f5", "#4c4f69", "#1e66f5", "#40a02b", "#df8e1d", "#d20f39",
+        ],
+        [
+            "light", "#FFFCF0", "#100F0F", "#205EA6", "#879A39", "#D0A215", "#D14D41",
+        ],
+        [
+            "dark", "#222222", "#c2c2b0", "#78824b", "#5f875f", "#b36d43", "#685742",
+        ],
+        [
+            "dark", "#2e3440", "#d8dee9", "#81a1c1", "#a3be8c", "#ebcb8b", "#bf616a",
+        ],
+        [
+            "dark", "#1f1f28", "#dcd7ba", "#dcd7ba", "#76946a", "#c0a36e", "#c34043",
+        ],
+        [
+            "dark", "#0c0b0c", "#FAFCFB", "#b59790", "#87a9b0", "#6B5E73", "#c38b7b",
+        ],
+        [
+            "dark", "#101315", "#cacccc", "#798186", "#9fa5a9", "#d9dbdc", "#565d60",
+        ],
+        [
+            "light", "#ffffff", "#000000", "#6e6e6e", "#3a3a3a", "#4a4a4a", "#2a2a2a",
+        ],
+    ];
+
+    fn hard_theme([mode, bg, fg, accent, green, yellow, red]: [&str; 7]) -> OmarchyTheme {
+        parse_omarchy(&format!(
+            "mode = \"{mode}\"\nbackground = \"{bg}\"\nforeground = \"{fg}\"\n\
+             accent = \"{accent}\"\ngreen = \"{green}\"\nyellow = \"{yellow}\"\n\
+             red = \"{red}\"\n"
+        ))
+        .unwrap()
+    }
+
+    fn colour(token: &str) -> Rgb {
+        Rgb::parse(token).unwrap()
+    }
+
+    /// The grounds the stylesheet writes the texts on: the page, a group,
+    /// a card, a card under the pointer and a marked one, a count and a
+    /// stale or unavailable notice.
+    fn grounds(theme: &OmarchyTheme) -> Vec<Rgb> {
+        let palette = &theme.palette;
+        let soft = if theme.dark { 0.14 } else { 0.10 };
+        let card = colour(&palette.surface_2);
+        let group = colour(&palette.surface);
+        vec![
+            colour(&palette.bg),
+            group,
+            card,
+            colour(&palette.card_hover),
+            card.mix(colour(&palette.accent), soft),
+            colour(&palette.border),
+            group.mix(colour(&palette.warn), 0.08),
+            group.mix(colour(&palette.danger), 0.08),
+        ]
+    }
+
+    fn worst(ink: Rgb, grounds: &[Rgb]) -> f64 {
+        grounds
+            .iter()
+            .map(|ground| ink.contrast(*ground))
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// Everything the window writes in a theme's colours reads at 4.5 to 1
+    /// (WCAG AA) on every ground it is written on: the texts on all of
+    /// theirs; the accent as text on the page, a group, a card, a card
+    /// under the pointer and a checked tab; each state there and on its
+    /// own chip (a tenth of it over the page); and the text on the accent.
+    #[test]
+    fn writes_every_theme_colour_so_it_reads() {
+        for colours in HARD {
+            let theme = hard_theme(colours);
+            let palette = &theme.palette;
+            let what = |name: &str| format!("{name} in {}", colours[1]);
+            for (name, ink) in [
+                ("text", &palette.text),
+                ("text-2", &palette.text_2),
+                ("text-3", &palette.text_3),
+            ] {
+                assert!(
+                    worst(colour(ink), &grounds(&theme)) >= 4.5,
+                    "{}",
+                    what(name)
+                );
+            }
+            let bg = colour(&palette.bg);
+            let accent = colour(&palette.accent);
+            let mut plain = grounds(&theme)[..4].to_vec();
+            let soft = if theme.dark { 0.14 } else { 0.10 };
+            let checked = bg.mix(accent, soft);
+            let ink = colour(&palette.accent_ink);
+            assert!(worst(ink, &plain) >= 4.5, "{}", what("accent-ink"));
+            assert!(
+                ink.contrast(checked) >= 4.5,
+                "{}",
+                what("accent-ink, checked")
+            );
+            for (name, state) in [
+                ("ok", &palette.ok),
+                ("warn", &palette.warn),
+                ("danger", &palette.danger),
+            ] {
+                let state = colour(state);
+                plain.push(bg.mix(state, 0.10));
+                assert!(worst(state, &plain) >= 4.5, "{}", what(name));
+                plain.pop();
+            }
+            assert!(
+                colour(&palette.on_accent).contrast(accent) >= 4.5,
+                "{}",
+                what("on-accent")
+            );
+        }
+    }
+
+    /// The hue (0 to 360) of a colour with one.
+    fn hue(Rgb([r, g, b]): Rgb) -> f64 {
+        let [r, g, b] = [r, g, b].map(f64::from);
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let turn = if max == r {
+            ((g - b) / (max - min)).rem_euclid(6.0)
+        } else if max == g {
+            (b - r) / (max - min) + 2.0
+        } else {
+            (r - g) / (max - min) + 4.0
+        };
+        turn * 60.0
+    }
+
+    /// A colour made easier to read keeps its hue, and one that already
+    /// reads is drawn as it is.
+    #[test]
+    fn keeps_the_hue_of_what_it_makes_readable() {
+        for colours in HARD {
+            let theme = hard_theme(colours);
+            let palette = &theme.palette;
+            for (given, drawn) in [
+                (colours[3], &palette.accent_ink),
+                (colours[4], &palette.ok),
+                (colours[5], &palette.warn),
+                (colours[6], &palette.danger),
+            ] {
+                let (given, drawn) = (colour(given), colour(drawn));
+                if drawn == colour(&palette.text) || given.saturation() <= 0.2 {
+                    continue;
+                }
+                let gap = (hue(given) - hue(drawn)).abs();
+                assert!(gap.min(360.0 - gap) <= 6.0, "{given:?} became {drawn:?}");
+            }
+        }
+        let nord = hard_theme(HARD[4]);
+        assert_eq!(nord.palette.ok, "#a3be8c");
+        assert_eq!(nord.palette.warn, "#ebcb8b");
+        let sample = parse_omarchy(SAMPLE).unwrap();
+        assert_eq!(sample.palette.accent_ink, sample.palette.accent);
+    }
+
+    /// The texts keep their order on every ground: the text stands out
+    /// most, the second text less, the third least.
+    #[test]
+    fn keeps_the_texts_in_their_order() {
+        for colours in HARD.into_iter().chain([[
+            "dark", "#1d1a17", "#e8dcc8", "#e3a15c", "#9cbf6d", "#e6c15a", "#e06c5f",
+        ]]) {
+            let theme = hard_theme(colours);
+            let palette = &theme.palette;
+            for ground in grounds(&theme) {
+                let [text, second, third] = [&palette.text, &palette.text_2, &palette.text_3]
+                    .map(|ink| colour(ink).contrast(ground));
+                assert!(
+                    text >= second && second > third,
+                    "{} on {ground:?}",
+                    colours[1]
+                );
+            }
+        }
+    }
+
+    /// A colour is made easier to read towards whichever of white or
+    /// black can stand out on the theme's background, even from a theme
+    /// that says it is dark over a light one.
+    #[test]
+    fn makes_colours_readable_away_from_the_background() {
+        let theme = hard_theme([
+            "dark", "#f4f1ea", "#3c3a36", "#c7a26a", "#9fbf7f", "#e0c070", "#e09080",
+        ]);
+        assert!(theme.dark);
+        let palette = &theme.palette;
+        for ink in [&palette.text_3, &palette.accent_ink, &palette.warn] {
+            assert!(colour(ink).contrast(colour(&palette.bg)) >= 4.5, "{ink}");
+        }
+    }
+
+    /// A state the theme draws without hue (a grey green, yellow or red)
+    /// cannot say what it means, and a grey one reads as switched off: it
+    /// is drawn in the theme's text colour. One with hue keeps its own.
+    #[test]
+    fn draws_a_state_without_hue_in_the_text_colour() {
+        let solitude = hard_theme(HARD[7]);
+        for state in [
+            &solitude.palette.ok,
+            &solitude.palette.warn,
+            &solitude.palette.danger,
+        ] {
+            assert_eq!(state, &solitude.palette.text);
+        }
+        let white = hard_theme(HARD[8]);
+        assert_eq!(white.palette.danger, white.palette.text);
+        let horizon = hard_theme(HARD[6]);
+        assert_eq!(horizon.palette.warn, horizon.palette.text);
+        assert_eq!(horizon.palette.ok, "#87a9b0");
     }
 
     /// Omarchy 4 keeps the theme in use under the state directory, and

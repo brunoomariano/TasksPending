@@ -16,13 +16,13 @@ Every picture here comes from `tasks-pending sandbox`, which shows simulated car
 - **One menu per card.** Every action sits behind a three-dot button on the card: send to Activity, move between stages, snooze, alert, and for a todo edit and delete.
 - **Snooze.** Hide a card for an hour, until tomorrow, until next week, or until it changes. It always comes back when the item changes, and nothing is written to the provider.
 - **Alerts.** Ask to be alerted about a card in 15 minutes, 30 minutes, an hour or three hours: when the time comes, a desktop notification names it, and clicking it brings the window up.
-- **Todos.** Write down something that comes from no source: it is a card like the others, in a Todo group on the Board, and it lasts only while the window is open.
+- **Todos.** Write down something that comes from no source: **New** in the Picked column of the Activity puts it there, it moves through the stages like the other cards, and it lasts only while the window is open.
 - **What changed.** A small dot marks the cards that changed since you last looked.
 - **Omarchy's theme.** The window has its own palette, dark unless the system asks for light. On Omarchy, Settings can switch it to the theme Omarchy applied, and it changes with it.
 - **Local only.** The daemon listens on this machine, reads tokens from the environment, and keeps your marks and snoozes in a state folder. The window reads it over loopback; it reaches the network itself only for the sources' logos, and for the providers when no daemon is running and it runs the sources in its own process.
 
 <p align="center">
-  <img src="docs/assets/tasks-pending-board.png" alt="The Board tab: the Todo group first, then one group of stacks per source, with the picked cards highlighted" width="49%">
+  <img src="docs/assets/tasks-pending-board.png" alt="The Board tab: one group of stacks per source, with the picked cards highlighted" width="49%">
   <img src="docs/assets/tasks-pending-todo.png" alt="The New todo dialog: a title, optional details, and the note that todos are kept only while the window is open" width="49%">
 </p>
 

@@ -4,7 +4,7 @@ name: TasksPending window
 description: A quiet board of pending work for a Linux desktop, drawn with GTK4 CSS from the app's own palette, or from Omarchy's theme when asked.
 colors:
   primary: "#7c8cff"
-  on-primary: "#ffffff"
+  on-primary: "#0e0f12"
   primary-container: "rgba(124, 140, 255, 0.14)"
   background: "#0e0f12"
   surface: "#16181d"
@@ -13,8 +13,8 @@ colors:
   outline: "#262a31"
   outline-variant: "#343a43"
   on-surface: "#e7e9ee"
-  on-surface-variant: "#a4abb8"
-  on-surface-muted: "#6d7482"
+  on-surface-variant: "#babdc5"
+  on-surface-muted: "#9196a0"
   success: "#4ccb8f"
   warning: "#f2c14e"
   error: "#f2667a"
@@ -103,13 +103,15 @@ Dark, the default:
 - Card (#1c1f25): a card, a badge, a hovered control: two steps up.
 - Card hover (#23272e): a card under the pointer.
 - Border (#262a31): every 1px line; Strong border (#343a43) under the pointer.
-- Text (#e7e9ee), Text 2 (#a4abb8) for bodies and stack names, Text 3 (#6d7482) for captions and idle controls.
-- Accent (#7c8cff): the clock, the changed dot, the picked card, the tab that is open, the primary button, focus rings. Nowhere else.
+- Text (#e7e9ee), Text 2 (#babdc5) for bodies and stack names, Text 3 (#9196a0) for captions and idle controls.
+- Accent (#7c8cff): the clock, the changed dot, the picked card, the tab that is open, the primary button, focus rings. Nowhere else. Text on it is the page colour (#0e0f12), and the count on the open tab is a lighter accent (#8b9aff).
 - OK (#4ccb8f), Warning (#f2c14e), Danger (#f2667a): source status, attention on the Sources button, notices. Cards never carry them.
 
-Light, when the system asks: Page (#f6f7f9), Group (#ffffff), Card (#f1f3f6), Card hover (#e8ebf0), Border (#e4e7ec), Strong border (#d3d8e0), Text (#15181e), Text 2 (#555d6b), Text 3 (#8a91a0), Accent (#4f5ee8), OK (#16a36a), Warning (#c98a06), Danger (#d9364e).
+Light, when the system asks: Page (#f6f7f9), Group (#ffffff), Card (#f1f3f6), Card hover (#e8ebf0), Border (#e4e7ec), Strong border (#d3d8e0), Text (#15181e), Text 2 (#40444d), Text 3 (#626671), Accent (#4f5ee8; #4c5ade as text, #404cbb for the count on the open tab), white on it, OK (#10774e), Warning (#8d6004), Danger (#c03045).
 
-Omarchy, when chosen in Settings: the theme Omarchy applied, dark or light as its `colors.toml` says. Its background, text and accent are used as they are, and its green, yellow and red for the states (the window's own when it has none). The other colours are mixed from those in the same proportions as the palettes above: the surfaces and borders from the background towards the text (a light theme's group surface towards white), Text 2 and Text 3 from the text towards the background, the accent hover towards white. Text on the accent is white or the theme's dark colour (its background, or its text on a light theme), whichever has more contrast with the accent. Whatever is written in the theme's colours then reads at 4.5:1 (WCAG AA) on the grounds it is written on, as flea does it: a colour short of that is walked towards white (black on a light theme), which keeps its hue, only as far as it takes. That covers the three texts on the page, groups, cards (hovered and marked), counts and notices, the accent as text on those and on a checked tab (the accent as a fill and a frame stays as the theme has it), each state there and on its own chip, and the text on the accent. Text 2 keeps its place between Text and Text 3, so the three keep their order. A state the theme draws without hue (saturation of 0.2 or less, as on Omarchy's white, Vantablack and Solitude) cannot say what it means and, in grey, reads as switched off, so it is drawn in the theme's text colour. The window changes with the theme.
+Both palettes keep everything written as text at 4.5:1 (WCAG AA) on the grounds it is written on, by the rule the Omarchy paragraph below describes; the tests hold them to it, and the rule finds nothing left to change in them.
+
+Omarchy, when chosen in Settings: the theme Omarchy applied, dark or light as its `colors.toml` says. Its background, text and accent are used as they are, and its green, yellow and red for the states (the window's own when it has none). The other colours are mixed from those in the same proportions as the palettes above: the surfaces and borders from the background towards the text (a light theme's group surface towards white), Text 2 and Text 3 from the text towards the background, the accent hover towards white. Text on the accent is white or the theme's dark colour (its background, or its text on a light theme), whichever has more contrast with the accent. Whatever is written in the theme's colours then reads at 4.5:1 (WCAG AA) on the grounds it is written on, as flea does it: a colour short of that is walked towards white (black on a light theme), which keeps its hue, only as far as it takes. That covers the three texts on the page, groups, cards (hovered and marked), counts and notices, the accent as text on those and on a checked tab (the accent as a fill and a frame stays as the theme has it), the count on a checked tab on its own chip (it alone goes further, so the accent elsewhere is not washed out), each state there and on its own chip, and the text on the accent. Text 2 keeps its place between Text and Text 3, so the three keep their order. A state the theme draws without hue (saturation of 0.2 or less, as on Omarchy's white, Vantablack and Solitude) cannot say what it means and, in grey, reads as switched off, so it is drawn in the theme's text colour. The window changes with the theme.
 
 Borders carry the structure; shadows only lift the card menu and the dialogs, and never blur anything behind them.
 

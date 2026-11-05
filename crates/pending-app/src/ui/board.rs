@@ -113,19 +113,14 @@ fn empty_state(message: &str) -> gtk::Box {
     state
 }
 
-/// The source's logo in a small tile, for group headers; the todos get a
-/// check box instead of a logo.
-fn source_tile(ctx: &Rc<Ctx>, icon: Option<&pending_core::Icon>, local: bool) -> gtk::Box {
+/// The source's logo in a small tile, for group headers.
+fn source_tile(ctx: &Rc<Ctx>, icon: Option<&pending_core::Icon>) -> gtk::Box {
     let tile = gtk::Box::builder()
         .halign(gtk::Align::Center)
         .valign(gtk::Align::Center)
         .build();
     tile.add_css_class("source-tile");
-    if local {
-        tile.append(&symbolic("checkbox-checked-symbolic", size::LOGO));
-    } else {
-        tile.append(&source_icon(ctx, icon, size::LOGO));
-    }
+    tile.append(&source_icon(ctx, icon, size::LOGO));
     tile
 }
 
@@ -197,7 +192,9 @@ pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
 }
 
 /// The Activity area: a column per stage, side by side and as tall as the
-/// tallest, and a hint pointing to the Board while nothing is picked.
+/// tallest, and a hint pointing to the Board while nothing is picked. The
+/// headers share one height, so Picked's New button does not push its
+/// cards below the others.
 fn activity_section(ctx: &Rc<Ctx>, activity: &ActivityView) -> gtk::Box {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 16);
     let stages = gtk::Box::builder()
@@ -205,8 +202,9 @@ fn activity_section(ctx: &Rc<Ctx>, activity: &ActivityView) -> gtk::Box {
         .homogeneous(true)
         .spacing(20)
         .build();
+    let headers = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
     for stage in &activity.stages {
-        stages.append(&stage_widget(ctx, stage));
+        stages.append(&stage_widget(ctx, stage, &headers));
     }
     section.append(&stages);
     if let Some(hint) = activity.hint {
@@ -227,8 +225,9 @@ fn activity_section(ctx: &Rc<Ctx>, activity: &ActivityView) -> gtk::Box {
     section
 }
 
-/// One stage of the Activity area: its name and count, then its cards.
-fn stage_widget(ctx: &Rc<Ctx>, stage: &StageView) -> gtk::Box {
+/// One stage of the Activity area: its name and count (and, on Picked,
+/// the button that writes down a todo), then its cards.
+fn stage_widget(ctx: &Rc<Ctx>, stage: &StageView, headers: &gtk::SizeGroup) -> gtk::Box {
     let widget = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
@@ -243,6 +242,10 @@ fn stage_widget(ctx: &Rc<Ctx>, stage: &StageView) -> gtk::Box {
     let count = gtk::Label::new(Some(&stage.cards.len().to_string()));
     count.add_css_class("count");
     header.append(&count);
+    if stage.adds_todo {
+        header.append(&new_todo_button(ctx));
+    }
+    headers.add_widget(&header);
     widget.append(&header);
     if stage.cards.is_empty() {
         widget.append(&empty_line(stage.empty_note));
@@ -254,6 +257,23 @@ fn stage_widget(ctx: &Rc<Ctx>, stage: &StageView) -> gtk::Box {
     }
     widget.append(&cards);
     widget
+}
+
+/// "New" at the end of a header, which opens the dialog for a todo.
+fn new_todo_button(ctx: &Rc<Ctx>) -> gtk::Button {
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    content.append(&symbolic("list-add-symbolic", size::SMALL));
+    content.append(&gtk::Label::new(Some("New")));
+    let add = gtk::Button::builder()
+        .child(&content)
+        .halign(gtk::Align::End)
+        .hexpand(true)
+        .tooltip_text("Write down a todo")
+        .build();
+    add.add_css_class("empty-toggle");
+    let ctx = ctx.clone();
+    add.connect_clicked(move |_| dialogs::show_todo(&ctx, None));
+    add
 }
 
 /// A picked card, with its source under it.
@@ -281,27 +301,12 @@ fn group_widget(ctx: &Rc<Ctx>, group: &GroupView) -> gtk::Box {
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     let title = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     title.add_css_class("group-title");
-    title.append(&source_tile(ctx, group.icon.as_ref(), group.local));
+    title.append(&source_tile(ctx, group.icon.as_ref()));
     title.append(&line(&group.source, &[]));
     header.append(&title);
     let board = gtk::Label::new(Some(&group.board));
     board.add_css_class("badge");
     header.append(&board);
-    if group.local {
-        let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        content.append(&symbolic("list-add-symbolic", size::SMALL));
-        content.append(&gtk::Label::new(Some("New")));
-        let add = gtk::Button::builder()
-            .child(&content)
-            .halign(gtk::Align::End)
-            .hexpand(true)
-            .tooltip_text("Write down a todo")
-            .build();
-        add.add_css_class("empty-toggle");
-        let ctx = ctx.clone();
-        add.connect_clicked(move |_| dialogs::show_todo(&ctx, None));
-        header.append(&add);
-    }
     if let Some(empty) = &group.empty_toggle {
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         content.append(&symbolic(empty.icon, size::SMALL));

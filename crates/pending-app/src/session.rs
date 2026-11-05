@@ -35,14 +35,15 @@ impl Session {
 }
 
 /// A todo written down in the window: a card of the window's own, on no
-/// source, kept only while the window is open.
+/// source, that lives in the Activity area and is kept only while the
+/// window is open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Todo {
     pub id: String,
     pub title: String,
     pub body: String,
-    /// Where it stands in the Activity area, once picked.
-    pub stage: Option<Stage>,
+    /// Where it stands in the Activity area.
+    pub stage: Stage,
 }
 
 /// The todos, in the order they were written.
@@ -55,8 +56,8 @@ pub struct Todos {
 }
 
 impl Todos {
-    /// Writes down a todo and gives its id; none for a blank title. Title
-    /// and body are kept without the blanks around them.
+    /// Writes down a todo in Picked and gives its id; none for a blank
+    /// title. Title and body are kept without the blanks around them.
     pub fn add(&mut self, title: &str, body: &str) -> Option<String> {
         let title = title.trim();
         if title.is_empty() {
@@ -68,7 +69,7 @@ impl Todos {
             id: id.clone(),
             title: title.to_owned(),
             body: body.trim().to_owned(),
-            stage: None,
+            stage: Stage::Picked,
         });
         Some(id)
     }
@@ -95,9 +96,8 @@ impl Todos {
         self.list.len() != before
     }
 
-    /// Puts the todo `id` at `stage` of the Activity area, or takes it out
-    /// with `None`.
-    pub fn pick(&mut self, id: &str, stage: Option<Stage>) -> bool {
+    /// Moves the todo `id` to `stage` of the Activity area.
+    pub fn move_to(&mut self, id: &str, stage: Stage) -> bool {
         match self.list.iter_mut().find(|todo| todo.id == id) {
             Some(todo) => {
                 todo.stage = stage;
@@ -180,7 +180,7 @@ mod tests {
                 id: "todo:1".to_owned(),
                 title: "Write the release notes".to_owned(),
                 body: "for 0.7".to_owned(),
-                stage: None,
+                stage: Stage::Picked,
             })
         );
         assert!(todos.edit(&first, "Write the notes", ""));
@@ -205,20 +205,16 @@ mod tests {
         assert_eq!(todos.iter().count(), 1);
     }
 
-    /// Picking a todo puts it at a stage of the Activity area, and
-    /// unpicking takes it out; a todo that is not there cannot be picked.
+    /// A todo is written down in Picked, the first stage of the Activity
+    /// area, and moves along the stages; one that is not there cannot be
+    /// moved.
     #[test]
-    fn picks_todos_into_the_activity() {
+    fn writes_todos_down_in_picked() {
         let mut todos = Todos::default();
         let id = todos.add("Call the bank", "").unwrap();
-        assert_eq!(todos.get(&id).and_then(|t| t.stage), None);
-        assert!(todos.pick(&id, Some(Stage::InProgress)));
-        assert_eq!(
-            todos.get(&id).and_then(|t| t.stage),
-            Some(Stage::InProgress)
-        );
-        assert!(todos.pick(&id, None));
-        assert_eq!(todos.get(&id).and_then(|t| t.stage), None);
-        assert!(!todos.pick("todo:9", Some(Stage::Picked)));
+        assert_eq!(todos.get(&id).map(|t| t.stage), Some(Stage::Picked));
+        assert!(todos.move_to(&id, Stage::InProgress));
+        assert_eq!(todos.get(&id).map(|t| t.stage), Some(Stage::InProgress));
+        assert!(!todos.move_to("todo:9", Stage::Picked));
     }
 }

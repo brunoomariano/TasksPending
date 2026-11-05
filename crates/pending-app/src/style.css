@@ -217,6 +217,12 @@ button.tab:checked .count {
   font-weight: 600;
 }
 
+/* Picked's New button, the size it is in a group header. */
+.stage-title button.empty-toggle {
+  font-size: 1em;
+  font-weight: 400;
+}
+
 /* Groups, one per source. */
 flowbox.board {
   background: transparent;

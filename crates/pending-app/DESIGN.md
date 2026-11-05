@@ -144,7 +144,7 @@ Soft corners: 12px for groups and stage columns, dialog rows at 8px, cards at 10
 - Controls: 34px buttons with a 1px border on the group surface; Refresh is the one filled with accent, and as wide as its longest label ("Refreshing…") whatever it says, its icon and label centred, so nothing beside it moves; the gear carries a 7px accent dot while a filter is on.
 - Notices: a bordered box tinted 8% with the state colour (warning for stale data, danger for no data).
 - Status chip (Sources dialog): the state colour as text on a 10% tint with a 25% ring, pill shaped.
-- Dialogs: group surface, a flat header bar, 20px side padding, rows as bordered boxes; filters as pills that fill with the accent tint when active (Settings: Board, Auto-refresh, Theme, then the show or hide switches; under the themes, while following Omarchy, one line in Text 3 names the theme or says why there is none); switches in libadwaita's own style with the accent.
+- Dialogs: group surface, a flat header bar, 20px side padding, rows as bordered boxes; filters as pills that fill with the accent tint when active (Settings: Board, Auto-refresh, Theme, Omarchy bar on Omarchy, then the show or hide switches; under the themes, while following Omarchy, one line in Text 3 names the theme or says why there is none; under Omarchy bar, one line in Text 3 says what the icon does, what is under way or what Omarchy answered); switches in libadwaita's own style with the accent.
 - Empty state: a dashed 1px border, 8px radius, a check icon and "Nothing pending." in Text 3.
 
 ## Motion

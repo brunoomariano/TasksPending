@@ -1,7 +1,7 @@
 //! Choices of the person looking at the dashboard that only this app
 //! keeps: the board filter, collapsed stacks, hidden items, the
-//! auto-refresh interval and how far along each picked card is. Remembered
-//! in a small file; fine to lose.
+//! auto-refresh interval, the theme and how far along each picked card
+//! is. Remembered in a small file; fine to lose.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -45,6 +45,17 @@ impl Stage {
     }
 }
 
+/// Where the window's colours come from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Theme {
+    /// The window's own palette: dark, or light when the system asks.
+    #[default]
+    TasksPending,
+    /// The theme Omarchy has applied, followed as it changes.
+    Omarchy,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct View {
@@ -61,6 +72,8 @@ pub struct View {
     pub hidden: BTreeSet<String>,
     /// Minutes between automatic refreshes of every source; 0 is off.
     pub auto_refresh_minutes: u32,
+    /// Where the colours come from.
+    pub theme: Theme,
     /// The stage of each picked card that moved on from [`Stage::Picked`],
     /// by card id.
     pub stages: BTreeMap<String, Stage>,
@@ -75,6 +88,7 @@ impl Default for View {
             collapsed: BTreeSet::new(),
             hidden: BTreeSet::new(),
             auto_refresh_minutes: DEFAULT_AUTO_REFRESH_MINUTES,
+            theme: Theme::default(),
             stages: BTreeMap::new(),
         }
     }
@@ -112,6 +126,7 @@ impl View {
         if !AUTO_REFRESH_CHOICES.contains(&view.auto_refresh_minutes) {
             view.auto_refresh_minutes = DEFAULT_AUTO_REFRESH_MINUTES;
         }
+        saved.read("theme", &mut view.theme);
         saved.read("stages", &mut view.stages);
         view
     }
@@ -264,6 +279,7 @@ mod tests {
         let mut view = View {
             board: Some("Work".to_owned()),
             auto_refresh_minutes: 15,
+            theme: Theme::Omarchy,
             ..View::default()
         };
         // Every setting, so one that loading forgets fails here.
@@ -357,15 +373,29 @@ mod tests {
         fs::write(
             &path,
             r#"{"board": "Work", "hidden": 5, "auto_refresh_minutes": "often",
-                "collapsed": ["Work/github/Drafts"], "later": true}"#,
+                "collapsed": ["Work/github/Drafts"], "theme": "neon", "later": true}"#,
         )
         .unwrap();
         let view = View::load(&path);
         assert_eq!(view.board.as_deref(), Some("Work"));
         assert!(view.hidden.is_empty());
         assert_eq!(view.auto_refresh_minutes, DEFAULT_AUTO_REFRESH_MINUTES);
+        assert_eq!(view.theme, Theme::TasksPending);
         assert!(view.collapsed.contains("Work/github/Drafts"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The window keeps its own colours until told to follow Omarchy, and
+    /// the choice is saved by name.
+    #[test]
+    fn keeps_its_own_colours_unless_told_otherwise() {
+        assert_eq!(View::default().theme, Theme::TasksPending);
+        for (theme, name) in [
+            (Theme::TasksPending, "tasks-pending"),
+            (Theme::Omarchy, "omarchy"),
+        ] {
+            assert_eq!(serde_json::to_value(theme).unwrap(), name);
+        }
     }
 
     /// The view lives in the XDG state directory the environment names; a

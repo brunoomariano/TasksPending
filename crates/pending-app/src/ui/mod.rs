@@ -7,7 +7,7 @@ mod icons;
 mod tabs;
 
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,7 @@ use pending_runtime::live::Env;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::Scene;
 use crate::activity::LookThrottle;
 use crate::alert::{self, Alert, notification};
 use crate::backend::{self, Command, Event, spawn_worker};
@@ -32,8 +33,8 @@ use crate::present::{
 use crate::session::{Session, Todos};
 use crate::snooze::until;
 use crate::state::ViewState;
-use crate::theme;
-use crate::view::{Stage, View};
+use crate::theme::{self, OmarchyTheme, Palette};
+use crate::view::{Stage, Theme, View};
 
 /// How often the snapshot is read while the window is shown.
 const POLL_INTERVAL: Duration = Duration::from_secs(15);
@@ -81,6 +82,16 @@ pub struct Model {
     looks: LookThrottle,
     /// The auto-refresh timer, replaced when the interval changes.
     auto_refresh: Option<gtk::glib::SourceId>,
+    /// Omarchy's theme as last read, while the window follows it.
+    pub omarchy: Option<Result<OmarchyTheme, String>>,
+}
+
+impl Model {
+    /// The Omarchy theme drawn: the one read, while the window follows
+    /// Omarchy and there is one.
+    fn omarchy_drawn(&self) -> Option<&OmarchyTheme> {
+        self.omarchy.as_ref()?.as_ref().ok()
+    }
 }
 
 /// Shared by every widget: the model, the way to the dashboard, and the
@@ -90,6 +101,24 @@ pub struct Ctx {
     pub commands: UnboundedSender<Command>,
     pub runtime_handle: tokio::runtime::Handle,
     pub widgets: RefCell<Option<Widgets>>,
+    pub styling: Styling,
+    /// The page of the Settings dialog while it is open.
+    pub settings_page: gtk::glib::WeakRef<gtk::Box>,
+}
+
+/// How the window is coloured.
+pub struct Styling {
+    /// The stylesheet, refilled when the palette changes.
+    provider: gtk::CssProvider,
+    /// What a screenshot shows: it can ask for the light scheme, or for
+    /// the sample Omarchy theme.
+    scene: Option<Scene>,
+    /// Where Omarchy keeps the theme it applied.
+    omarchy_dirs: Vec<PathBuf>,
+    /// Watches Omarchy switch themes, for as long as the window.
+    switches: RefCell<Option<gtk::gio::FileMonitor>>,
+    /// The restyle waiting for a switch to settle.
+    settling: RefCell<Option<gtk::glib::SourceId>>,
 }
 
 /// The widgets updated in place; the page under them is rebuilt.
@@ -108,19 +137,68 @@ impl Ctx {
 
     /// Changes the view, remembers it and redraws.
     pub fn change_view(self: &Rc<Self>, change: impl FnOnce(&mut View)) {
-        let interval = {
+        let (interval, theme) = {
             let mut model = self.model.borrow_mut();
-            let before = model.view.auto_refresh_minutes;
+            let before = (model.view.auto_refresh_minutes, model.view.theme);
             change(&mut model.view);
             if let Some(path) = &model.view_path {
                 model.view.save(path);
             }
-            (before, model.view.auto_refresh_minutes)
+            (
+                (before.0, model.view.auto_refresh_minutes),
+                (before.1, model.view.theme),
+            )
         };
         self.redraw(true);
         if interval.0 != interval.1 {
             schedule_auto_refresh(self);
         }
+        if theme.0 != theme.1 {
+            self.restyle();
+        }
+    }
+
+    /// Colours the window as the view asks: reads Omarchy's theme again
+    /// while following it, then sets the scheme and fills the stylesheet.
+    pub fn restyle(&self) {
+        let follows = self.model.borrow().view.theme == Theme::Omarchy;
+        let omarchy = follows.then(|| self.read_omarchy());
+        if let Some(Err(why)) = &omarchy {
+            tracing::warn!(%why, "Omarchy's theme not followed");
+        }
+        let scheme = {
+            let mut model = self.model.borrow_mut();
+            model.omarchy = omarchy;
+            theme::color_scheme(self.styling.scene, model.omarchy_drawn())
+        };
+        // A scheme that turns dark or light fills the stylesheet from the
+        // notify handler too; the palette can change without that.
+        adw::StyleManager::default().set_color_scheme(scheme);
+        self.fill_stylesheet();
+    }
+
+    /// Omarchy's theme, or the sample one for its screenshot.
+    fn read_omarchy(&self) -> Result<OmarchyTheme, String> {
+        if self.styling.scene == Some(Scene::Omarchy) {
+            theme::parse_omarchy(theme::SAMPLE)
+        } else {
+            theme::read_omarchy(&self.styling.omarchy_dirs)
+        }
+    }
+
+    /// The palette drawn now.
+    pub fn palette(&self) -> Palette {
+        theme::palette(
+            adw::StyleManager::default().is_dark(),
+            self.model.borrow().omarchy_drawn(),
+        )
+    }
+
+    /// Fills the stylesheet with the palette drawn now.
+    fn fill_stylesheet(&self) {
+        self.styling
+            .provider
+            .load_from_string(&theme::stylesheet(&self.palette()));
     }
 
     /// Draws the page and controls for the current model; `force` draws
@@ -381,6 +459,11 @@ pub fn run(
     // The sandbox opens with something going on; a screenshot stages its
     // own scene.
     let demo = options.sandbox && screenshot.is_none();
+    let omarchy_dirs = env("HOME")
+        .filter(|home| !home.is_empty())
+        .map(|home| theme::omarchy_dirs(Path::new(&home)))
+        .unwrap_or_default();
+    let scene = screenshot.as_ref().map(|(_, scene)| *scene);
     let backend = backend::resolve(runtime, options, env)?;
     let (commands, events) = spawn_worker(runtime, backend.client.clone());
     let ctx = Rc::new(Ctx {
@@ -398,11 +481,25 @@ pub fn run(
             icons: icons::Cache::default(),
             looks: LookThrottle::default(),
             auto_refresh: None,
+            omarchy: None,
         }),
         commands,
         runtime_handle: runtime.handle().clone(),
         widgets: RefCell::new(None),
+        styling: Styling {
+            provider: gtk::CssProvider::new(),
+            scene,
+            omarchy_dirs,
+            switches: RefCell::new(None),
+            settling: RefCell::new(None),
+        },
+        settings_page: gtk::glib::WeakRef::new(),
     });
+    if scene == Some(Scene::Omarchy) {
+        // The picture of the window following Omarchy; a screenshot saves
+        // no view.
+        ctx.model.borrow_mut().view.theme = Theme::Omarchy;
+    }
     // The backend (and its config watch) lives as long as the window.
     let _backend = backend;
 
@@ -412,20 +509,27 @@ pub fn run(
             window.present();
             return;
         }
-        adw::StyleManager::default().set_color_scheme(theme::color_scheme(
-            screenshot.as_ref().map(|(_, scene)| *scene),
-        ));
-        load_stylesheet();
-        // A logo's dark or light variant follows the theme on every
-        // picture showing it, the open dialogs' included.
+        if let Some(display) = gtk::gdk::Display::default() {
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &ctx.styling.provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
+        // When the scheme turns dark or light, the window's own palette
+        // follows, and so does a logo's variant on every picture showing
+        // it, the open dialogs' included.
         adw::StyleManager::default().connect_dark_notify({
             let ctx = Rc::downgrade(&ctx);
             move |_| {
                 if let Some(ctx) = ctx.upgrade() {
+                    ctx.fill_stylesheet();
                     icons::follow_theme(&ctx);
                 }
             }
         });
+        ctx.restyle();
+        follow_omarchy(&ctx);
         build_window(app, &ctx);
         if let Some(events) = events.borrow_mut().take() {
             pump_events(&ctx, events);
@@ -449,7 +553,7 @@ pub fn run(
                 let on_frame = app.clone();
                 window.queue_draw();
                 window.add_tick_callback(move |window, _| {
-                    match capture(window, &path) {
+                    match capture(window, &path, &ctx.palette().bg) {
                         Ok(()) => eprintln!("wrote {}", path.display()),
                         Err(error) => eprintln!("could not picture the window: {error}"),
                     }
@@ -470,30 +574,60 @@ pub fn run(
     Ok(i32::from(app.run_with_args::<&str>(&[])))
 }
 
-/// Loads the stylesheet for the current scheme, and again when it changes.
-fn load_stylesheet() {
-    let provider = gtk::CssProvider::new();
-    let manager = adw::StyleManager::default();
-    let apply = {
-        let provider = provider.clone();
-        move |manager: &adw::StyleManager| {
-            let palette = if manager.is_dark() {
-                &theme::DARK
-            } else {
-                &theme::LIGHT
-            };
-            provider.load_from_string(&theme::stylesheet(palette));
+/// How long Omarchy's folder stays quiet before the window reads the
+/// theme again: a switch removes the old theme, moves the new one in and
+/// writes its name, a few changes in a row.
+const OMARCHY_SETTLE: Duration = Duration::from_millis(300);
+
+/// Follows Omarchy switching themes: once the folder holding its theme
+/// has settled after a change, the window, when it follows Omarchy, is
+/// coloured again, and an open Settings says which theme it follows. A
+/// screenshot follows nothing, and without Omarchy there is nothing to
+/// watch.
+fn follow_omarchy(ctx: &Rc<Ctx>) {
+    if ctx.styling.scene.is_some() {
+        return;
+    }
+    let Some(dir) = theme::omarchy_watch_dir(&ctx.styling.omarchy_dirs) else {
+        return;
+    };
+    let monitor = match gtk::gio::File::for_path(&dir).monitor_directory(
+        gtk::gio::FileMonitorFlags::NONE,
+        gtk::gio::Cancellable::NONE,
+    ) {
+        Ok(monitor) => monitor,
+        Err(error) => {
+            tracing::warn!(path = %dir.display(), %error, "Omarchy's theme switches not followed");
+            return;
         }
     };
-    apply(&manager);
-    manager.connect_dark_notify(apply);
-    if let Some(display) = gtk::gdk::Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
+    monitor.connect_changed({
+        let ctx = Rc::downgrade(ctx);
+        move |_, _, _, _| {
+            let Some(ctx) = ctx.upgrade() else {
+                return;
+            };
+            if let Some(waiting) = ctx.styling.settling.take() {
+                waiting.remove();
+            }
+            let settled = gtk::glib::timeout_add_local_once(OMARCHY_SETTLE, {
+                let ctx = Rc::downgrade(&ctx);
+                move || {
+                    let Some(ctx) = ctx.upgrade() else {
+                        return;
+                    };
+                    ctx.styling.settling.take();
+                    let follows = ctx.model.borrow().view.theme == Theme::Omarchy;
+                    if follows {
+                        ctx.restyle();
+                        dialogs::refresh_settings(&ctx);
+                    }
+                }
+            });
+            ctx.styling.settling.replace(Some(settled));
+        }
+    });
+    ctx.styling.switches.replace(Some(monitor));
 }
 
 fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
@@ -805,7 +939,9 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
                 .is_some()
         });
         match scene {
-            Scene::Activity | Scene::Light => pick_along_the_stages(&ctx, &firsts, true),
+            Scene::Activity | Scene::Light | Scene::Omarchy => {
+                pick_along_the_stages(&ctx, &firsts, true)
+            }
             Scene::Board | Scene::Todo | Scene::Settings | Scene::Sources => {
                 ctx.show_tab(Tab::Board);
                 for id in ids.into_iter().take(2) {
@@ -824,7 +960,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
             Scene::Settings => dialogs::show_settings(&ctx),
             Scene::Snoozed => dialogs::show_snoozed(&ctx),
             Scene::Todo => dialogs::show_todo(&ctx, None),
-            Scene::Activity | Scene::Board | Scene::Light => {}
+            Scene::Activity | Scene::Board | Scene::Light | Scene::Omarchy => {}
         });
     });
 }
@@ -834,7 +970,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
 /// window the way GTK draws it (a toplevel itself paints nothing into a
 /// snapshot, and a widget paintable only has a picture a frame after it
 /// is made).
-fn capture(window: &adw::ApplicationWindow, path: &std::path::Path) -> anyhow::Result<()> {
+fn capture(window: &adw::ApplicationWindow, path: &Path, background: &str) -> anyhow::Result<()> {
     let content = window
         .first_child()
         .ok_or_else(|| anyhow::anyhow!("the window has no content"))?;
@@ -845,13 +981,8 @@ fn capture(window: &adw::ApplicationWindow, path: &std::path::Path) -> anyhow::R
     // widgets out between frames, so a dialog opened after the first
     // layout has no allocation yet: lay the whole tree out now.
     content.allocate(content.width(), content.height(), -1, None);
-    let palette = if adw::StyleManager::default().is_dark() {
-        &theme::DARK
-    } else {
-        &theme::LIGHT
-    };
-    let background = gtk::gdk::RGBA::parse(palette.bg)
-        .map_err(|_| anyhow::anyhow!("bad background colour {}", palette.bg))?;
+    let background = gtk::gdk::RGBA::parse(background)
+        .map_err(|_| anyhow::anyhow!("bad background colour {background}"))?;
     let snapshot = gtk::Snapshot::new();
     snapshot.append_color(
         &background,

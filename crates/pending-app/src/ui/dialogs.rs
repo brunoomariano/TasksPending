@@ -13,7 +13,7 @@ use super::{Ctx, wrapped as text};
 use crate::backend::Command;
 use crate::present::{
     BoardSwitches, Choice, SwitchView, TODO_NOTE, board_choices, interval_choices, switches,
-    todo_dialog_words,
+    theme_choices, theme_note, todo_dialog_words,
 };
 use crate::view::{View, flip};
 
@@ -244,13 +244,22 @@ pub fn show_todo(ctx: &Rc<Ctx>, editing: Option<&str>) {
     dialog.present(ctx.window().as_ref());
 }
 
-/// Settings: which board to show, the auto-refresh interval, and what to
-/// show or hide. Rebuilt on each change, so a hidden board greys out its
+/// Settings: which board to show, the auto-refresh interval, the theme,
+/// and what to show or hide. Rebuilt on each change, so a hidden board greys out its
 /// groups and stacks.
 pub fn show_settings(ctx: &Rc<Ctx>) {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
     fill_settings(ctx, &content);
+    ctx.settings_page.set(Some(&content));
     present(ctx, "Settings", &content);
+}
+
+/// Fills the open Settings again, for a change made outside it (Omarchy
+/// switching themes).
+pub fn refresh_settings(ctx: &Rc<Ctx>) {
+    if let Some(content) = ctx.settings_page.upgrade() {
+        fill_settings(ctx, &content);
+    }
 }
 
 /// Fills `content` with the settings, and again on each change.
@@ -303,6 +312,16 @@ fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) 
         interval_choices(&view),
         |view, minutes| view.auto_refresh_minutes = minutes,
     ));
+    content.append(&heading("Theme"));
+    content.append(&pills(
+        ctx,
+        &rebuild,
+        theme_choices(&view),
+        |view, theme| view.theme = theme,
+    ));
+    if let Some(note) = theme_note(&view, ctx.model.borrow().omarchy.as_ref()) {
+        content.append(&text(&note, &["dialog-note"]));
+    }
     content.append(&heading("Show or hide"));
     content.append(&visibility(ctx, &rebuild, &switches(&snapshot, &view)));
 }

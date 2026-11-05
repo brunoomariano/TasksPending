@@ -46,6 +46,8 @@ enum Command {
     Setup(SetupCommand),
     /// Fetch the latest release, check it against its published checksum and install it.
     Upgrade(UpgradeCommand),
+    /// Drop the window down over the screen, or send it away (what the icon on Omarchy's bar runs).
+    Toggle,
 }
 
 #[derive(Debug, Args, Default)]
@@ -162,7 +164,13 @@ fn main() -> anyhow::Result<()> {
             version: command.version,
             allow_downgrade: command.allow_downgrade,
         }),
+        Command::Toggle => pending_app::toggle(|| run_app(window_defaults())),
     }
+}
+
+/// The window's options as `tasks-pending` alone gives them.
+fn window_defaults() -> AppCommand {
+    Cli::parse_from(["tasks-pending"]).app
 }
 
 fn run_app(command: AppCommand) -> anyhow::Result<()> {
@@ -190,7 +198,7 @@ mod tests {
 
     use clap::{CommandFactory, Parser};
 
-    use super::{AppCommand, Cli, Command};
+    use super::{AppCommand, Cli, Command, window_defaults};
 
     #[test]
     fn cli_exposes_the_window_the_daemon_and_the_sandbox() {
@@ -244,6 +252,19 @@ mod tests {
             Cli::command()
                 .try_get_matches_from(["tasks-pending", "upgrade", "--check"])
                 .is_ok()
+        );
+    }
+
+    /// `toggle`, which the icon on Omarchy's bar runs, takes no options;
+    /// with no window open it opens one with the window's own defaults.
+    #[test]
+    fn toggle_drops_the_window_down() {
+        let cli = Cli::try_parse_from(["tasks-pending", "toggle"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Toggle)));
+        assert!(Cli::try_parse_from(["tasks-pending", "toggle", "--no-daemon"]).is_err());
+        assert_eq!(
+            window_defaults().daemon,
+            Cli::try_parse_from(["tasks-pending"]).unwrap().app.daemon
         );
     }
 

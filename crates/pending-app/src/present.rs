@@ -317,8 +317,7 @@ pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
 /// What a todo says it comes from, where a card names its source.
 pub const TODO_GROUP: &str = "Todo";
 /// What the todo dialog says about keeping them.
-pub const TODO_NOTE: &str =
-    "Kept only while the window is open: closing TasksPending forgets every todo.";
+pub const TODO_NOTE: &str = "Kept only while TasksPending runs: quitting it forgets every todo.";
 
 /// The todo dialog's title and button, for a new todo or one being
 /// rewritten.
@@ -470,6 +469,82 @@ pub fn theme_note(view: &View, omarchy: Option<&Result<OmarchyTheme, String>>) -
         Ok(_) => "Follows Omarchy's theme and changes with it.".to_owned(),
         Err(why) => format!("Nothing to follow ({why}): the window keeps its own colours."),
     })
+}
+
+/// Settings' Omarchy bar: TasksPending's icon on it, or not.
+pub fn bar_choices(on: bool) -> Vec<Choice<bool>> {
+    [(false, "Off"), (true, "On")]
+        .into_iter()
+        .map(|(value, label)| Choice {
+            label: label.to_owned(),
+            value,
+            active: value == on,
+        })
+        .collect()
+}
+
+/// Where the icon on Omarchy's bar stands, as Settings says it under its
+/// choices.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BarState {
+    Off,
+    On,
+    /// Omarchy is putting it on (`true`) or taking it off.
+    Changing(bool),
+    /// Omarchy refused, saying why.
+    Failed(String),
+}
+
+/// How long Settings trusts the last change it made to the icon over
+/// Omarchy's settings, which the shell writes a moment after it answers.
+pub const BAR_SETTLE: Duration = Duration::from_secs(10);
+
+/// What Settings shows for the icon on Omarchy's bar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BarView {
+    /// Whether it is on.
+    pub on: bool,
+    /// The line under the choices.
+    pub state: BarState,
+    /// Whether Settings still holds on to its last change.
+    pub keep_asked: bool,
+}
+
+/// What Settings shows for the icon: what Omarchy's settings say
+/// (`placed`), unless Settings changed it (`asked`, and how long ago)
+/// within [`BAR_SETTLE`] and they do not say so yet; and a change under
+/// way or refused (`change`) in place of On or Off.
+pub fn bar_view(
+    placed: bool,
+    asked: Option<(bool, Duration)>,
+    change: Option<&BarState>,
+) -> BarView {
+    let pending = asked.filter(|&(on, age)| on != placed && age < BAR_SETTLE);
+    let on = pending.map_or(placed, |(on, _)| on);
+    let state = change
+        .cloned()
+        .unwrap_or(if on { BarState::On } else { BarState::Off });
+    BarView {
+        on,
+        state,
+        keep_asked: pending.is_some(),
+    }
+}
+
+/// The line under the Omarchy bar's choices.
+pub fn bar_note(state: &BarState) -> String {
+    match state {
+        BarState::Off => {
+            "Puts an icon on Omarchy's bar that drops this window down over the screen.".to_owned()
+        }
+        BarState::On => "A click on the icon drops this window down over the screen and the next \
+             sends it away; closing it then only hides it (Ctrl+Q quits). \
+             tasks-pending toggle does the same from a key."
+            .to_owned(),
+        BarState::Changing(true) => "Putting the icon on the bar…".to_owned(),
+        BarState::Changing(false) => "Taking the icon off the bar…".to_owned(),
+        BarState::Failed(why) => format!("Omarchy did not take it: {why}"),
+    }
 }
 
 /// A show/hide switch in Settings.
@@ -1382,7 +1457,102 @@ mod tests {
         );
         assert_eq!(todo_dialog_words(false), ("New todo", "Add"));
         assert_eq!(todo_dialog_words(true), ("Edit todo", "Save"));
-        assert!(TODO_NOTE.contains("closing TasksPending forgets"));
+        assert_eq!(
+            TODO_NOTE,
+            "Kept only while TasksPending runs: quitting it forgets every todo."
+        );
+    }
+
+    /// Settings shows the icon as Omarchy's settings place it, except
+    /// right after Settings changed it, while the shell has yet to write
+    /// them: that change is trusted until they agree, and for a few
+    /// seconds at most, so a change Omarchy lost does not stay on screen.
+    /// A change under way or refused says so in place of On or Off.
+    #[test]
+    fn shows_the_icon_as_omarchy_places_it() {
+        let view = |placed, asked, change| bar_view(placed, asked, change);
+        let soon = Duration::from_secs(1);
+        let late = BAR_SETTLE + Duration::from_millis(1);
+        let shown = |on, state, keep_asked| BarView {
+            on,
+            state,
+            keep_asked,
+        };
+        assert_eq!(view(true, None, None), shown(true, BarState::On, false));
+        assert_eq!(view(false, None, None), shown(false, BarState::Off, false));
+        assert_eq!(
+            view(false, Some((true, soon)), None),
+            shown(true, BarState::On, true),
+            "just turned on"
+        );
+        assert_eq!(
+            view(true, Some((false, soon)), None),
+            shown(false, BarState::Off, true),
+            "just turned off"
+        );
+        assert_eq!(
+            view(true, Some((true, soon)), None),
+            shown(true, BarState::On, false),
+            "they agree"
+        );
+        assert_eq!(
+            view(false, Some((true, late)), None),
+            shown(false, BarState::Off, false),
+            "Omarchy never placed it"
+        );
+        assert_eq!(
+            view(false, None, Some(&BarState::Changing(true))),
+            shown(false, BarState::Changing(true), false)
+        );
+        assert_eq!(
+            view(true, None, Some(&BarState::Failed("why".to_owned()))),
+            shown(true, BarState::Failed("why".to_owned()), false)
+        );
+    }
+
+    /// Settings offers the icon on Omarchy's bar off or on, and says what
+    /// it does, what is under way and what went wrong.
+    #[test]
+    fn offers_the_icon_on_omarchys_bar() {
+        let labels = |on| {
+            bar_choices(on)
+                .into_iter()
+                .map(|choice| (choice.label, choice.value, choice.active))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            labels(false),
+            [
+                ("Off".to_owned(), false, true),
+                ("On".to_owned(), true, false)
+            ]
+        );
+        assert_eq!(
+            labels(true),
+            [
+                ("Off".to_owned(), false, false),
+                ("On".to_owned(), true, true)
+            ]
+        );
+        assert!(bar_note(&BarState::Off).contains("drops this window down"));
+        let on = bar_note(&BarState::On);
+        assert!(
+            on.contains("only hides it") && on.contains("Ctrl+Q"),
+            "{on}"
+        );
+        assert!(on.contains("tasks-pending toggle"), "{on}");
+        assert_eq!(
+            bar_note(&BarState::Changing(true)),
+            "Putting the icon on the bar…"
+        );
+        assert_eq!(
+            bar_note(&BarState::Changing(false)),
+            "Taking the icon off the bar…"
+        );
+        assert_eq!(
+            bar_note(&BarState::Failed("plugin 'x' is not known".to_owned())),
+            "Omarchy did not take it: plugin 'x' is not known"
+        );
     }
 
     /// Only an http(s) URL becomes a link: a source could hand the window

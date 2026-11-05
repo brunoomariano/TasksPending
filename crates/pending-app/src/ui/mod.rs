@@ -26,9 +26,11 @@ use crate::Scene;
 use crate::activity::LookThrottle;
 use crate::alert::{self, Alert, notification};
 use crate::backend::{self, Command, Event, spawn_worker};
+use crate::dropdown::{self, Close, Hyprland, Toggle};
+use crate::omarchy_bar;
 use crate::present::{
-    BoardView, CardAction, CardView, Page, Tab, Timer, auto_refresh_every, board_view, lasting,
-    on_timer, page, refreshed,
+    BarState, BoardView, CardAction, CardView, Page, Tab, Timer, auto_refresh_every, board_view,
+    lasting, on_timer, page, refreshed,
 };
 use crate::session::{Session, Todos};
 use crate::snooze::until;
@@ -84,6 +86,12 @@ pub struct Model {
     auto_refresh: Option<gtk::glib::SourceId>,
     /// Omarchy's theme as last read, while the window follows it.
     pub omarchy: Option<Result<OmarchyTheme, String>>,
+    /// The icon on Omarchy's bar while Omarchy puts it on or takes it
+    /// off, and why it did not when it refused.
+    pub bar_change: Option<BarState>,
+    /// The icon as last put on or taken off, and when, until Omarchy's
+    /// settings say the same (see [`crate::present::bar_view`]).
+    pub bar_wanted: Option<(bool, std::time::Instant)>,
 }
 
 impl Model {
@@ -104,6 +112,13 @@ pub struct Ctx {
     pub styling: Styling,
     /// The page of the Settings dialog while it is open.
     pub settings_page: gtk::glib::WeakRef<gtk::Box>,
+    /// Hyprland, which places the window as a drop-down; `None` off it.
+    pub hyprland: Option<Hyprland>,
+    /// The user's home, where Omarchy keeps its settings and plugins;
+    /// `None` for the sandbox and a picture, which leave them alone.
+    pub home: Option<PathBuf>,
+    /// Omarchy's shell is here to carry the icon on its bar.
+    pub omarchy_shell: bool,
 }
 
 /// How the window is coloured.
@@ -338,6 +353,65 @@ impl Ctx {
         }
     }
 
+    /// Where Hyprland has the window and the screen in front, as far as
+    /// it says.
+    fn placed(
+        &self,
+        hyprland: &Hyprland,
+    ) -> (Option<dropdown::Placement>, Option<dropdown::Screen>) {
+        let window = hyprland
+            .placement(std::process::id())
+            .inspect_err(|error| tracing::warn!(%error, "asking Hyprland for the window"))
+            .ok()
+            .flatten();
+        let screen = hyprland
+            .screen()
+            .inspect_err(|error| tracing::warn!(%error, "asking Hyprland for the screen"))
+            .ok()
+            .flatten();
+        (window, screen)
+    }
+
+    /// What the icon on Omarchy's bar does (`tasks-pending toggle`): the
+    /// window drops down over the screen, or goes away when it is shown
+    /// there. Without Hyprland to place it, it comes up the usual way.
+    pub fn toggle_dropdown(&self, app: &adw::Application) {
+        let Some(hyprland) = &self.hyprland else {
+            app.activate();
+            return;
+        };
+        let (window, screen) = self.placed(hyprland);
+        match dropdown::toggle(window.as_ref(), screen.as_ref()) {
+            Toggle::Present => app.activate(),
+            Toggle::Run(steps) => {
+                if let Err(error) = hyprland.run(&steps) {
+                    tracing::warn!(%error, "Hyprland did not drop the window down");
+                    app.activate();
+                }
+            }
+        }
+    }
+
+    /// Closing the window: the drop-down only goes away, its page kept
+    /// for the next click; any other window closes, and the app with it,
+    /// as it does when Hyprland will not hide the drop-down.
+    fn close_or_hide(&self) -> gtk::glib::Propagation {
+        let Some(hyprland) = &self.hyprland else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        let (window, screen) = self.placed(hyprland);
+        match dropdown::close(window.as_ref(), screen.as_ref()) {
+            Close::Quit => gtk::glib::Propagation::Proceed,
+            Close::Hide(steps) => match hyprland.run(&steps) {
+                Ok(()) => gtk::glib::Propagation::Stop,
+                Err(error) => {
+                    tracing::warn!(%error, "Hyprland did not hide the drop-down");
+                    gtk::glib::Propagation::Proceed
+                }
+            },
+        }
+    }
+
     /// Changes the todos and redraws.
     pub fn change_todos(self: &Rc<Self>, change: impl FnOnce(&mut Todos) -> bool) {
         self.change_session(|session| change(&mut session.todos));
@@ -455,6 +529,18 @@ pub fn run(
         // window and returns.
         return Ok(i32::from(app.run_with_args::<&str>(&[])));
     }
+    // Ctrl+Q quits, also from the drop-down, which closing only hides.
+    let quit = gtk::gio::SimpleAction::new("quit", None);
+    quit.connect_activate({
+        let app = app.downgrade();
+        move |_, _| {
+            if let Some(app) = app.upgrade() {
+                app.quit();
+            }
+        }
+    });
+    app.add_action(&quit);
+    app.set_accels_for_action("app.quit", &["<Control>q"]);
 
     // The sandbox opens with something going on; a screenshot stages its
     // own scene.
@@ -464,6 +550,24 @@ pub fn run(
         .map(|home| theme::omarchy_dirs(Path::new(&home)))
         .unwrap_or_default();
     let scene = screenshot.as_ref().map(|(_, scene)| *scene);
+    // The sandbox and a picture neither read nor write Omarchy's settings,
+    // and always show the icon's choice, off.
+    let home = env("HOME")
+        .filter(|home| unique && !home.is_empty())
+        .map(PathBuf::from);
+    let hyprland = dropdown::socket(&|name| env(name).and_then(|value| value.into_string().ok()))
+        .map(Hyprland::new);
+    let omarchy_shell = !unique || omarchy_bar::available(env("PATH").as_deref());
+    if unique && let Some(home) = &home {
+        // The icon on Omarchy's bar keeps up with this version, once
+        // Settings has put it there.
+        let dir = omarchy_bar::plugin_dir(home);
+        if dir.is_dir()
+            && let Err(error) = omarchy_bar::write(&dir)
+        {
+            tracing::warn!(%error, "updating the icon on Omarchy's bar");
+        }
+    }
     let backend = backend::resolve(runtime, options, env)?;
     let (commands, events) = spawn_worker(runtime, backend.client.clone());
     let ctx = Rc::new(Ctx {
@@ -482,6 +586,8 @@ pub fn run(
             looks: LookThrottle::default(),
             auto_refresh: None,
             omarchy: None,
+            bar_change: None,
+            bar_wanted: None,
         }),
         commands,
         runtime_handle: runtime.handle().clone(),
@@ -494,7 +600,22 @@ pub fn run(
             settling: RefCell::new(None),
         },
         settings_page: gtk::glib::WeakRef::new(),
+        hyprland,
+        home,
+        omarchy_shell,
     });
+    // What the icon on Omarchy's bar sends, through `tasks-pending toggle`.
+    let toggle = gtk::gio::SimpleAction::new("toggle", None);
+    toggle.connect_activate({
+        let ctx = Rc::downgrade(&ctx);
+        let app = app.downgrade();
+        move |_, _| {
+            if let (Some(ctx), Some(app)) = (ctx.upgrade(), app.upgrade()) {
+                ctx.toggle_dropdown(&app);
+            }
+        }
+    });
+    app.add_action(&toggle);
     if scene == Some(Scene::Omarchy) {
         // The picture of the window following Omarchy; a screenshot saves
         // no view.
@@ -668,6 +789,13 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
     ));
     narrow.add_setter(&hero.weather.slot, "visible", Some(&false.to_value()));
     window.add_breakpoint(narrow);
+    window.connect_close_request({
+        let ctx = Rc::downgrade(ctx);
+        move |_| {
+            ctx.upgrade()
+                .map_or(gtk::glib::Propagation::Proceed, |ctx| ctx.close_or_hide())
+        }
+    });
     watch_activity(ctx, &window);
     {
         let ctx = ctx.clone();

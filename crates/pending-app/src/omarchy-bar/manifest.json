@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.brunoomariano.tasks-pending",
+  "name": "TasksPending",
+  "version": "{{version}}",
+  "author": "Bruno Mariano",
+  "license": "MIT",
+  "description": "The TasksPending window as a drop-down from the bar: a click brings it over the screen, the next sends it away.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "TasksPending",
+    "description": "Drops the TasksPending window down over the screen, and sends it away again.",
+    "category": "Productivity",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "command": "tasks-pending"
+    },
+    "schema": [
+      {
+        "key": "command",
+        "type": "string",
+        "label": "The tasks-pending command",
+        "defaultValue": "tasks-pending"
+      }
+    ]
+  }
+}

@@ -11,9 +11,10 @@ use super::board::{clear, notice, tracked};
 use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped as text};
 use crate::backend::Command;
+use crate::omarchy_bar;
 use crate::present::{
-    BoardSwitches, Choice, SwitchView, TODO_NOTE, board_choices, interval_choices, switches,
-    theme_choices, theme_note, todo_dialog_words,
+    BarState, BoardSwitches, Choice, SwitchView, TODO_NOTE, bar_choices, bar_note, bar_view,
+    board_choices, interval_choices, switches, theme_choices, theme_note, todo_dialog_words,
 };
 use crate::view::{View, flip};
 
@@ -245,7 +246,8 @@ pub fn show_todo(ctx: &Rc<Ctx>, editing: Option<&str>) {
 }
 
 /// Settings: which board to show, the auto-refresh interval, the theme,
-/// and what to show or hide. Rebuilt on each change, so a hidden board greys out its
+/// the icon on Omarchy's bar (where Omarchy's shell is), and what to show
+/// or hide. Rebuilt on each change, so a hidden board greys out its
 /// groups and stacks.
 pub fn show_settings(ctx: &Rc<Ctx>) {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -322,6 +324,11 @@ fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) 
     if let Some(note) = theme_note(&view, ctx.model.borrow().omarchy.as_ref()) {
         content.append(&text(&note, &["dialog-note"]));
     }
+    if let Some((on, state)) = bar_state(ctx) {
+        content.append(&heading("Omarchy bar"));
+        content.append(&bar_pills(ctx, &rebuild, on));
+        content.append(&text(&bar_note(&state), &["dialog-note"]));
+    }
     content.append(&heading("Show or hide"));
     content.append(&visibility(ctx, &rebuild, &switches(&snapshot, &view)));
 }
@@ -352,6 +359,152 @@ fn pills<T: Clone + 'static>(
         row.insert(&flow_child(&button), -1);
     }
     row
+}
+
+/// Whether the icon is on Omarchy's bar, and what to say about it; `None`
+/// without Omarchy's shell. Omarchy's settings say where it is
+/// ([`bar_view`]); the sandbox reads none, and the icon is off there.
+fn bar_state(ctx: &Rc<Ctx>) -> Option<(bool, BarState)> {
+    if !ctx.omarchy_shell {
+        return None;
+    }
+    let placed = ctx.home.as_ref().is_some_and(|home| {
+        std::fs::read_to_string(omarchy_bar::shell_config(home))
+            .is_ok_and(|settings| omarchy_bar::in_bar(&settings))
+    });
+    let mut model = ctx.model.borrow_mut();
+    let asked = model.bar_wanted.map(|(on, at)| (on, at.elapsed()));
+    let view = bar_view(placed, asked, model.bar_change.as_ref());
+    if !view.keep_asked {
+        model.bar_wanted = None;
+    }
+    Some((view.on, view.state))
+}
+
+/// Off and On for the icon on Omarchy's bar.
+fn bar_pills(ctx: &Rc<Ctx>, rebuild: &Rc<dyn Fn()>, on: bool) -> gtk::FlowBox {
+    let row = gtk::FlowBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .column_spacing(6)
+        .row_spacing(6)
+        .build();
+    let changing = matches!(ctx.model.borrow().bar_change, Some(BarState::Changing(_)));
+    for choice in bar_choices(on) {
+        let button = pill(&choice.label, choice.active);
+        button.set_sensitive(!changing);
+        let ctx = ctx.clone();
+        let rebuild = rebuild.clone();
+        let wanted = choice.value;
+        button.connect_clicked(move |_| {
+            if wanted == on {
+                // Already so: the pill stays as it was.
+                rebuild();
+            } else {
+                set_bar(&ctx, wanted, rebuild.clone());
+            }
+        });
+        row.insert(&flow_child(&button), -1);
+    }
+    row
+}
+
+/// Puts the icon on Omarchy's bar (writing the plugin first) or takes it
+/// off, with Omarchy's own commands, off the main loop; Settings says it
+/// is under way, then how it went.
+fn set_bar(ctx: &Rc<Ctx>, on: bool, rebuild: Rc<dyn Fn()>) {
+    let Some(home) = ctx.home.clone() else {
+        ctx.model.borrow_mut().bar_change = Some(BarState::Failed(
+            "the sandbox leaves Omarchy's bar alone".to_owned(),
+        ));
+        rebuild();
+        return;
+    };
+    if on && let Err(error) = omarchy_bar::write(&omarchy_bar::plugin_dir(&home)) {
+        ctx.model.borrow_mut().bar_change = Some(BarState::Failed(format!(
+            "could not write the plugin ({error})"
+        )));
+        rebuild();
+        return;
+    }
+    ctx.model.borrow_mut().bar_change = Some(BarState::Changing(on));
+    rebuild();
+    let ctx = ctx.clone();
+    gtk::glib::spawn_future_local(async move {
+        let outcome = run_all(omarchy_bar::steps(on)).await;
+        {
+            let mut model = ctx.model.borrow_mut();
+            match outcome {
+                Ok(()) => {
+                    model.bar_change = None;
+                    model.bar_wanted = Some((on, std::time::Instant::now()));
+                }
+                Err(why) => model.bar_change = Some(BarState::Failed(why)),
+            }
+        }
+        rebuild();
+    });
+}
+
+/// How long one of Omarchy's commands may take before Settings gives up
+/// on it (its shell gives up on itself after three seconds).
+const OMARCHY_ANSWERS_WITHIN: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Runs the steps in turn until a command fails, saying why: the last
+/// line it wrote to its error output, or that it could not run or did
+/// not answer in time.
+async fn run_all(steps: Vec<omarchy_bar::Step>) -> Result<(), String> {
+    for step in steps {
+        match step {
+            omarchy_bar::Step::Run(argv) => {
+                let (ok, _, errors) = run(&argv).await?;
+                if !ok {
+                    let line = argv.join(" ");
+                    return Err(omarchy_bar::refusal(&errors)
+                        .map_or_else(|| format!("{line} failed"), str::to_owned));
+                }
+            }
+            omarchy_bar::Step::AwaitListed => {
+                // As Omarchy's `plugin add` does: 40 looks, 50 ms apart.
+                // Enabling then says plainly if it is still not found.
+                for _ in 0..40 {
+                    if let Ok((true, list, _)) = run(&omarchy_bar::LIST).await
+                        && omarchy_bar::listed(&list)
+                    {
+                        break;
+                    }
+                    gtk::glib::timeout_future(std::time::Duration::from_millis(50)).await;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Runs one command off the main loop: whether it succeeded, and what it
+/// wrote to its output and its error output.
+async fn run(argv: &[&str]) -> Result<(bool, String, String), String> {
+    let line = argv.join(" ");
+    let args: Vec<&std::ffi::OsStr> = argv.iter().map(std::ffi::OsStr::new).collect();
+    let process = gtk::gio::Subprocess::newv(
+        &args,
+        gtk::gio::SubprocessFlags::STDOUT_PIPE | gtk::gio::SubprocessFlags::STDERR_PIPE,
+    )
+    .map_err(|error| format!("{line} did not run ({error})"))?;
+    let answered = gtk::glib::future_with_timeout(
+        OMARCHY_ANSWERS_WITHIN,
+        process.communicate_utf8_future(None),
+    )
+    .await;
+    let Ok(outcome) = answered else {
+        process.force_exit();
+        return Err(format!("{line} did not answer"));
+    };
+    let (output, errors) = outcome.map_err(|error| format!("{line} did not finish ({error})"))?;
+    Ok((
+        process.is_successful(),
+        output.map(String::from).unwrap_or_default(),
+        errors.map(String::from).unwrap_or_default(),
+    ))
 }
 
 /// The show/hide switches: each board, its groups under it, and their

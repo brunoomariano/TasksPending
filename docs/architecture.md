@@ -52,7 +52,7 @@ The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME
 
 `pending-client` is that path: one method per route, over loopback only, sending the header the state-changing routes require. The default address, the header, the refresh cooldown and its 429 answer, and the answers of `/healthz` and `/api/v1/version` are declared once, in `pending-core::api`, for both sides.
 
-`pending-app` is the GTK4 window. `present::page` turns a snapshot and the user's `View` (board filter, collapsed stacks, hidden items) into what to draw, with no widgets involved, and is tested that way; `ui` rebuilds the widgets whenever that page changes and keeps the hero (clock, weather, controls) updated in place. A worker on the Tokio runtime runs the window's commands against the client one at a time and sends events back to the GTK thread. The stylesheet is generated from the app's own palette (dark or light, following the system) because GTK CSS has no variables on every version the app supports.
+`pending-app` is the GTK4 window. `present::page` turns a snapshot and the user's `View` (board filter, collapsed stacks, hidden items) into what to draw, with no widgets involved, and is tested that way; `ui` rebuilds the widgets whenever that page changes and keeps the hero (clock, weather, controls) updated in place. A worker on the Tokio runtime runs the window's commands against the client one at a time and sends events back to the GTK thread. The stylesheet is generated from the app's own palette (dark or light, following the system), or from Omarchy's theme when Settings asks for it (`theme.rs`), because GTK CSS has no variables on every version the app supports.
 
 ## Sources Available
 

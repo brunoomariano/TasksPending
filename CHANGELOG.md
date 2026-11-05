@@ -4,7 +4,7 @@
 
 ### Features
 
-- **Theme** in Settings: **TasksPending**, the window's own colours and still the default, or **Omarchy**, which follows the theme Omarchy applied (dark or light as the theme says) and changes with it when you switch themes. The colours Omarchy's `colors.toml` does not name are mixed from its background, text and accent in the same proportions as the window's own palette. Text on the accent is white or dark, whichever stands out more on it. The choice is kept in `app-view.json`.
+- **Theme** in Settings: **TasksPending**, the window's own colours and still the default, or **Omarchy**, which follows the theme Omarchy applied (dark or light as the theme says) and changes with it when you switch themes. The colours Omarchy's `colors.toml` does not name are mixed from its background, text and accent in the same proportions as the window's own palette. Text on the accent is white or dark, whichever stands out more on it. A theme colour that would be hard to read is lightened (darkened on a light theme) to 4.5:1 on what it is written on, keeping its hue, and a state the theme draws in grey is drawn in its text colour. The choice is kept in `app-view.json`.
 
 ### Changed
 

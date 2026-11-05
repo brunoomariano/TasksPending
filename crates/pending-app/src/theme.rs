@@ -27,6 +27,9 @@ pub struct Palette {
     /// The accent as text: the accent itself, unless a theme's is too
     /// faint to read on the window's grounds.
     pub accent_ink: Cow<'static, str>,
+    /// The count on a checked tab: the accent as text, deepened further
+    /// where the count's own tint needs it.
+    pub checked_count: Cow<'static, str>,
     /// The accent, lightened for a hover.
     pub accent_hover: Cow<'static, str>,
     /// The accent at low alpha, for tinted surfaces.
@@ -44,7 +47,7 @@ pub struct Palette {
 
 impl Palette {
     /// Each colour under the name the stylesheet gives it.
-    pub fn tokens(&self) -> [(&'static str, &str); 18] {
+    pub fn tokens(&self) -> [(&'static str, &str); 19] {
         [
             ("bg", &self.bg),
             ("surface", &self.surface),
@@ -56,6 +59,7 @@ impl Palette {
             ("text-3", &self.text_3),
             ("accent", &self.accent),
             ("accent-ink", &self.accent_ink),
+            ("checked-count", &self.checked_count),
             ("accent-hover", &self.accent_hover),
             ("accent-soft", &self.accent_soft),
             ("on-accent", &self.on_accent),
@@ -79,13 +83,14 @@ pub const DARK: Palette = Palette {
     border: fixed("#262a31"),
     border_strong: fixed("#343a43"),
     text: fixed("#e7e9ee"),
-    text_2: fixed("#a4abb8"),
-    text_3: fixed("#6d7482"),
+    text_2: fixed("#babdc5"),
+    text_3: fixed("#9196a0"),
     accent: fixed("#7c8cff"),
     accent_ink: fixed("#7c8cff"),
+    checked_count: fixed("#8b9aff"),
     accent_hover: fixed("#8c9aff"),
     accent_soft: fixed("rgba(124, 140, 255, 0.14)"),
-    on_accent: fixed("#ffffff"),
+    on_accent: fixed("#0e0f12"),
     ok: fixed("#4ccb8f"),
     warn: fixed("#f2c14e"),
     danger: fixed("#f2667a"),
@@ -100,16 +105,17 @@ pub const LIGHT: Palette = Palette {
     border: fixed("#e4e7ec"),
     border_strong: fixed("#d3d8e0"),
     text: fixed("#15181e"),
-    text_2: fixed("#555d6b"),
-    text_3: fixed("#8a91a0"),
+    text_2: fixed("#40444d"),
+    text_3: fixed("#626671"),
     accent: fixed("#4f5ee8"),
-    accent_ink: fixed("#4f5ee8"),
+    accent_ink: fixed("#4c5ade"),
+    checked_count: fixed("#404cbb"),
     accent_hover: fixed("#6170ee"),
     accent_soft: fixed("rgba(79, 94, 232, 0.10)"),
     on_accent: fixed("#ffffff"),
-    ok: fixed("#16a36a"),
-    warn: fixed("#c98a06"),
-    danger: fixed("#d9364e"),
+    ok: fixed("#10774e"),
+    warn: fixed("#8d6004"),
+    danger: fixed("#c03045"),
     card_hover: fixed("#e8ebf0"),
     shadow: fixed("rgba(16, 24, 40, 0.18)"),
 };
@@ -367,6 +373,10 @@ const CHIP_TINT: f64 = 0.10;
 /// with.
 const NOTICE_TINT: f64 = 0.08;
 
+/// How much of the accent the count on a checked tab is tinted with, over
+/// the tab's own tint (`button.tab:checked .count` in the stylesheet).
+const COUNT_TINT: f64 = 0.2;
+
 /// `ink` walked towards `toward` only as far as it takes to `read`;
 /// walking towards white or black keeps the hue. `toward` itself when
 /// even that does not read.
@@ -411,6 +421,7 @@ struct Mixed {
     text_3: Rgb,
     accent: Rgb,
     accent_ink: Rgb,
+    checked_count: Rgb,
     on_accent: Rgb,
     ok: Rgb,
     warn: Rgb,
@@ -436,6 +447,7 @@ impl Mixed {
             text_3: text.mix(bg, mix.text_3),
             accent,
             accent_ink: accent,
+            checked_count: accent,
             on_accent: on(accent, if dark { bg } else { text }),
             ok,
             warn,
@@ -445,8 +457,8 @@ impl Mixed {
 
     /// The same palette with every colour written as text made to read
     /// on the grounds the stylesheet writes it on: the states first, since
-    /// notices are tinted with them, then the accent as text, the text on
-    /// the accent and the texts. The second text keeps its place between
+    /// notices are tinted with them, then the accent as text (and the
+    /// count on a checked tab), the text on the accent and the texts. The second text keeps its place between
     /// the text and the third, so the three keep their order.
     fn readable(self) -> Mixed {
         // Past this luminance, black stands out more on the background
@@ -472,6 +484,10 @@ impl Mixed {
         let accent_ink = walked(self.accent, toward, |ink| {
             reads_on(ink, &plain) && reads_on(ink, &[checked])
         });
+        // The count on a checked tab sits on more of the accent still, so
+        // it goes further only there.
+        let count = checked.mix(self.accent, COUNT_TINT);
+        let checked_count = walked(accent_ink, toward, |ink| reads_on(ink, &[count]));
         let on_accent = if self.on_accent.contrast(self.accent) >= READS {
             self.on_accent
         } else {
@@ -502,6 +518,7 @@ impl Mixed {
             text_2,
             text_3,
             accent_ink,
+            checked_count,
             on_accent,
             ok,
             warn,
@@ -528,6 +545,7 @@ impl Mixed {
             text_3: hex(self.text_3),
             accent: hex(self.accent),
             accent_ink: hex(self.accent_ink),
+            checked_count: hex(self.checked_count),
             accent_hover: hex(self.accent.mix(Rgb::WHITE, mix.accent_hover)),
             accent_soft: self.accent.rgba(mix.accent_soft_alpha).into(),
             on_accent: hex(self.on_accent),
@@ -700,9 +718,10 @@ mod tests {
     }
 
     /// An Omarchy theme is drawn with the window's own proportions, mixed
-    /// from the theme's colours: fed the main colours of the window's own
-    /// palettes, it gives those palettes back, to within a few steps of
-    /// 255 (the window's own greys lean a little to blue, mixes do not).
+    /// from the theme's colours and made to read by the same rule: fed the
+    /// main colours of the window's own palettes, it gives those palettes
+    /// back, to within a few steps of 255 (the window's own greys lean a
+    /// little to blue, mixes do not).
     #[test]
     fn mixes_omarchy_colours_in_the_house_proportions() {
         for (dark, house) in [(true, DARK), (false, LIGHT)] {
@@ -715,14 +734,10 @@ mod tests {
                 colour(&house.accent),
                 states,
             )
+            .readable()
             .palette();
             let mode = if dark { "dark" } else { "light" };
-            // The window's own text on its accent is white by choice;
-            // a theme's is whatever stands out more.
             for ((name, mixed), (_, own)) in palette.tokens().into_iter().zip(house.tokens()) {
-                if name == "on-accent" {
-                    continue;
-                }
                 if own.starts_with('#') {
                     let gap = rgb(mixed)
                         .into_iter()
@@ -782,14 +797,13 @@ mod tests {
 
     /// Without `mode`, the background tells: a light one makes a light
     /// theme. A short `#rgb` colour is read; the states the theme leaves
-    /// out are the window's own, deepened where the theme's ground needs
-    /// it (the window's own light green is under 4.5 to 1 on white).
+    /// out are the window's own for its scheme, deepened where the theme's
+    /// ground needs it.
     #[test]
     fn works_out_what_a_theme_leaves_out() {
         let light = parse_omarchy(&light_colors()).unwrap();
         assert!(!light.dark);
         let (own, drawn) = (colour(&LIGHT.ok), colour(&light.palette.ok));
-        assert!(own.contrast(colour(&light.palette.bg)) < 4.5);
         assert!(drawn.contrast(colour(&light.palette.bg)) >= 4.5);
         assert!((hue(own) - hue(drawn)).abs() <= 6.0, "{drawn:?}");
         let short =
@@ -878,9 +892,8 @@ mod tests {
     /// The grounds the stylesheet writes the texts on: the page, a group,
     /// a card, a card under the pointer and a marked one, a count and a
     /// stale or unavailable notice.
-    fn grounds(theme: &OmarchyTheme) -> Vec<Rgb> {
-        let palette = &theme.palette;
-        let soft = if theme.dark { 0.14 } else { 0.10 };
+    fn grounds(palette: &Palette, dark: bool) -> Vec<Rgb> {
+        let soft = if dark { 0.14 } else { 0.10 };
         let card = colour(&palette.surface_2);
         let group = colour(&palette.surface);
         vec![
@@ -902,56 +915,74 @@ mod tests {
             .fold(f64::INFINITY, f64::min)
     }
 
-    /// Everything the window writes in a theme's colours reads at 4.5 to 1
-    /// (WCAG AA) on every ground it is written on: the texts on all of
-    /// theirs; the accent as text on the page, a group, a card, a card
-    /// under the pointer and a checked tab; each state there and on its
+    /// Everything written in `palette`'s colours reads at 4.5 to 1 (WCAG
+    /// AA) on every ground it is written on: the texts on all of theirs;
+    /// the accent as text on the page, a group, a card, a card under the
+    /// pointer and a checked tab; the count on a checked tab on its chip
+    /// (a fifth of the accent over the tab); each state there and on its
     /// own chip (a tenth of it over the page); and the text on the accent.
+    fn assert_reads(palette: &Palette, dark: bool, what: &str) {
+        let what = |name: &str| format!("{name} in {what}");
+        for (name, ink) in [
+            ("text", &palette.text),
+            ("text-2", &palette.text_2),
+            ("text-3", &palette.text_3),
+        ] {
+            assert!(
+                worst(colour(ink), &grounds(palette, dark)) >= 4.5,
+                "{}",
+                what(name)
+            );
+        }
+        let bg = colour(&palette.bg);
+        let accent = colour(&palette.accent);
+        let mut plain = grounds(palette, dark)[..4].to_vec();
+        let soft = if dark { 0.14 } else { 0.10 };
+        let checked = bg.mix(accent, soft);
+        let ink = colour(&palette.accent_ink);
+        assert!(worst(ink, &plain) >= 4.5, "{}", what("accent-ink"));
+        assert!(
+            ink.contrast(checked) >= 4.5,
+            "{}",
+            what("accent-ink, checked")
+        );
+        assert!(
+            colour(&palette.checked_count).contrast(checked.mix(accent, 0.2)) >= 4.5,
+            "{}",
+            what("checked-count")
+        );
+        for (name, state) in [
+            ("ok", &palette.ok),
+            ("warn", &palette.warn),
+            ("danger", &palette.danger),
+        ] {
+            let state = colour(state);
+            plain.push(bg.mix(state, 0.10));
+            assert!(worst(state, &plain) >= 4.5, "{}", what(name));
+            plain.pop();
+        }
+        assert!(
+            colour(&palette.on_accent).contrast(accent) >= 4.5,
+            "{}",
+            what("on-accent")
+        );
+    }
+
+    /// Everything the window writes in a theme's colours reads.
     #[test]
     fn writes_every_theme_colour_so_it_reads() {
         for colours in HARD {
             let theme = hard_theme(colours);
-            let palette = &theme.palette;
-            let what = |name: &str| format!("{name} in {}", colours[1]);
-            for (name, ink) in [
-                ("text", &palette.text),
-                ("text-2", &palette.text_2),
-                ("text-3", &palette.text_3),
-            ] {
-                assert!(
-                    worst(colour(ink), &grounds(&theme)) >= 4.5,
-                    "{}",
-                    what(name)
-                );
-            }
-            let bg = colour(&palette.bg);
-            let accent = colour(&palette.accent);
-            let mut plain = grounds(&theme)[..4].to_vec();
-            let soft = if theme.dark { 0.14 } else { 0.10 };
-            let checked = bg.mix(accent, soft);
-            let ink = colour(&palette.accent_ink);
-            assert!(worst(ink, &plain) >= 4.5, "{}", what("accent-ink"));
-            assert!(
-                ink.contrast(checked) >= 4.5,
-                "{}",
-                what("accent-ink, checked")
-            );
-            for (name, state) in [
-                ("ok", &palette.ok),
-                ("warn", &palette.warn),
-                ("danger", &palette.danger),
-            ] {
-                let state = colour(state);
-                plain.push(bg.mix(state, 0.10));
-                assert!(worst(state, &plain) >= 4.5, "{}", what(name));
-                plain.pop();
-            }
-            assert!(
-                colour(&palette.on_accent).contrast(accent) >= 4.5,
-                "{}",
-                what("on-accent")
-            );
+            assert_reads(&theme.palette, theme.dark, colours[1]);
         }
+    }
+
+    /// The window's own palettes are held to the same: everything written
+    /// in them reads at 4.5 to 1 on its grounds.
+    #[test]
+    fn writes_the_window_palettes_so_they_read() {
+        assert_reads(&DARK, true, "the dark palette");
+        assert_reads(&LIGHT, false, "the light palette");
     }
 
     /// The hue (0 to 360) of a colour with one.
@@ -1005,7 +1036,7 @@ mod tests {
         ]]) {
             let theme = hard_theme(colours);
             let palette = &theme.palette;
-            for ground in grounds(&theme) {
+            for ground in grounds(palette, theme.dark) {
                 let [text, second, third] = [&palette.text, &palette.text_2, &palette.text_3]
                     .map(|ink| colour(ink).contrast(ground));
                 assert!(
@@ -1013,6 +1044,60 @@ mod tests {
                     "{} on {ground:?}",
                     colours[1]
                 );
+            }
+        }
+        for (house, dark) in [(DARK, true), (LIGHT, false)] {
+            for ground in grounds(&house, dark) {
+                let [text, second, third] = [&house.text, &house.text_2, &house.text_3]
+                    .map(|ink| colour(ink).contrast(ground));
+                assert!(text >= second && second > third, "{dark} on {ground:?}");
+            }
+        }
+    }
+
+    /// The window's own colours as the rule sees them.
+    fn mixed_of(palette: &Palette, dark: bool) -> Mixed {
+        Mixed {
+            dark,
+            bg: colour(&palette.bg),
+            surface: colour(&palette.surface),
+            surface_2: colour(&palette.surface_2),
+            border: colour(&palette.border),
+            border_strong: colour(&palette.border_strong),
+            card_hover: colour(&palette.card_hover),
+            text: colour(&palette.text),
+            text_2: colour(&palette.text_2),
+            text_3: colour(&palette.text_3),
+            accent: colour(&palette.accent),
+            accent_ink: colour(&palette.accent_ink),
+            checked_count: colour(&palette.checked_count),
+            on_accent: colour(&palette.on_accent),
+            ok: colour(&palette.ok),
+            warn: colour(&palette.warn),
+            danger: colour(&palette.danger),
+        }
+    }
+
+    /// The window's own palettes are made to read by the same rule as a
+    /// theme's, and no further: the rule finds nothing left to change in
+    /// them.
+    #[test]
+    fn makes_the_window_palettes_read_by_the_same_rule() {
+        for (house, dark) in [(DARK, true), (LIGHT, false)] {
+            let before = mixed_of(&house, dark);
+            let after = before.readable();
+            for (name, own, ruled) in [
+                ("text", before.text, after.text),
+                ("text-2", before.text_2, after.text_2),
+                ("text-3", before.text_3, after.text_3),
+                ("accent-ink", before.accent_ink, after.accent_ink),
+                ("checked-count", before.checked_count, after.checked_count),
+                ("on-accent", before.on_accent, after.on_accent),
+                ("ok", before.ok, after.ok),
+                ("warn", before.warn, after.warn),
+                ("danger", before.danger, after.danger),
+            ] {
+                assert_eq!(own.hex(), ruled.hex(), "{name}, dark: {dark}");
             }
         }
     }

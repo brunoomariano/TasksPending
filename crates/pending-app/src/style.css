@@ -3,7 +3,7 @@
    system is described in DESIGN.md. */
 
 @define-color accent_bg_color {{accent}};
-@define-color accent_color {{accent}};
+@define-color accent_color {{accent-ink}};
 @define-color window_bg_color {{bg}};
 @define-color window_fg_color {{text}};
 @define-color view_bg_color {{bg}};
@@ -55,7 +55,7 @@ window.tasks-pending {
 }
 
 .clock-digits {
-  color: {{accent}};
+  color: {{accent-ink}};
 }
 
 .controls button.control {
@@ -201,13 +201,13 @@ button.tab:hover {
 button.tab:checked {
   border-color: {{accent}};
   background: {{accent-soft}};
-  color: {{accent}};
+  color: {{accent-ink}};
   font-weight: 600;
 }
 
 button.tab:checked .count {
   background: alpha({{accent}}, 0.2);
-  color: {{accent}};
+  color: {{accent-ink}};
 }
 
 /* The stages of the Activity area. */
@@ -240,7 +240,7 @@ flowbox.board > flowboxchild {
 }
 
 .group-title image {
-  color: {{accent}};
+  color: {{accent-ink}};
 }
 
 .source-tile {
@@ -377,7 +377,7 @@ button.link-button:hover {
 }
 
 .card-title link:hover {
-  color: {{accent}};
+  color: {{accent-ink}};
 }
 
 .card-body {
@@ -548,7 +548,7 @@ dialog.tasks-pending entry:focus-within {
 }
 
 .status.refreshing {
-  color: {{accent}};
+  color: {{accent-ink}};
   background: alpha({{accent}}, 0.10);
   border-color: alpha({{accent}}, 0.25);
 }
@@ -585,7 +585,7 @@ button.filter:hover {
 button.filter:checked {
   border-color: {{accent}};
   background: {{accent-soft}};
-  color: {{accent}};
+  color: {{accent-ink}};
   font-weight: 600;
 }
 

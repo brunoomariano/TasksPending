@@ -14,7 +14,9 @@ use super::icons::{size, symbolic};
 use super::{Ctx, Widgets};
 use crate::backend::Command;
 use crate::clock::{clock_text, date_text, drawing};
-use crate::present::{Page, UPDATE_TOOLTIP, refresh_button, update_line, weather_icon_name};
+use crate::present::{
+    Page, UPDATE_TOOLTIP, refresh_button, refresh_widths, update_line, weather_icon_name,
+};
 use crate::view::View;
 
 /// Widest the clock gets.
@@ -93,6 +95,41 @@ fn control_button(
         button.add_css_class(class);
     }
     (button, image, label)
+}
+
+/// A control button that keeps one size whatever it says: as wide as it
+/// is with each of `widths`, it shows its label (set through the label
+/// returned) centred in that width, so the controls around it stay put.
+fn steady_button(icon: &str, widths: &[String], classes: &[&str]) -> (gtk::Button, gtk::Label) {
+    let content = |text: &str| {
+        let label = gtk::Label::new(Some(text));
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        content.set_halign(gtk::Align::Center);
+        content.append(&symbolic(icon, size::CONTROL));
+        content.append(&label);
+        (content, label)
+    };
+    // A homogeneous stack is as big as its biggest page, shown or not: one
+    // page for each width, and the one shown.
+    let stack = gtk::Stack::builder()
+        .hhomogeneous(true)
+        .vhomogeneous(true)
+        .build();
+    for text in widths {
+        let (sizer, _) = content(text);
+        // Only there for its size: not read out.
+        sizer.update_state(&[gtk::accessible::State::Hidden(true)]);
+        stack.add_child(&sizer);
+    }
+    let (shown, label) = content(widths.first().map_or("", String::as_str));
+    stack.add_child(&shown);
+    stack.set_visible_child(&shown);
+    let button = gtk::Button::builder().child(&stack).build();
+    button.add_css_class("control");
+    for class in classes {
+        button.add_css_class(class);
+    }
+    (button, label)
 }
 
 pub fn build(ctx: &Rc<Ctx>) -> Hero {
@@ -180,8 +217,8 @@ impl Controls {
     fn new(ctx: &Rc<Ctx>) -> Self {
         let (sources_button, sources_icon, _) =
             control_button("view-list-symbolic", "Sources", &[]);
-        let (refresh_button, _, refresh_label) =
-            control_button("view-refresh-symbolic", "Refresh", &["primary"]);
+        let (refresh_button, refresh_label) =
+            steady_button("view-refresh-symbolic", &refresh_widths(), &["primary"]);
         let (settings_button, filter_dot) = settings_button();
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.append(&sources_button);

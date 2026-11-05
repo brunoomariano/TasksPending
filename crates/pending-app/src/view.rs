@@ -24,20 +24,22 @@ pub const DEFAULT_AUTO_REFRESH_MINUTES: u32 = 1;
 pub enum Stage {
     #[default]
     Picked,
-    Doing,
+    /// Saved under its first name, Doing, which 0.7.0 wrote.
+    #[serde(rename = "doing")]
+    InProgress,
     /// Done here; still to be marked done at its source.
     Done,
 }
 
 impl Stage {
     /// The columns in order.
-    pub const ALL: [Stage; 3] = [Stage::Picked, Stage::Doing, Stage::Done];
+    pub const ALL: [Stage; 3] = [Stage::Picked, Stage::InProgress, Stage::Done];
 
     /// The column's name.
     pub fn name(self) -> &'static str {
         match self {
             Self::Picked => "Picked",
-            Self::Doing => "Doing",
+            Self::InProgress => "In Progress",
             Self::Done => "Done / to mark",
         }
     }
@@ -269,7 +271,7 @@ mod tests {
         view.expanded.insert("Work/github".to_owned());
         view.open_columns.insert("Work/github/Review".to_owned());
         view.hidden.insert("board:Personal".to_owned());
-        view.set_stage("gh:2", Stage::Doing);
+        view.set_stage("gh:2", Stage::InProgress);
         view.save(&path);
         assert_eq!(View::load(&path), view);
 
@@ -295,9 +297,9 @@ mod tests {
     fn remembers_how_far_along_each_picked_card_is() {
         let mut view = View::default();
         assert_eq!(view.stage("gh:1"), Stage::Picked);
-        view.set_stage("gh:1", Stage::Doing);
+        view.set_stage("gh:1", Stage::InProgress);
         view.set_stage("gh:2", Stage::Done);
-        assert_eq!(view.stage("gh:1"), Stage::Doing);
+        assert_eq!(view.stage("gh:1"), Stage::InProgress);
         assert_eq!(view.stage("gh:2"), Stage::Done);
         view.set_stage("gh:1", Stage::Picked);
         assert_eq!(view.stage("gh:1"), Stage::Picked);
@@ -312,7 +314,7 @@ mod tests {
         assert_eq!(view.stage("gh:2"), Stage::Picked);
         assert_eq!(
             Stage::ALL.map(Stage::name),
-            ["Picked", "Doing", "Done / to mark"]
+            ["Picked", "In Progress", "Done / to mark"]
         );
     }
 
@@ -331,6 +333,17 @@ mod tests {
         let view = View::load(&path);
         assert_eq!(view.board.as_deref(), Some("Work"));
         assert!(view.stages.is_empty());
+
+        // In Progress was called Doing, and is still saved under that name.
+        fs::write(&path, r#"{"stages": {"gh:1": "doing"}}"#).unwrap();
+        let view = View::load(&path);
+        assert_eq!(view.stage("gh:1"), Stage::InProgress);
+        view.save(&path);
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains(r#""gh:1": "doing""#)
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

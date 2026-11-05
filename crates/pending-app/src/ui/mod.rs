@@ -740,14 +740,14 @@ fn first_cards(ctx: &Ctx) -> Vec<pending_core::PendingCard> {
 /// Sends `cards` to the Activity, one at each stage in turn, with an
 /// alert in an hour on the one under way when asked.
 fn pick_along_the_stages(ctx: &Rc<Ctx>, cards: &[pending_core::PendingCard], with_alert: bool) {
-    let stages = [Stage::Picked, Stage::Doing, Stage::Done];
+    let stages = [Stage::Picked, Stage::InProgress, Stage::Done];
     for (card, stage) in cards.iter().zip(stages) {
         ctx.send(Command::SetMark {
             id: card.id.clone(),
             marked: true,
         });
         ctx.change_view(|view| view.set_stage(&card.id, stage));
-        if with_alert && stage == Stage::Doing {
+        if with_alert && stage == Stage::InProgress {
             ctx.set_alert(
                 &card.id,
                 Alert {
@@ -778,7 +778,7 @@ fn stage_demo(ctx: &Rc<Ctx>) {
                 | todos
                     .add(
                         "Try an alert",
-                        "15 min on a card in Doing: the desktop notification names it",
+                        "15 min on a card in progress: the desktop notification names it",
                     )
                     .is_some()
         });

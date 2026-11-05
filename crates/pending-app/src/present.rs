@@ -162,7 +162,7 @@ pub const ACTIVITY_HINT: &str = "Pick cards on the Board to bring them here.";
 fn stage_empty_note(stage: Stage) -> &'static str {
     match stage {
         Stage::Picked => "Nothing picked",
-        Stage::Doing => "Nothing under way",
+        Stage::InProgress => "Nothing under way",
         Stage::Done => "Nothing to mark",
     }
 }
@@ -1224,8 +1224,8 @@ mod tests {
             labels(card_menu(just_picked, Place::Activity)),
             [
                 (
-                    "Move to Doing".to_owned(),
-                    Some(CardAction::Stage(Stage::Doing))
+                    "Move to In Progress".to_owned(),
+                    Some(CardAction::Stage(Stage::InProgress))
                 ),
                 (
                     "Move to Done".to_owned(),
@@ -1244,8 +1244,8 @@ mod tests {
                     Some(CardAction::Stage(Stage::Picked))
                 ),
                 (
-                    "Back to Doing".to_owned(),
-                    Some(CardAction::Stage(Stage::Doing))
+                    "Back to In Progress".to_owned(),
+                    Some(CardAction::Stage(Stage::InProgress))
                 ),
                 ("Remove from Activity".to_owned(), Some(CardAction::Unpick)),
                 ("Alert me about".to_owned(), None),
@@ -1323,7 +1323,7 @@ mod tests {
             .add("Write the release notes", "for 0.7")
             .unwrap();
         let second = session.todos.add("Call the bank", "").unwrap();
-        session.todos.pick(&second, Some(Stage::Doing));
+        session.todos.pick(&second, Some(Stage::InProgress));
         let view = View {
             board: Some("Work".to_owned()),
             ..View::default()
@@ -1343,7 +1343,7 @@ mod tests {
             ("for 0.7", "Todo")
         );
         assert!(card.local && card.url.is_none() && card.stage.is_none());
-        assert_eq!(stack.cards[1].stage, Some(Stage::Doing));
+        assert_eq!(stack.cards[1].stage, Some(Stage::InProgress));
 
         let doing = &shown.activity.stages[1];
         assert_eq!(doing.cards.len(), 1);
@@ -1414,15 +1414,15 @@ mod tests {
         );
     }
 
-    /// The Activity area has three stages, Picked, Doing and Done / to
-    /// mark; a picked card is at Picked until moved, and the cards at a
+    /// The Activity area has three stages, Picked, In Progress and Done /
+    /// to mark; a picked card is at Picked until moved, and the cards at a
     /// stage keep their picking order. Each empty stage says so, and while
     /// nothing is picked a hint points to the Board; the Activity tab
     /// counts the picked cards and the Board tab counts nothing.
     #[test]
     fn lays_out_the_activity_by_stage() {
         let mut view = View::default();
-        view.set_stage("gh:2", Stage::Doing);
+        view.set_stage("gh:2", Stage::InProgress);
         view.set_stage("gh:3", Stage::Done);
         let shown = page(&snapshot(), &view);
         let activity = &shown.activity;
@@ -1446,14 +1446,17 @@ mod tests {
             stages,
             [
                 ("Picked", vec!["j:1"]),
-                ("Doing", vec!["gh:2"]),
+                ("In Progress", vec!["gh:2"]),
                 ("Done / to mark", vec![]),
             ],
             "gh:3 is not picked, so its stage means nothing"
         );
         assert_eq!(activity.stages[0].stage, Stage::Picked);
         assert_eq!(activity.stages[2].empty_note, "Nothing to mark");
-        assert_eq!(activity.stages[1].cards[0].card.stage, Some(Stage::Doing));
+        assert_eq!(
+            activity.stages[1].cards[0].card.stage,
+            Some(Stage::InProgress)
+        );
         assert_eq!(
             tabs(Some(&shown)).map(|tab| (tab.label, tab.count)),
             [("Activity", Some(2)), ("Board", None)]

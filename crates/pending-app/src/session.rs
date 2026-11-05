@@ -212,8 +212,11 @@ mod tests {
         let mut todos = Todos::default();
         let id = todos.add("Call the bank", "").unwrap();
         assert_eq!(todos.get(&id).and_then(|t| t.stage), None);
-        assert!(todos.pick(&id, Some(Stage::Doing)));
-        assert_eq!(todos.get(&id).and_then(|t| t.stage), Some(Stage::Doing));
+        assert!(todos.pick(&id, Some(Stage::InProgress)));
+        assert_eq!(
+            todos.get(&id).and_then(|t| t.stage),
+            Some(Stage::InProgress)
+        );
         assert!(todos.pick(&id, None));
         assert_eq!(todos.get(&id).and_then(|t| t.stage), None);
         assert!(!todos.pick("todo:9", Some(Stage::Picked)));

@@ -207,7 +207,7 @@ button.tab:checked {
 
 button.tab:checked .count {
   background: alpha({{accent}}, 0.2);
-  color: {{accent-ink}};
+  color: {{checked-count}};
 }
 
 /* The stages of the Activity area. */

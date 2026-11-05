@@ -86,7 +86,7 @@ window.tasks-pending {
 .controls button.control.primary {
   border-color: transparent;
   background: {{accent}};
-  color: #ffffff;
+  color: {{on-accent}};
 }
 
 .controls button.control.primary:hover {
@@ -505,7 +505,7 @@ dialog.tasks-pending entry:focus-within {
 .tasks-pending button.control.wake.primary {
   border-color: transparent;
   background: {{accent}};
-  color: #ffffff;
+  color: {{on-accent}};
 }
 
 .tasks-pending button.control.wake.primary:hover {

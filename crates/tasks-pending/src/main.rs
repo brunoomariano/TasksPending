@@ -86,6 +86,9 @@ enum SceneArg {
     Activity,
     /// The same in the light scheme.
     Light,
+    /// The same in a sample Omarchy theme, as when the window follows
+    /// Omarchy's.
+    Omarchy,
     /// The Board, with two cards picked.
     Board,
     /// The Sources dialog.
@@ -103,6 +106,7 @@ impl From<SceneArg> for Scene {
         match scene {
             SceneArg::Activity => Self::Activity,
             SceneArg::Light => Self::Light,
+            SceneArg::Omarchy => Self::Omarchy,
             SceneArg::Board => Self::Board,
             SceneArg::Sources => Self::Sources,
             SceneArg::Settings => Self::Settings,

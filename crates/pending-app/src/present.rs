@@ -17,7 +17,8 @@ use crate::backend::{Command, Refusal};
 use crate::session::{Session, Todo};
 use crate::snooze::{self, until_text};
 use crate::state::ViewState;
-use crate::view::{AUTO_REFRESH_CHOICES, Stage, View, column_key, group_key, hide_key};
+use crate::theme::OmarchyTheme;
+use crate::view::{AUTO_REFRESH_CHOICES, Stage, Theme, View, column_key, group_key, hide_key};
 
 /// Cards a stack shows before "show more".
 pub const COLUMN_LIMIT: usize = 5;
@@ -439,6 +440,37 @@ pub fn interval_choices(view: &View) -> Vec<Choice<u32>> {
             active: view.auto_refresh_minutes == minutes,
         })
         .collect()
+}
+
+/// Settings' themes: the window's own colours, or Omarchy's.
+pub fn theme_choices(view: &View) -> Vec<Choice<Theme>> {
+    [
+        (Theme::TasksPending, "TasksPending"),
+        (Theme::Omarchy, "Omarchy"),
+    ]
+    .into_iter()
+    .map(|(theme, label)| Choice {
+        label: label.to_owned(),
+        value: theme,
+        active: view.theme == theme,
+    })
+    .collect()
+}
+
+/// The line under the themes while the window follows Omarchy: the theme
+/// it follows, or why there is none to follow (`omarchy` is the last
+/// reading, `None` before the first).
+pub fn theme_note(view: &View, omarchy: Option<&Result<OmarchyTheme, String>>) -> Option<String> {
+    if view.theme != Theme::Omarchy {
+        return None;
+    }
+    Some(match omarchy? {
+        Ok(OmarchyTheme {
+            name: Some(name), ..
+        }) => format!("Follows Omarchy's theme, {name}, and changes with it."),
+        Ok(_) => "Follows Omarchy's theme and changes with it.".to_owned(),
+        Err(why) => format!("Nothing to follow ({why}): the window keeps its own colours."),
+    })
 }
 
 /// A show/hide switch in Settings.
@@ -1873,5 +1905,48 @@ mod tests {
                 "{label} is wider than every one of {widths:?}"
             );
         }
+    }
+
+    /// Settings offers the window's own colours and Omarchy's, the one in
+    /// use lit. Following Omarchy, it says which theme it follows, or why
+    /// the window keeps its own colours.
+    #[test]
+    fn offers_its_own_colours_or_omarchy() {
+        let lit = |view: &View| -> Vec<(String, bool)> {
+            theme_choices(view)
+                .into_iter()
+                .map(|choice| (choice.label, choice.active))
+                .collect()
+        };
+        let mut view = View::default();
+        assert_eq!(
+            lit(&view),
+            [
+                ("TasksPending".to_owned(), true),
+                ("Omarchy".to_owned(), false)
+            ]
+        );
+        let sample = crate::theme::parse_omarchy(crate::theme::SAMPLE).unwrap();
+        assert_eq!(theme_note(&view, Some(&Ok(sample.clone()))), None);
+
+        view.theme = Theme::Omarchy;
+        assert_eq!(theme_choices(&view)[1].value, Theme::Omarchy);
+        assert_eq!(lit(&view)[1], ("Omarchy".to_owned(), true));
+        let named = crate::theme::OmarchyTheme {
+            name: Some("Osaka Jade".to_owned()),
+            ..sample.clone()
+        };
+        assert_eq!(
+            theme_note(&view, Some(&Ok(named))).as_deref(),
+            Some("Follows Omarchy's theme, Osaka Jade, and changes with it.")
+        );
+        assert_eq!(
+            theme_note(&view, Some(&Ok(sample))).as_deref(),
+            Some("Follows Omarchy's theme and changes with it.")
+        );
+        assert_eq!(
+            theme_note(&view, Some(&Err("no Omarchy theme here".to_owned()))).as_deref(),
+            Some("Nothing to follow (no Omarchy theme here): the window keeps its own colours.")
+        );
     }
 }

@@ -19,5 +19,6 @@ pending-runtime = { path = "../pending-runtime" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "sync", "time"] }
 tracing.workspace = true

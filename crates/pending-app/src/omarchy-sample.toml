@@ -1,0 +1,12 @@
+# A made-up Omarchy theme for the README picture of the window following
+# Omarchy (`tasks-pending sandbox --screenshot <file> --scene omarchy`),
+# laid out as Omarchy's colors.toml. It is not one of Omarchy's themes.
+mode = "dark"
+
+accent = "#e3a15c"
+background = "#1d1a17"
+foreground = "#e8dcc8"
+
+green = "#9cbf6d"
+yellow = "#e6c15a"
+red = "#e06c5f"

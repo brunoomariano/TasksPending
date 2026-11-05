@@ -4,7 +4,7 @@
 
 TasksPending is a local-first dashboard of your pending work: pull requests, issues, tasks and events from the tools you use, in one native Linux window. A small daemon refreshes the sources in the background; the window reads it.
 
-![TasksPending with simulated cards: a clock and weather, and the Activity tab with the picked cards in three stages, Picked, Doing and Done / to mark](docs/assets/tasks-pending-sandbox.png)
+![TasksPending with simulated cards: a clock and weather, and the Activity tab with the picked cards in three stages, Picked, In Progress and Done / to mark](docs/assets/tasks-pending-sandbox.png)
 
 Every picture here comes from `tasks-pending sandbox`, which shows simulated cards without any configuration or credentials; `make screenshots` regenerates them.
 
@@ -12,12 +12,13 @@ Every picture here comes from `tasks-pending sandbox`, which shows simulated car
 
 - **One group per source, in your order.** GitHub, GitLab, Jira, Linear, Plane, Todoist, Google Calendar and iCal feeds, each with its logo. Inside a group, every stack is a filter you declare in the config; stacks collapse, and long ones show their first cards.
 - **What to do next.** GitHub pull requests are split by next action (review requested, returned to you, ready to merge, not approved yet, drafts), with review state, checks and comment counts on the card.
-- **Activity.** Send the cards you are working on to the Activity tab, a board of three stages: Picked, Doing, Done / to mark. The window opens on it; the Board tab holds the groups, where the picked cards stay highlighted.
+- **Activity.** Send the cards you are working on to the Activity tab, a board of three stages: Picked, In Progress, Done / to mark. The window opens on it; the Board tab holds the groups, where the picked cards stay highlighted.
 - **One menu per card.** Every action sits behind a three-dot button on the card: send to Activity, move between stages, snooze, alert, and for a todo edit and delete.
 - **Snooze.** Hide a card for an hour, until tomorrow, until next week, or until it changes. It always comes back when the item changes, and nothing is written to the provider.
 - **Alerts.** Ask to be alerted about a card in 15 minutes, 30 minutes, an hour or three hours: when the time comes, a desktop notification names it, and clicking it brings the window up.
 - **Todos.** Write down something that comes from no source: it is a card like the others, in a Todo group on the Board, and it lasts only while the window is open.
 - **What changed.** A small dot marks the cards that changed since you last looked.
+- **Omarchy's theme.** The window has its own palette, dark unless the system asks for light. On Omarchy, Settings can switch it to the theme Omarchy applied, and it changes with it.
 - **Local only.** The daemon listens on this machine, reads tokens from the environment, and keeps your marks and snoozes in a state folder. The window reads it over loopback; it reaches the network itself only for the sources' logos, and for the providers when no daemon is running and it runs the sources in its own process.
 
 <p align="center">
@@ -27,7 +28,7 @@ Every picture here comes from `tasks-pending sandbox`, which shows simulated car
 
 <p align="center">
   <img src="docs/assets/tasks-pending-sources.png" alt="The Sources dialog: each source with its board, status and last fetch" width="49%">
-  <img src="docs/assets/tasks-pending-settings.png" alt="The Settings dialog: board filter, auto-refresh and show or hide switches" width="49%">
+  <img src="docs/assets/tasks-pending-settings.png" alt="The Settings dialog: board filter, auto-refresh, theme and show or hide switches" width="49%">
 </p>
 
 <p align="center">
@@ -35,7 +36,11 @@ Every picture here comes from `tasks-pending sandbox`, which shows simulated car
   <img src="docs/assets/tasks-pending-sandbox-light.png" alt="The same window in the light scheme" width="49%">
 </p>
 
-The window is dark unless the system asks for light, with its own palette either way.
+<p align="center">
+  <img src="docs/assets/tasks-pending-omarchy.png" alt="The same window following an Omarchy theme: its background, text and accent, the rest mixed from them" width="49%">
+</p>
+
+The window is dark unless the system asks for light, with its own palette either way, or follows Omarchy's theme when Settings says so.
 
 ## Install
 

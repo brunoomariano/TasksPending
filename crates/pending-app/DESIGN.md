@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: TasksPending window
-description: A quiet board of pending work for a Linux desktop, drawn with GTK4 CSS from the app's own palette.
+description: A quiet board of pending work for a Linux desktop, drawn with GTK4 CSS from the app's own palette, or from Omarchy's theme when asked.
 colors:
   primary: "#7c8cff"
   on-primary: "#ffffff"
@@ -109,17 +109,19 @@ Dark, the default:
 
 Light, when the system asks: Page (#f6f7f9), Group (#ffffff), Card (#f1f3f6), Card hover (#e8ebf0), Border (#e4e7ec), Strong border (#d3d8e0), Text (#15181e), Text 2 (#555d6b), Text 3 (#8a91a0), Accent (#4f5ee8), OK (#16a36a), Warning (#c98a06), Danger (#d9364e).
 
+Omarchy, when chosen in Settings: the theme Omarchy applied, dark or light as its `colors.toml` says. Its background, text and accent are used as they are, and its green, yellow and red for the states (the window's own when it has none). The other colours are mixed from those in the same proportions as the palettes above: the surfaces and borders from the background towards the text (a light theme's group surface towards white), Text 2 and Text 3 from the text towards the background, the accent hover towards white. Text on the accent is white or the theme's dark colour (its background, or its text on a light theme), whichever has more contrast with the accent. The window changes with the theme.
+
 Borders carry the structure; shadows only lift the card menu and the dialogs, and never blur anything behind them.
 
 ## Typography
 
-The system interface font (Adwaita Sans on GNOME, whatever Omarchy sets), never a downloaded one. One family; weight and size do the work: 600 for titles, 400 for bodies, 500 for buttons. Stack names are upper-case at 0.78em with 0.04em tracking, the one label style. Bodies clamp at two lines with the whole text in the tooltip. Numbers in the update line use tabular figures.
+The system interface font (Adwaita Sans on GNOME, whatever Omarchy sets), never a downloaded one. One family; weight and size do the work: 600 for titles, 400 for bodies, 500 for buttons. Stack names are upper-case at 0.78em with 0.04em tracking, the one label style. Bodies clamp at two lines with the whole text in the tooltip. Numbers in the update line and in the controls use tabular figures.
 
 The clock is not text: it is the "bricks" font drawn as blocks (6 wide, 5 tall, each block twice as tall as wide), in the accent colour, filling the width of the hero up to 880px.
 
 ## Layout
 
-Hero: a centre box, weather at the start (hidden under 1440px), the clock in a clamp in the middle, the controls column at the end; 24px top, 28px sides, 20px bottom, a 1px border below. Under it, a row of two tab pills, Activity and Board; Activity carries a count pill when it holds cards. Activity: three stage columns of equal width (Picked, Doing, Done / to mark), at least 240px, 20px apart, each a group-like box with an upper-case title and a count, cards 8px apart; when nothing is picked, one line of Text 3 with a link to the Board. Board: a flow box of groups at least 290px wide, 20px apart, 28px side gutters, wrapping onto more rows when the window is narrow; a group keeps its natural height; the Todo group comes first. Inside a group: a header row (logo in a tile, name, board badge, empty toggle at the end), then stacks 14px apart with a 1px rule between them; cards 8px apart.
+Hero: a centre box, weather at the start (hidden under 1440px), the clock in a clamp in the middle, the controls column at the end; 24px top, 28px sides, 20px bottom, a 1px border below. Under it, a row of two tab pills, Activity and Board; Activity carries a count pill when it holds cards. Activity: three stage columns of equal width (Picked, In Progress, Done / to mark), at least 240px, 20px apart, each a group-like box with an upper-case title and a count, cards 8px apart; when nothing is picked, one line of Text 3 with a link to the Board. Board: a flow box of groups at least 290px wide, 20px apart, 28px side gutters, wrapping onto more rows when the window is narrow; a group keeps its natural height; the Todo group comes first. Inside a group: a header row (logo in a tile, name, board badge, empty toggle at the end), then stacks 14px apart with a 1px rule between them; cards 8px apart.
 
 ## Elevation & Depth
 
@@ -137,10 +139,10 @@ Soft corners: 12px for groups and stage columns, dialog rows at 8px, cards at 10
 - Todo group: the group with a check icon in its tile, a "not saved" badge and a New control; its dialog is two entries, the note about not saving in Text 3, Cancel and the one primary button.
 - Stack header: a flat button with a chevron (rotated when collapsed), the upper-case name, a count pill, and the dot when a card inside changed.
 - Group: group surface, 1px border, 12px radius; the logo sits in a 28px tile on the card surface.
-- Controls: 34px buttons with a 1px border on the group surface; Refresh is the one filled with accent; the gear carries a 7px accent dot while a filter is on.
+- Controls: 34px buttons with a 1px border on the group surface; Refresh is the one filled with accent, and as wide as its longest label ("Refreshing…") whatever it says, its icon and label centred, so nothing beside it moves; the gear carries a 7px accent dot while a filter is on.
 - Notices: a bordered box tinted 8% with the state colour (warning for stale data, danger for no data).
 - Status chip (Sources dialog): the state colour as text on a 10% tint with a 25% ring, pill shaped.
-- Dialogs: group surface, a flat header bar, 20px side padding, rows as bordered boxes; filters as pills that fill with the accent tint when active; switches in libadwaita's own style with the accent.
+- Dialogs: group surface, a flat header bar, 20px side padding, rows as bordered boxes; filters as pills that fill with the accent tint when active (Settings: Board, Auto-refresh, Theme, then the show or hide switches; under the themes, while following Omarchy, one line in Text 3 names the theme or says why there is none); switches in libadwaita's own style with the accent.
 - Empty state: a dashed 1px border, 8px radius, a check icon and "Nothing pending." in Text 3.
 
 ## Motion

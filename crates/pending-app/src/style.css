@@ -69,6 +69,11 @@ window.tasks-pending {
   transition: background 120ms ease-out, border-color 120ms ease-out;
 }
 
+/* Digits of one width, so a countdown in a label does not move it. */
+.controls button.control label {
+  font-feature-settings: "tnum";
+}
+
 .controls button.control:hover {
   border-color: {{border-strong}};
   background: {{surface-2}};

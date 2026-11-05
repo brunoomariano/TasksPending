@@ -572,15 +572,9 @@ pub struct Refreshed {
 /// as the daemon said, and a failure is a note, too long for a button.
 pub fn refreshed(manual: bool, result: &Result<(), Refusal>) -> Refreshed {
     let (hold, note) = match result {
-        Ok(()) => (Some((REFRESH_COOLDOWN, "Refreshing…".to_owned())), None),
+        Ok(()) => (Some((REFRESH_COOLDOWN, REFRESHING.to_owned())), None),
         Err(_) if !manual => (None, None),
-        Err(Refusal::Wait(secs)) => (
-            Some((
-                Duration::from_secs(*secs),
-                format!("Refresh (wait {secs}s)"),
-            )),
-            None,
-        ),
+        Err(Refusal::Wait(secs)) => (Some((Duration::from_secs(*secs), wait_label(*secs))), None),
         Err(Refusal::Failed(error)) => (None, Some(format!("Could not refresh ({error})"))),
     };
     Refreshed { hold, note }
@@ -595,6 +589,26 @@ pub fn link_note(error: &str) -> String {
 /// end a later one.
 pub fn lasting(hold: Option<(Instant, String)>, now: Instant) -> Option<(Instant, String)> {
     hold.filter(|(until, _)| now < *until)
+}
+
+/// The Refresh button's label while a refresh it asked for runs.
+const REFRESHING: &str = "Refreshing…";
+
+/// The Refresh button's label while the daemon asks to wait `secs`.
+fn wait_label(secs: u64) -> String {
+    format!("Wait {secs}s")
+}
+
+/// The texts the Refresh button is sized for, so it keeps one width
+/// whatever it says: at rest, refreshing, and waiting as long as a daemon
+/// can ask (the cooldown is seconds; two digits leave room for a longer
+/// one).
+pub fn refresh_widths() -> Vec<String> {
+    vec![
+        refresh_button(None, Instant::now()).0,
+        REFRESHING.to_owned(),
+        wait_label(99),
+    ]
 }
 
 /// The Refresh button's label, and whether it can be pressed, at `now`.
@@ -1656,7 +1670,7 @@ mod tests {
         assert_eq!(
             refreshed(true, &Err(Refusal::Wait(7))),
             Refreshed {
-                hold: Some((Duration::from_secs(7), "Refresh (wait 7s)".to_owned())),
+                hold: Some((Duration::from_secs(7), "Wait 7s".to_owned())),
                 note: None,
             }
         );
@@ -1830,5 +1844,34 @@ mod tests {
             weather_icon_name(WeatherCondition::Unknown),
             "weather-overcast-symbolic"
         );
+    }
+
+    /// The Refresh button is sized for every text it shows, so it keeps
+    /// its width while it refreshes or waits: each label it can show
+    /// fits one it is sized for (the same words, no more digits), the
+    /// longest wait a daemon can ask included.
+    #[test]
+    fn sizes_the_refresh_button_for_every_label() {
+        let widths = refresh_widths();
+        let digits = |text: &str| text.chars().filter(char::is_ascii_digit).count();
+        let words =
+            |text: &str| -> String { text.chars().filter(|c| !c.is_ascii_digit()).collect() };
+        let mut shown = vec![refresh_button(None, Instant::now()).0];
+        shown.extend(refreshed(true, &Ok(())).hold.map(|(_, label)| label));
+        for secs in 1..=REFRESH_COOLDOWN.as_secs() {
+            shown.extend(
+                refreshed(true, &Err(Refusal::Wait(secs)))
+                    .hold
+                    .map(|(_, label)| label),
+            );
+        }
+        for label in shown {
+            assert!(
+                widths
+                    .iter()
+                    .any(|width| words(width) == words(&label) && digits(&label) <= digits(width)),
+                "{label} is wider than every one of {widths:?}"
+            );
+        }
     }
 }

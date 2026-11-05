@@ -10,6 +10,7 @@
 
 - The Activity stage Doing is now **In Progress**. Cards moved there in 0.7.0 stay there.
 - The Refresh button keeps one width whatever it says, so nothing beside it moves while it refreshes or waits; a refused refresh now reads "Wait 7s".
+- The window's own palette reads at 4.5:1 too, as the Omarchy one does: on dark, Text 3 and Text 2 are lighter and the primary button's text is dark on the accent; on light, the texts, OK, Warning, Danger and the accent as text are deeper. The count on the open tab is made to read on its tint, in every palette.
 
 ## 0.7.0
 

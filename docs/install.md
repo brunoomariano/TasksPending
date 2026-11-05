@@ -135,7 +135,7 @@ The window run without a daemon (`tasks-pending app --no-daemon`, or when none a
 
 Open **TasksPending** from the app launcher, or run `tasks-pending`. It looks for the daemon at `http://127.0.0.1:61000` (`--daemon <url>` for another port) and, when none answers, starts the sources itself on a loopback port of its own and says so under the controls. `--no-daemon` skips the daemon on purpose. What the window shows and how it behaves is in [operations.md](operations.md).
 
-**Omarchy**: the desktop entry makes the window a launcher app like any other, tiled by Hyprland. For a key that opens it or focuses it when it is already open, add to `~/.config/hypr/bindings.lua`:
+**Omarchy**: the desktop entry makes the window a launcher app like any other, tiled by Hyprland. Settings can also put an icon on Omarchy's bar that drops the window down over the screen and sends it away again, which `tasks-pending toggle` does from a key ([operations.md](operations.md#the-window)). For a key that opens the tiled window or focuses it when it is already open, add to `~/.config/hypr/bindings.lua`:
 
 ```lua
 o.bind("SUPER + ALT + T", "TasksPending", "omarchy-launch-or-focus TasksPending 'uwsm-app -- tasks-pending'")

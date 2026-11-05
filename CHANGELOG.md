@@ -5,11 +5,13 @@
 ### Features
 
 - **Theme** in Settings: **TasksPending**, the window's own colours and still the default, or **Omarchy**, which follows the theme Omarchy applied (dark or light as the theme says) and changes with it when you switch themes. The colours Omarchy's `colors.toml` does not name are mixed from its background, text and accent in the same proportions as the window's own palette. Text on the accent is white or dark, whichever stands out more on it. A theme colour that would be hard to read is lightened (darkened on a light theme) to 4.5:1 on what it is written on, keeping its hue, and a state the theme draws in grey is drawn in its text colour. The choice is kept in `app-view.json`.
+- **Omarchy bar** in Settings puts TasksPending's icon on Omarchy's bar, as a shell plugin the app writes and enables. A click drops the window down over the workspace you are on (floating, centred, 80% of the screen) on the page it was on, and the next sends it away; when TasksPending is not running, the click starts it dropped down. While dropped down, closing the window only hides it, keeping todos and alerts. `tasks-pending toggle` does the same from a key. It needs Omarchy's shell and Hyprland 0.55 or newer.
+- **Ctrl+Q** quits the window.
 
 ### Changed
 
 - The Activity stage Doing is now **In Progress**. Cards moved there in 0.7.0 stay there.
-- Todos live in the **Activity**: **New** at the end of the Picked column writes one down there, and its menu moves it along the stages. The Todo group is gone from the Board, and a todo's menu no longer has Send to or Remove from Activity; Delete is how it goes.
+- Todos live in the **Activity**: **New** at the end of the Picked column writes one down there, and its menu moves it along the stages. The Todo group is gone from the Board, and a todo's menu no longer has Send to or Remove from Activity; Delete is how it goes. Todos and alerts last as long as TasksPending runs, which the dialog now says.
 - The Refresh button keeps one width whatever it says, so nothing beside it moves while it refreshes or waits; a refused refresh now reads "Wait 7s".
 - The window's own palette reads at 4.5:1 too, as the Omarchy one does: on dark, Text 3 and Text 2 are lighter and the primary button's text is dark on the accent; on light, the texts, OK, Warning, Danger and the accent as text are deeper. The count on the open tab is made to read on its tint, in every palette.
 

@@ -282,14 +282,14 @@ impl Ctx {
         let id = card.id.clone();
         if card.local {
             match action {
-                CardAction::Pick => self.change_todos(|todos| todos.pick(&id, Some(Stage::Picked))),
-                CardAction::Unpick => self.change_todos(|todos| todos.pick(&id, None)),
                 CardAction::Stage(stage) => {
-                    self.change_todos(|todos| todos.pick(&id, Some(stage)));
+                    self.change_todos(|todos| todos.move_to(&id, stage));
                 }
                 CardAction::Edit => dialogs::show_todo(self, Some(&id)),
                 CardAction::Delete => self.change_session(|session| session.forget_todo(&id)),
-                CardAction::Snooze(_) => {}
+                // A todo lives in the Activity area and is the window's
+                // own: its menu offers neither.
+                CardAction::Pick | CardAction::Unpick | CardAction::Snooze(_) => {}
                 CardAction::Alert(_) | CardAction::CancelAlert => self.act_on_alert(card, action),
             }
             return;
@@ -919,17 +919,17 @@ fn stage_demo(ctx: &Rc<Ctx>) {
     });
 }
 
-/// Sets a screenshot's scene up once the first snapshot is in: three cards
-/// picked and moved along the stages for the Activity, two picked for the
-/// Board, one snoozed for the snoozed list, and the dialog opened a moment
-/// later.
+/// Sets a screenshot's scene up once the first snapshot is in: a todo in
+/// Picked, three cards picked and moved along the stages for the Activity
+/// (and under the todo dialog), two picked for the Board, one snoozed for
+/// the snoozed list, and the dialog opened a moment later.
 fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
     use crate::Scene;
     let ctx = ctx.clone();
     gtk::glib::timeout_add_local_once(SCENE_AFTER, move || {
         let firsts = first_cards(&ctx);
         let ids: Vec<String> = firsts.iter().map(|card| card.id.clone()).collect();
-        // A todo written down in the window, for every picture of the page.
+        // A todo written down in the window, in Picked.
         ctx.change_todos(|todos| {
             todos
                 .add(
@@ -939,10 +939,10 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
                 .is_some()
         });
         match scene {
-            Scene::Activity | Scene::Light | Scene::Omarchy => {
+            Scene::Activity | Scene::Light | Scene::Omarchy | Scene::Todo => {
                 pick_along_the_stages(&ctx, &firsts, true)
             }
-            Scene::Board | Scene::Todo | Scene::Settings | Scene::Sources => {
+            Scene::Board | Scene::Settings | Scene::Sources => {
                 ctx.show_tab(Tab::Board);
                 for id in ids.into_iter().take(2) {
                     ctx.send(Command::SetMark { id, marked: true });

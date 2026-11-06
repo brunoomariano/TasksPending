@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
+
+The window can wear Omarchy's theme and drop down from Omarchy's bar, todos move into the Activity, and every palette reads at 4.5:1.
 
 ### Features
 

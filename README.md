@@ -4,9 +4,13 @@
 
 TasksPending is a local-first dashboard of your pending work: pull requests, issues, tasks and events from the tools you use, in one native Linux window. A small daemon refreshes the sources in the background; the window reads it.
 
-![TasksPending with simulated cards: a clock and weather, and the Activity tab with the picked cards in three stages, Picked, In Progress and Done / to mark](docs/assets/tasks-pending-sandbox.png)
+![TasksPending dropped down from Omarchy's bar: the window floats over an empty workspace, centred at 80% of the screen, on the Activity tab with simulated cards in Picked, In Progress and Done / to mark](docs/assets/tasks-pending-dropdown.png)
 
-Every picture here comes from `tasks-pending sandbox`, which shows simulated cards without any configuration or credentials; `make screenshots` regenerates them.
+<p align="center">
+  <img src="docs/assets/tasks-pending-bar.png" alt="Close-up of Omarchy's bar: TasksPending's icon, ringed, next to the tray, with the dropped-down window below it" width="590">
+</p>
+
+A click on the icon (ringed) drops the window down, and the next sends it away. Every picture here comes from `tasks-pending sandbox`, which shows simulated cards without any configuration or credentials: `make screenshots` regenerates the window's own, and `scripts/dropdown-picture.sh` the two on Omarchy's desktop, run there by hand.
 
 ## What it shows
 
@@ -38,6 +42,7 @@ Every picture here comes from `tasks-pending sandbox`, which shows simulated car
 </p>
 
 <p align="center">
+  <img src="docs/assets/tasks-pending-sandbox.png" alt="The window on its own, tiled as the launcher opens it: a clock and weather, and the Activity tab with the picked cards in three stages, Picked, In Progress and Done / to mark" width="49%">
   <img src="docs/assets/tasks-pending-omarchy.png" alt="The same window following an Omarchy theme: its background, text and accent, the rest mixed from them" width="49%">
 </p>
 

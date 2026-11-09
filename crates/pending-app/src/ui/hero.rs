@@ -14,6 +14,7 @@ use super::icons::{size, symbolic};
 use super::{Ctx, Widgets};
 use crate::backend::Command;
 use crate::clock::{clock_text, date_text, drawing};
+use crate::keymap::{Command as KeyCommand, hinted};
 use crate::present::{
     Page, UPDATE_TOOLTIP, refresh_button, refresh_widths, update_line, weather_icon_name,
 };
@@ -220,6 +221,8 @@ impl Controls {
         let (refresh_button, refresh_label) =
             steady_button("view-refresh-symbolic", &refresh_widths(), &["primary"]);
         let (settings_button, filter_dot) = settings_button();
+        sources_button.set_tooltip_text(Some(&hinted("Show the sources", KeyCommand::Sources)));
+        refresh_button.set_tooltip_text(Some(&hinted("Refresh the sources", KeyCommand::Refresh)));
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         actions.append(&sources_button);
         actions.append(&refresh_button);
@@ -388,7 +391,7 @@ pub fn update_controls(ctx: &Rc<Ctx>, widgets: &Widgets, page: Option<&Page>, vi
     controls.refresh_label.set_label(&label);
     controls
         .settings_button
-        .set_tooltip_text(Some(&view.settings_label()));
+        .set_tooltip_text(Some(&hinted(&view.settings_label(), KeyCommand::Settings)));
     controls.filter_dot.set_visible(view.is_filtering());
     let Some(page) = page else {
         controls.updated_line.set_visible(false);
@@ -447,6 +450,11 @@ pub fn update_weather(ctx: &Rc<Ctx>, widgets: &Widgets) {
 }
 
 /// A short note under the controls, e.g. why a change was refused.
+/// The Refresh button, for its key to click.
+pub fn refresh_control(widgets: &Widgets) -> gtk::Button {
+    widgets.hero.controls.refresh_button.clone()
+}
+
 pub fn show_note(widgets: &Widgets, text: &str) {
     let note = widgets.hero.controls.note.clone();
     note.set_label(text);

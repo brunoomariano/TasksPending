@@ -11,6 +11,7 @@ use super::dialogs;
 use super::hero::show_note;
 use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped};
+use crate::keymap::{Command as KeyCommand, hinted};
 use crate::present::{
     ActivityItem, ActivityView, BoardView, CardAction, CardView, GroupView, MenuItem, Notice,
     Place, StackView, StageView, TODO_UNSAVED, Tab, card_menu, link_note,
@@ -271,7 +272,7 @@ fn new_todo_button(ctx: &Rc<Ctx>) -> gtk::Button {
         .child(&content)
         .halign(gtk::Align::End)
         .hexpand(true)
-        .tooltip_text("Write down a todo")
+        .tooltip_text(hinted("Write down a todo", KeyCommand::NewTodo))
         .build();
     add.add_css_class("empty-toggle");
     let ctx = ctx.clone();

@@ -626,3 +626,33 @@ button.filter:checked {
   border-color: {{border-strong}};
   background: {{surface-2}};
 }
+
+/* The keys dialog: what a key does, then its keys as small caps. */
+list.keys {
+  background: transparent;
+}
+
+list.keys row {
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+
+list.keys row:selected {
+  background: alpha({{accent}}, 0.16);
+  color: {{text}};
+}
+
+list.keys row.keys-section {
+  padding: 12px 10px 4px;
+}
+
+.keycap {
+  min-width: 14px;
+  padding: 1px 7px;
+  border: 1px solid {{border-strong}};
+  border-radius: 6px;
+  background: {{surface-2}};
+  color: {{text-2}};
+  font-size: 0.85em;
+  font-feature-settings: "tnum";
+}

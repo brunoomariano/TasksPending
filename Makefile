@@ -56,6 +56,7 @@ screenshots: ## Regenerate the README pictures from the sandbox window
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-settings.png --scene settings
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-snoozed.png --scene snoozed
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-todo.png --scene todo
+	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-keys.png --scene keys
 
 changelog-check: ## Check CHANGELOG.md (one section per version, newest first) and the check itself
 	./scripts/test-check-changelog.sh

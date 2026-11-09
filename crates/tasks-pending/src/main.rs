@@ -101,6 +101,8 @@ enum SceneArg {
     Snoozed,
     /// The dialog that writes down a todo, over the Board.
     Todo,
+    /// The keys dialog, over the Activity.
+    Keys,
 }
 
 impl From<SceneArg> for Scene {
@@ -114,6 +116,7 @@ impl From<SceneArg> for Scene {
             SceneArg::Settings => Self::Settings,
             SceneArg::Snoozed => Self::Snoozed,
             SceneArg::Todo => Self::Todo,
+            SceneArg::Keys => Self::Keys,
         }
     }
 }

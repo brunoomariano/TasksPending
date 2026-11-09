@@ -7,6 +7,7 @@ use gtk4 as gtk;
 use gtk4::prelude::*;
 
 use super::Ctx;
+use crate::keymap::{Command as KeyCommand, hinted};
 use crate::present::{Tab, TabView, tabs};
 
 /// The tab buttons, updated in place.
@@ -27,7 +28,14 @@ pub fn build(ctx: &Rc<Ctx>) -> Tabs {
         let count = gtk::Label::builder().visible(false).build();
         count.add_css_class("count");
         content.append(&count);
-        let button = gtk::ToggleButton::builder().child(&content).build();
+        let key = match view.tab {
+            Tab::Activity => KeyCommand::ActivityTab,
+            Tab::Board => KeyCommand::BoardTab,
+        };
+        let button = gtk::ToggleButton::builder()
+            .child(&content)
+            .tooltip_text(hinted(view.label, key))
+            .build();
         button.add_css_class("tab");
         // One of the two is always down: the group keeps the one pressed
         // from being released by a second click.

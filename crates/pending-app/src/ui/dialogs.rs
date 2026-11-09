@@ -30,7 +30,7 @@ fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) {
 }
 
 /// A dialog titled `title` holding `content`, not shown yet.
-fn dialog(title: &str, content: &gtk::Box) -> adw::Dialog {
+pub(super) fn dialog(title: &str, content: &gtk::Box) -> adw::Dialog {
     content.add_css_class("dialog-page");
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)

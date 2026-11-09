@@ -13,7 +13,7 @@ use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped};
 use crate::present::{
     ActivityItem, ActivityView, BoardView, CardAction, CardView, GroupView, MenuItem, Notice,
-    Place, StackView, StageView, Tab, card_menu, link_note,
+    Place, StackView, StageView, TODO_UNSAVED, Tab, card_menu, link_note,
 };
 use crate::view::flip;
 
@@ -197,6 +197,9 @@ pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
 /// cards below the others.
 fn activity_section(ctx: &Rc<Ctx>, activity: &ActivityView) -> gtk::Box {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    if let Some(why) = &activity.unsaved {
+        section.append(&notice("stale", TODO_UNSAVED, why));
+    }
     let stages = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .homogeneous(true)

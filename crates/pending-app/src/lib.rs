@@ -12,6 +12,7 @@ mod session;
 mod snooze;
 mod state;
 mod theme;
+mod todo_store;
 mod ui;
 mod view;
 
@@ -68,6 +69,7 @@ pub fn run(options: AppOptions) -> anyhow::Result<()> {
     let unique = !options.sandbox && options.screenshot.is_none();
     let env = process_env();
     let view_path = view_file(&options, &env);
+    let todo_path = todo_file(&options, &env);
     let status = ui::run(
         &runtime,
         backend::Options {
@@ -77,7 +79,10 @@ pub fn run(options: AppOptions) -> anyhow::Result<()> {
             sandbox: options.sandbox,
         },
         env,
-        view_path,
+        ui::Files {
+            view: view_path,
+            todos: todo_path,
+        },
         options.screenshot.map(|path| (path, options.scene)),
         unique,
     )?;
@@ -221,6 +226,15 @@ fn view_file(options: &AppOptions, env: &Env) -> Option<PathBuf> {
     view::view_path(&**env)
 }
 
+/// Where the window keeps the todos: nowhere for the sandbox and a
+/// screenshot, which keep their own in memory.
+fn todo_file(options: &AppOptions, env: &Env) -> Option<PathBuf> {
+    if options.sandbox || options.screenshot.is_some() {
+        return None;
+    }
+    pending_runtime::config::data_dir(&**env).map(|dir| dir.join(todo_store::FILE_NAME))
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
@@ -338,5 +352,34 @@ mod tests {
             ..AppOptions::default()
         };
         assert_eq!(view_file(&screenshot, &env), None);
+    }
+
+    /// The todos are kept in the data dir, as XDG names it; the sandbox
+    /// and a screenshot keep theirs in memory, away from the user's.
+    #[test]
+    fn only_the_real_dashboard_keeps_the_todos() {
+        let env = home("/home/me");
+        assert_eq!(
+            todo_file(&AppOptions::default(), &env),
+            Some(PathBuf::from(
+                "/home/me/.local/share/tasks-pending/todos.sqlite3"
+            ))
+        );
+        let data: Env =
+            Arc::new(|key: &str| (key == "XDG_DATA_HOME").then(|| OsString::from("/data")));
+        assert_eq!(
+            todo_file(&AppOptions::default(), &data),
+            Some(PathBuf::from("/data/tasks-pending/todos.sqlite3"))
+        );
+        let sandbox = AppOptions {
+            sandbox: true,
+            ..AppOptions::default()
+        };
+        assert_eq!(todo_file(&sandbox, &env), None);
+        let screenshot = AppOptions {
+            screenshot: Some(PathBuf::from("board.png")),
+            ..AppOptions::default()
+        };
+        assert_eq!(todo_file(&screenshot, &env), None);
     }
 }

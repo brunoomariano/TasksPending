@@ -529,9 +529,17 @@ const DIALOG_AFTER: Duration = Duration::from_millis(4200);
 /// When the picture is taken: the logos have arrived by then.
 const SCREENSHOT_AFTER: Duration = Duration::from_millis(6000);
 
+/// Where the window keeps what it remembers; `None` keeps it for as long
+/// as the window.
+pub struct Files {
+    /// The view.
+    pub view: Option<PathBuf>,
+    /// The todos.
+    pub todos: Option<PathBuf>,
+}
+
 /// Finds the dashboard, opens the window over it and runs until it closes,
-/// returning the exit status. The view is remembered at `view_path`, or
-/// for as long as the window when there is none. With `screenshot`, the
+/// returning the exit status. The view and the todos are kept in `files`. With `screenshot`, the
 /// window shows that scene, is pictured into that file and closed. A
 /// `unique` application hands over to an instance already running
 /// (opening the app twice focuses the window) before looking for the
@@ -541,7 +549,7 @@ pub fn run(
     runtime: &Runtime,
     options: backend::Options,
     env: Env,
-    view_path: Option<PathBuf>,
+    files: Files,
     screenshot: Option<(PathBuf, crate::Scene)>,
     unique: bool,
 ) -> anyhow::Result<i32> {
@@ -616,6 +624,13 @@ pub fn run(
             tracing::warn!(%error, "updating the icon on Omarchy's bar");
         }
     }
+    // Read once this is the window: a second launch hands over above.
+    let todos = match (&files.todos, &screenshot) {
+        (Some(path), _) => Todos::open(path),
+        (None, Some(_)) => Todos::picture(),
+        (None, None) => Todos::in_memory(),
+    };
+    let view_path = files.view;
     let backend = backend::resolve(runtime, options, env)?;
     let (commands, events) = spawn_worker(runtime, backend.client.clone());
     let ctx = Rc::new(Ctx {
@@ -623,7 +638,10 @@ pub fn run(
             state: ViewState::Loading,
             view: view_path.as_deref().map(View::load).unwrap_or_default(),
             tab: Tab::default(),
-            session: Session::default(),
+            session: Session {
+                todos,
+                ..Session::default()
+            },
             view_path,
             drawn: None,
             refresh_hold: None,

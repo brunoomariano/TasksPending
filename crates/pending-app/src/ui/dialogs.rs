@@ -13,8 +13,8 @@ use super::{Ctx, wrapped as text};
 use crate::backend::Command;
 use crate::omarchy_bar;
 use crate::present::{
-    BarState, BoardSwitches, Choice, SwitchView, TODO_NOTE, bar_choices, bar_note, bar_view,
-    board_choices, interval_choices, switches, theme_choices, theme_note, todo_dialog_words,
+    BarState, BoardSwitches, Choice, SwitchView, bar_choices, bar_note, bar_view, board_choices,
+    interval_choices, switches, theme_choices, theme_note, todo_dialog_words, todo_note,
 };
 use crate::view::{View, flip};
 
@@ -185,7 +185,11 @@ pub fn show_todo(ctx: &Rc<Ctx>, editing: Option<&str>) {
         .activates_default(true)
         .build();
     content.append(&details);
-    content.append(&text(TODO_NOTE, &["dialog-note"]));
+    let note = {
+        let model = ctx.model.borrow();
+        todo_note(model.session.todos.kept(), model.session.todos.unsaved())
+    };
+    content.append(&text(&note, &["dialog-note"]));
 
     let buttons = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)

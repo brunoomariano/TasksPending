@@ -1,7 +1,11 @@
-//! What lasts as long as the window and no longer: the alerts set on
-//! cards and those missed, and the todos written down in the window.
+//! What the window holds beyond the dashboard: the alerts set on cards and
+//! those missed, which last as long as the window, and the todos written
+//! down in it, which are kept in the todo file.
+
+use std::path::Path;
 
 use crate::alert::{Alerts, Missed};
+use crate::todo_store::{Saved, Store};
 use crate::view::Stage;
 
 #[derive(Debug, Default)]
@@ -37,8 +41,7 @@ impl Session {
 }
 
 /// A todo written down in the window: a card of the window's own, on no
-/// source, that lives in the Activity area and is kept only while the
-/// window is open.
+/// source, that lives in the Activity area.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Todo {
     pub id: String,
@@ -48,16 +51,97 @@ pub struct Todo {
     pub stage: Stage,
 }
 
-/// The todos, in the order they were written.
+/// The todos, in the order they were written. Each change goes to the
+/// store, when there is one; the list here is what the window shows,
+/// saved or not.
 #[derive(Debug, Default)]
 pub struct Todos {
     list: Vec<Todo>,
     /// Ids count up and are never reused: a stage or an alert of a
     /// deleted todo must not land on a new one.
     next: u64,
+    store: Option<Store>,
+    /// The todos outlast the window: the store is a file.
+    kept: bool,
+    /// Why the todos are not being saved, while they are not.
+    unsaved: Option<String>,
 }
 
 impl Todos {
+    /// The todos kept in the file at `path`. A file that cannot be opened
+    /// or read gives none, kept for the run only, saying why.
+    pub fn open(path: &Path) -> Todos {
+        let opened = Store::open(path).and_then(|store| {
+            let saved = store.load()?;
+            Ok((store, saved))
+        });
+        match opened {
+            Ok((store, Saved { todos, last })) => Todos {
+                unsaved: (!store.writable()).then(|| {
+                    format!(
+                        "{} comes from a newer TasksPending; changes last until it quits",
+                        path.display()
+                    )
+                }),
+                list: todos,
+                next: last,
+                store: Some(store),
+                kept: true,
+            },
+            Err(error) => {
+                tracing::warn!(%error, path = %path.display(), "opening the todos");
+                Todos {
+                    unsaved: Some(error.to_string()),
+                    ..Todos::default()
+                }
+            }
+        }
+    }
+
+    /// Todos for the sandbox: the same store, in memory.
+    pub fn in_memory() -> Todos {
+        Todos {
+            store: Store::in_memory()
+                .inspect_err(|error| tracing::warn!(%error, "opening the sandbox's todos"))
+                .ok(),
+            ..Todos::default()
+        }
+    }
+
+    /// Todos for a screenshot: in memory, but said to be kept, since the
+    /// picture shows the real window.
+    pub fn picture() -> Todos {
+        Todos {
+            kept: true,
+            ..Todos::in_memory()
+        }
+    }
+
+    /// Whether the todos outlast the window, as the window says.
+    pub fn kept(&self) -> bool {
+        self.kept
+    }
+
+    /// Why the todos are not being saved, while they are not.
+    pub fn unsaved(&self) -> Option<&str> {
+        self.unsaved.as_deref()
+    }
+
+    /// Writes the list to the store. The whole list goes each time, so a
+    /// save that works makes good every one that failed before it.
+    fn save(&mut self) {
+        let Some(store) = self.store.as_mut().filter(|store| store.writable()) else {
+            return;
+        };
+        match store.save(&self.list, self.next) {
+            Ok(()) => self.unsaved = None,
+            Err(error) => {
+                tracing::warn!(%error, "saving the todos");
+                self.unsaved = Some(format!("Could not save the todos ({error})"));
+            }
+        }
+    }
+
     /// Writes down a todo in Picked and gives its id; none for a blank
     /// title. Title and body are kept without the blanks around them.
     pub fn add(&mut self, title: &str, body: &str) -> Option<String> {
@@ -73,6 +157,7 @@ impl Todos {
             body: body.trim().to_owned(),
             stage: Stage::Picked,
         });
+        self.save();
         Some(id)
     }
 
@@ -88,6 +173,7 @@ impl Todos {
         };
         todo.title = title.to_owned();
         todo.body = body.trim().to_owned();
+        self.save();
         true
     }
 
@@ -95,7 +181,11 @@ impl Todos {
     pub fn remove(&mut self, id: &str) -> bool {
         let before = self.list.len();
         self.list.retain(|todo| todo.id != id);
-        self.list.len() != before
+        if self.list.len() == before {
+            return false;
+        }
+        self.save();
+        true
     }
 
     /// Moves the todo `id` to `stage` of the Activity area.
@@ -103,6 +193,7 @@ impl Todos {
         match self.list.iter_mut().find(|todo| todo.id == id) {
             Some(todo) => {
                 todo.stage = stage;
+                self.save();
                 true
             }
             None => false,
@@ -205,6 +296,158 @@ mod tests {
             "ids are not reused"
         );
         assert_eq!(todos.iter().count(), 1);
+    }
+
+    /// A fresh folder for one test, gone with its files when it ends.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Scratch {
+            let dir = std::env::temp_dir().join(format!(
+                "tasks-pending-session-{}-{name}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            Scratch(dir)
+        }
+
+        fn file(&self) -> std::path::PathBuf {
+            self.0.join("tasks-pending").join("todos.sqlite3")
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn titles(todos: &Todos) -> Vec<(&str, Stage)> {
+        todos
+            .iter()
+            .map(|todo| (todo.title.as_str(), todo.stage))
+            .collect()
+    }
+
+    /// Todos written down, moved, rewritten and deleted are there as they
+    /// were after a restart, and an id given before it is not given again.
+    #[test]
+    fn todos_outlast_the_window() {
+        let scratch = Scratch::new("outlast");
+        let path = scratch.file();
+        let mut todos = Todos::open(&path);
+        assert!(todos.kept());
+        assert_eq!(todos.unsaved(), None);
+        let bank = todos.add("Call the bank", "").unwrap();
+        let notes = todos.add("Write the notes", "for 0.9").unwrap();
+        let gone = todos.add("Forget me", "").unwrap();
+        assert!(todos.move_to(&bank, Stage::InProgress));
+        assert!(todos.edit(&notes, "Write the release notes", "for 0.9"));
+        assert!(todos.remove(&gone));
+        drop(todos);
+
+        let mut todos = Todos::open(&path);
+        assert_eq!(
+            titles(&todos),
+            [
+                ("Call the bank", Stage::InProgress),
+                ("Write the release notes", Stage::Picked),
+            ]
+        );
+        assert_eq!(todos.get(&notes).map(|t| t.body.as_str()), Some("for 0.9"));
+        assert_eq!(todos.add("Next", ""), Some("todo:4".to_owned()));
+        assert_eq!(todos.unsaved(), None);
+    }
+
+    /// A todo file that is not TasksPending's is left alone: the window
+    /// keeps its todos for the run, as before 0.9, and says they are not
+    /// saved.
+    #[test]
+    fn says_when_todos_cannot_be_saved() {
+        let scratch = Scratch::new("foreign");
+        let path = scratch.file();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"my notes").unwrap();
+
+        let mut todos = Todos::open(&path);
+        assert!(!todos.kept());
+        let unsaved = todos.unsaved().unwrap().to_owned();
+        assert!(
+            unsaved.contains("is not a todo file of TasksPending"),
+            "{unsaved}"
+        );
+        assert_eq!(todos.add("Still works", ""), Some("todo:1".to_owned()));
+        assert_eq!(todos.iter().count(), 1);
+        assert_eq!(std::fs::read(&path).unwrap(), b"my notes");
+    }
+
+    /// A todo file from a newer TasksPending shows its todos, and changes
+    /// to them last only for the run.
+    #[test]
+    fn shows_a_newer_file_without_saving_to_it() {
+        let scratch = Scratch::new("newer");
+        let path = scratch.file();
+        let mut todos = Todos::open(&path);
+        todos.add("From the newer one", "").unwrap();
+        drop(todos);
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .pragma_update(None, "user_version", 99)
+            .unwrap();
+
+        let mut todos = Todos::open(&path);
+        assert_eq!(titles(&todos), [("From the newer one", Stage::Picked)]);
+        assert!(todos.unsaved().unwrap().contains("newer TasksPending"));
+        todos.add("Only for now", "").unwrap();
+        drop(todos);
+        assert_eq!(Todos::open(&path).iter().count(), 1);
+    }
+
+    /// A write that fails says so, and the todo stays in the window.
+    #[test]
+    fn says_when_a_save_fails() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let scratch = Scratch::new("readonly");
+        let path = scratch.file();
+        drop(Todos::open(&path));
+        if std::fs::metadata(&path).unwrap().uid() == 0 {
+            return; // root writes to a read-only file all the same
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+
+        let mut todos = Todos::open(&path);
+        assert_eq!(todos.unsaved(), None);
+        assert!(todos.add("Kept for now", "").is_some());
+        assert!(
+            todos
+                .unsaved()
+                .unwrap()
+                .starts_with("Could not save the todos")
+        );
+        assert_eq!(todos.iter().count(), 1);
+    }
+
+    /// The sandbox's todos go through the same store, in memory, and are
+    /// not kept.
+    #[test]
+    fn sandbox_todos_are_not_kept() {
+        let mut todos = Todos::in_memory();
+        assert!(!todos.kept());
+        assert_eq!(todos.unsaved(), None);
+        assert!(todos.add("Try it", "").is_some());
+        assert_eq!(todos.unsaved(), None);
+    }
+
+    /// A screenshot keeps its todos in memory too, but pictures the real
+    /// window, whose todos are kept.
+    #[test]
+    fn a_screenshot_pictures_kept_todos() {
+        let mut todos = Todos::picture();
+        assert!(todos.kept());
+        assert!(todos.add("Pictured", "").is_some());
+        assert_eq!(todos.unsaved(), None);
     }
 
     /// A todo is written down in Picked, the first stage of the Activity

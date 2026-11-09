@@ -379,6 +379,29 @@ fn cache_path_follows_xdg_state_home() {
     assert_eq!(cache_path(&env(&[])), None);
 }
 
+/// What is written down in the window lives in
+/// `$XDG_DATA_HOME/tasks-pending`, or `~/.local/share/tasks-pending`;
+/// relative paths are ignored, and with neither there is none.
+#[test]
+fn data_dir_follows_xdg_data_home() {
+    use pending_runtime::config::data_dir;
+
+    assert_eq!(
+        data_dir(&env(&[("XDG_DATA_HOME", "/data"), ("HOME", "/home/me")])),
+        Some(PathBuf::from("/data/tasks-pending"))
+    );
+    assert_eq!(
+        data_dir(&env(&[("XDG_DATA_HOME", "rel"), ("HOME", "/home/me")])),
+        Some(PathBuf::from("/home/me/.local/share/tasks-pending"))
+    );
+    assert_eq!(
+        data_dir(&env(&[("XDG_DATA_HOME", "/data")])),
+        Some(PathBuf::from("/data/tasks-pending"))
+    );
+    assert_eq!(data_dir(&env(&[("XDG_DATA_HOME", "rel")])), None);
+    assert_eq!(data_dir(&env(&[])), None);
+}
+
 /// A `plane` source in the config becomes a scheduled source; credentials
 /// come from the environment, never the file.
 #[test]

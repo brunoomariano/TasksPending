@@ -110,14 +110,30 @@ pub fn locate(
 /// `$HOME/.local/state/tasks-pending`. Relative values are ignored, per the
 /// XDG spec; with neither variable there is none.
 pub fn state_dir(env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    xdg_dir(env, "XDG_STATE_HOME", "state")
+}
+
+/// Where TasksPending keeps what the user wrote, such as its todos:
+/// `$XDG_DATA_HOME/tasks-pending`, else `$HOME/.local/share/tasks-pending`,
+/// with relative values ignored as for [`state_dir`].
+pub fn data_dir(env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    xdg_dir(env, "XDG_DATA_HOME", "share")
+}
+
+/// `$<variable>/tasks-pending`, else `$HOME/.local/<fallback>/tasks-pending`.
+fn xdg_dir(
+    env: &dyn Fn(&str) -> Option<OsString>,
+    variable: &str,
+    fallback: &str,
+) -> Option<PathBuf> {
     let absolute = |key: &str| {
         env(key)
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
             .filter(|path| path.is_absolute())
     };
-    let base = absolute("XDG_STATE_HOME")
-        .or_else(|| absolute("HOME").map(|home| home.join(".local").join("state")))?;
+    let base = absolute(variable)
+        .or_else(|| absolute("HOME").map(|home| home.join(".local").join(fallback)))?;
     Some(base.join("tasks-pending"))
 }
 

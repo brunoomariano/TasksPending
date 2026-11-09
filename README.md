@@ -23,7 +23,7 @@ A click on the icon (ringed) drops the window down, and the next sends it away. 
 - **Todos.** Write down something that comes from no source: **New** in the Picked column of the Activity puts it there, it moves through the stages like the other cards, and it lasts only while TasksPending runs.
 - **What changed.** A small dot marks the cards that changed since you last looked.
 - **Omarchy's theme.** The window has its own palette, dark unless the system asks for light. On Omarchy, Settings can switch it to the theme Omarchy applied, and it changes with it.
-- **On Omarchy's bar.** Settings can put an icon on Omarchy's bar: a click drops the window down over whatever you are doing, on the page it was on, and the next click sends it away. `tasks-pending toggle` does the same from a key. An alert that rang while the window was away leaves a dot on the icon until the window comes to the front.
+- **On Omarchy's bar.** Settings can put an icon on Omarchy's bar: a click drops the window down over whatever you are doing, on the page it was on, and the next click, or Esc, sends it away. `tasks-pending toggle` does the same from a key. An alert that rang while the window was away leaves a dot on the icon until the window comes to the front.
 - **Local only.** The daemon listens on this machine, reads tokens from the environment, and keeps your marks and snoozes in a state folder. The window reads it over loopback; it reaches the network itself only for the sources' logos, and for the providers when no daemon is running and it runs the sources in its own process.
 
 <p align="center">

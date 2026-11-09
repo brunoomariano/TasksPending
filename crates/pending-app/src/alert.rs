@@ -111,6 +111,45 @@ impl Alerts {
     }
 }
 
+/// The alerts that rang while the window was not in front, until it next
+/// is: the icon on Omarchy's bar shows a dot for them (see
+/// [`crate::omarchy_bar::signal`]). One per card, the latest, in the order
+/// they rang.
+#[derive(Debug, Default)]
+pub struct Missed {
+    /// The card's id and its title when the alert rang.
+    rung: Vec<(String, String)>,
+}
+
+impl Missed {
+    /// Notes the alerts `rung`, unless the window was `in_front`, where
+    /// they were seen ringing. Says whether that changed anything.
+    pub fn rang(&mut self, rung: &[(String, Alert)], in_front: bool) -> bool {
+        if in_front || rung.is_empty() {
+            return false;
+        }
+        for (id, alert) in rung {
+            self.rung.retain(|(missed, _)| missed != id);
+            self.rung.push((id.clone(), alert.title.clone()));
+        }
+        true
+    }
+
+    /// The window came to the front: nothing is missed any more. Says
+    /// whether something was.
+    pub fn seen(&mut self) -> bool {
+        let was = !self.rung.is_empty();
+        self.rung.clear();
+        was
+    }
+
+    /// The titles of the cards whose alerts were missed, in the order
+    /// they rang.
+    pub fn titles(&self) -> Vec<&str> {
+        self.rung.iter().map(|(_, title)| title.as_str()).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::TimeZone;
@@ -184,6 +223,32 @@ mod tests {
         );
         assert!(alerts.due(local(16, 0)).is_empty(), "rung once");
         assert_eq!(alerts.text_for("gh:3"), Some("Alert at 17:00".to_owned()));
+    }
+
+    /// Alerts that ring while the window is not in front are missed until
+    /// it comes to the front, one per card (the latest), in the order
+    /// they rang; ringing in front, they were seen, not missed.
+    #[test]
+    fn misses_the_alerts_that_ring_away_from_the_window() {
+        let mut missed = Missed::default();
+        let rung = |id: &str, title: &str| {
+            (
+                id.to_owned(),
+                Alert {
+                    title: title.to_owned(),
+                    ..alert(local(15, 45))
+                },
+            )
+        };
+        assert!(!missed.rang(&[rung("gh:1", "Review")], true), "in front");
+        assert!(missed.titles().is_empty());
+        assert!(!missed.rang(&[], false), "nothing rang");
+        assert!(missed.rang(&[rung("gh:1", "Review"), rung("gh:2", "Deploy")], false));
+        assert!(missed.rang(&[rung("gh:1", "Review again")], false));
+        assert_eq!(missed.titles(), ["Deploy", "Review again"]);
+        assert!(missed.seen(), "something was missed");
+        assert!(missed.titles().is_empty());
+        assert!(!missed.seen(), "nothing left");
     }
 
     /// The notification names the card, and says where it comes from and

@@ -94,7 +94,7 @@ The app's tests need no display (CI has none): what they check lives outside the
   - It builds the Linux x86_64 bundle (`scripts/release-local.sh`) on Ubuntu 24.04, whose GTK sets the oldest supported one, and an Arch package from it (`packaging/arch/PKGBUILD`).
   - It installs the Arch package in a container to check it, then publishes everything with a `.sha256` per asset and `SHA256SUMS`.
   - Run it by hand (`workflow_dispatch`, dry run by default) to build without publishing.
-- **How users get it:** the public installer (`scripts/install-release.sh`, published as `tasks-pending-install.sh`) installs the package on Arch and the bundle under `~/.local/lib/tasks-pending` elsewhere, then runs `tasks-pending setup`; `tasks-pending upgrade` fetches the next release the same way. Keep the installer, `upgrade` and `setup` in step: they share the directory layout, the environment variables and the `install.sh --start` hand-over.
+- **How users get it:** the public installer (`scripts/install-release.sh`, published as `tasks-pending-install.sh`) installs the package on Arch and the bundle under `~/.local/lib/tasks-pending` elsewhere, then runs `tasks-pending setup`; run again, it updates either. `tasks-pending upgrade` fetches the next bundle the same way, and on the package it refuses and prints the install command (`install_command`, held to the README's line by a test). Keep the installer, `upgrade` and `setup` in step: they share the directory layout, the environment variables and the `install.sh --start` hand-over.
 - **Local checks:** `make release-local` builds the bundle for this machine; `make deploy` installs this checkout and restarts the daemon.
 
 ## Dependencies

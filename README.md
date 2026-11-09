@@ -56,7 +56,7 @@ Install the latest release and start everything:
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh
 ```
 
-On Arch Linux (and distributions built on it, such as Omarchy) it installs the release's package; elsewhere on Linux x86_64 it unpacks the release under `~/.local/lib/tasks-pending` and links `~/.local/bin/tasks-pending`. Every download is checked against the checksum published beside it, which proves it arrived whole. It ends with `tasks-pending setup`, which creates the config files if they are missing, installs the launcher entry and starts the user service. Later, `tasks-pending upgrade` fetches the next release the same way. [docs/install.md](docs/install.md) covers sources, tokens, the Omarchy shortcut and manual installs.
+On Arch Linux (and distributions built on it, such as Omarchy) it installs the release's package; elsewhere on Linux x86_64 it unpacks the release under `~/.local/lib/tasks-pending` and links `~/.local/bin/tasks-pending`. Every download is checked against the checksum published beside it, which proves it arrived whole. It ends with `tasks-pending setup`, which creates the config files if they are missing, installs the launcher entry and starts the user service. To update, run the same command again. Outside Arch, `tasks-pending upgrade` does the same; the Arch package is pacman's, so there `upgrade` prints this command instead. [docs/install.md](docs/install.md) covers sources, tokens, the Omarchy shortcut and manual installs.
 
 Then open **TasksPending** from the launcher, or run `tasks-pending`.
 

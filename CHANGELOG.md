@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.8.1
+
+TasksPending's icon on Omarchy's bar shows a dot for the alerts that rang while the window was away, and `tasks-pending upgrade` gives the Arch package the command that upgrades it.
 
 ### Features
 

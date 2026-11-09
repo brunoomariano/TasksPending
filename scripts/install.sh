@@ -10,7 +10,7 @@
 # It never touches your config, env file or tokens. By default it prints the
 # next steps; `--start` runs `tasks-pending setup`, which starts a new daemon
 # or restarts an active one. `scripts/install.sh --uninstall` removes what it
-# installed (your config stays).
+# installed (your config and todos stay).
 #
 # DESTDIR stages a system install (packaging): with DESTDIR set, the service
 # file goes to DESTDIR/PREFIX/lib/systemd/user instead of your home.
@@ -45,14 +45,17 @@ uninstall() {
     systemctl --user disable --now tasks-pending.service 2>/dev/null || true
   fi
   rm -f "${BIN:?}/tasks-pending"
-  rm -rf "${SHARE:?}"
+  # The window keeps the todos in this folder too: only what was
+  # installed goes, and the folder with it when nothing else is there.
+  rm -f "${SHARE:?}/config.example.toml" "${SHARE:?}/env.example"
+  rmdir "${SHARE:?}" 2>/dev/null || true
   rm -f "${APPS:?}/${APP_ID:?}.desktop"
   rm -f "${ICONS:?}/scalable/apps/${APP_ID:?}.svg" "${ICONS:?}/256x256/apps/${APP_ID:?}.png"
   rm -f "${UNIT_DIR:?}/tasks-pending.service"
   if [[ -z $DESTDIR ]] && command -v systemctl >/dev/null; then
     systemctl --user daemon-reload || true
   fi
-  echo "Removed TasksPending from $PREFIX (your config in ~/.config/tasks-pending stays)."
+  echo "Removed TasksPending from $PREFIX (your config in ~/.config/tasks-pending and your todos stay)."
 }
 
 case ${1:-} in

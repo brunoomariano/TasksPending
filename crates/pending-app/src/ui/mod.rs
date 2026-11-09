@@ -415,6 +415,23 @@ impl Ctx {
         }
     }
 
+    /// Esc: the drop-down goes away, its page kept, as closing it does.
+    /// In any other window Esc is left to whatever else wants it, and
+    /// never quits.
+    fn escape(&self) -> gtk::glib::Propagation {
+        let Some(hyprland) = &self.hyprland else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        let (window, screen) = self.placed(hyprland);
+        let Some(steps) = dropdown::escape(window.as_ref(), screen.as_ref()) else {
+            return gtk::glib::Propagation::Proceed;
+        };
+        if let Err(error) = hyprland.run(&steps) {
+            tracing::warn!(%error, "Hyprland did not send the drop-down away");
+        }
+        gtk::glib::Propagation::Stop
+    }
+
     /// Changes the todos and redraws.
     pub fn change_todos(self: &Rc<Self>, change: impl FnOnce(&mut Todos) -> bool) {
         self.change_session(|session| change(&mut session.todos));
@@ -839,6 +856,25 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
                 .map_or(gtk::glib::Propagation::Proceed, |ctx| ctx.close_or_hide())
         }
     });
+    // Esc sends the drop-down away. It is looked at last, on the way back
+    // up from the focused widget: an open dialog or menu takes its own Esc
+    // first, and closes.
+    let keys = gtk::ShortcutController::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Bubble);
+    keys.add_shortcut(gtk::Shortcut::new(
+        Some(gtk::KeyvalTrigger::new(
+            gtk::gdk::Key::Escape,
+            gtk::gdk::ModifierType::empty(),
+        )),
+        Some(gtk::CallbackAction::new({
+            let ctx = Rc::downgrade(ctx);
+            move |_, _| {
+                ctx.upgrade()
+                    .map_or(gtk::glib::Propagation::Proceed, |ctx| ctx.escape())
+            }
+        })),
+    ));
+    window.add_controller(keys);
     watch_activity(ctx, &window);
     window.connect_is_active_notify({
         let ctx = Rc::downgrade(ctx);

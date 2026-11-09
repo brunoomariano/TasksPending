@@ -540,8 +540,8 @@ pub fn bar_note(state: &BarState) -> String {
             "Puts an icon on Omarchy's bar that drops this window down over the screen.".to_owned()
         }
         BarState::On => "A click on the icon drops this window down over the screen and the next \
-             sends it away; closing it then only hides it (Ctrl+Q quits). \
-             tasks-pending toggle does the same from a key."
+             sends it away; Esc sends it away too, and closing it then only hides it \
+             (Ctrl+Q quits). tasks-pending toggle does the same from a key."
             .to_owned(),
         BarState::Changing(true) => "Putting the icon on the bar…".to_owned(),
         BarState::Changing(false) => "Taking the icon off the bar…".to_owned(),
@@ -1542,6 +1542,7 @@ mod tests {
             on.contains("only hides it") && on.contains("Ctrl+Q"),
             "{on}"
         );
+        assert!(on.contains("Esc sends it away"), "{on}");
         assert!(on.contains("tasks-pending toggle"), "{on}");
         assert_eq!(
             bar_note(&BarState::Changing(true)),

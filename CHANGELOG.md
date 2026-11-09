@@ -6,6 +6,10 @@
 
 - An alert that rings while the window is not in front leaves a dot on TasksPending's icon on Omarchy's bar, in the bar's urgent colour, with the card's title in its tooltip, until the window comes to the front. The window tells the icon through `$XDG_RUNTIME_DIR/tasks-pending-bar.json`, and rewrites the plugin when the new version starts.
 
+### Fixed
+
+- On the Arch package, `tasks-pending upgrade` gives the command that upgrades it, the install command run again (with the version you asked for and the releases location you set, when you did), instead of only saying to use pacman, and `upgrade --check` gives that command in place of `upgrade`. The README, the install guide, the release notes and the tooltip on the window's newer-version line no longer tell the package to run `upgrade`.
+
 ## 0.8.0
 
 The window can wear Omarchy's theme and drop down from Omarchy's bar, todos move into the Activity, and every palette reads at 4.5:1.

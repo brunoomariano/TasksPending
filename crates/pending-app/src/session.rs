@@ -429,6 +429,30 @@ mod tests {
         assert_eq!(todos.iter().count(), 1);
     }
 
+    /// A save that fails for a while (another program holds the file)
+    /// is made good by the next one that works: the whole list is
+    /// written, and the Activity stops saying the todos are not saved.
+    #[test]
+    fn a_save_that_works_makes_good_one_that_failed() {
+        let scratch = Scratch::new("busy");
+        let path = scratch.file();
+        let mut todos = Todos::open(&path);
+
+        let other = rusqlite::Connection::open(&path).unwrap();
+        other.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        assert!(todos.add("Written while busy", "").is_some());
+        assert!(todos.unsaved().is_some(), "the file was held");
+
+        other.execute_batch("COMMIT").unwrap();
+        drop(other);
+        assert!(todos.add("Written after", "").is_some());
+        assert_eq!(todos.unsaved(), None);
+
+        let reopened = Todos::open(&path);
+        let titles: Vec<_> = reopened.iter().map(|todo| todo.title.as_str()).collect();
+        assert_eq!(titles, ["Written while busy", "Written after"]);
+    }
+
     /// The sandbox's todos go through the same store, in memory, and are
     /// not kept.
     #[test]

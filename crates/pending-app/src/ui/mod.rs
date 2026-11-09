@@ -128,6 +128,8 @@ pub struct Ctx {
     pub cards: RefCell<Vec<Vec<board::Slot>>>,
     /// Delete pressed once on a todo, waiting for the second press.
     pub armed: RefCell<crate::nav::Armed>,
+    /// The keys down, to tell a press from its repeats.
+    pub held: RefCell<crate::nav::Held>,
 }
 
 /// How the window is coloured.
@@ -678,6 +680,7 @@ pub fn run(
         bar_signal,
         cards: RefCell::default(),
         armed: RefCell::default(),
+        held: RefCell::default(),
     });
     // Nothing is missed yet, whatever an earlier run that did not end
     // cleanly left; the icon loses its dot when the app ends.

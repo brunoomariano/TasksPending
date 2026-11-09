@@ -14,7 +14,7 @@ use libadwaita::prelude::*;
 use super::board::{self, tracked};
 use super::dialogs::{self, dialog};
 use super::{Ctx, hero, wrapped as text};
-use crate::keymap::{self, Binding, Command, DialogKey, Focus};
+use crate::keymap::{self, Binding, Command, DialogKey, Focus, Verdict};
 use crate::nav::{self, Move};
 use crate::present::{self, Tab};
 
@@ -25,48 +25,48 @@ use crate::present::{self, Tab};
 pub fn listen(ctx: &Rc<Ctx>, window: &adw::ApplicationWindow) {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
-    // Every key down, wherever it goes, so that a key still held when a
-    // dialog closes (Enter, having saved a todo) does not act as it
-    // repeats.
-    let held = Rc::new(RefCell::new(nav::Held::default()));
     keys.connect_key_pressed({
         let ctx = Rc::downgrade(ctx);
         let window = window.downgrade();
-        let held = held.clone();
         move |_, key, code, mods| {
-            let fresh = held.borrow_mut().press(code);
             let (Some(ctx), Some(window)) = (ctx.upgrade(), window.upgrade()) else {
                 return Propagation::Proceed;
             };
-            if !takes_keys(&window) {
-                return Propagation::Proceed;
-            }
-            let focus = match board::focused(&ctx) {
+            // Every key down is noted, also while the keys stand aside, so
+            // that one held through a dialog does not act as it repeats.
+            let focus = takes_keys(&window).then(|| match board::focused(&ctx) {
                 Some((_, true)) => Focus::OnCard,
                 Some((_, false)) => Focus::InCard,
                 None => Focus::Elsewhere,
-            };
-            match keymap::lookup(key, mods, focus) {
-                Some(command) => {
-                    // Held down, only a move goes on: a key that acts on a
-                    // card acts once per press.
-                    if fresh || keymap::binding(command).repeats() {
-                        run(&ctx, command);
-                    }
+            });
+            let verdict = keymap::verdict(&mut ctx.held.borrow_mut(), code, key, mods, focus);
+            match verdict {
+                Verdict::Run(command) => {
+                    run(&ctx, command);
                     Propagation::Stop
                 }
-                None => Propagation::Proceed,
+                Verdict::Swallow => Propagation::Stop,
+                Verdict::Pass => Propagation::Proceed,
             }
         }
     });
     keys.connect_key_released({
-        let held = held.clone();
-        move |_, _, code, _| held.borrow_mut().release(code)
+        let ctx = Rc::downgrade(ctx);
+        move |_, _, code, _| {
+            if let Some(ctx) = ctx.upgrade() {
+                ctx.held.borrow_mut().release(code);
+            }
+        }
     });
     window.add_controller(keys);
-    window.connect_is_active_notify(move |window| {
-        if !window.is_active() {
-            held.borrow_mut().clear();
+    window.connect_is_active_notify({
+        let ctx = Rc::downgrade(ctx);
+        move |window| {
+            if !window.is_active()
+                && let Some(ctx) = ctx.upgrade()
+            {
+                ctx.held.borrow_mut().clear();
+            }
         }
     });
 }
@@ -226,11 +226,15 @@ pub fn show(ctx: &Rc<Ctx>) {
 
     // The rows that run something, in the order shown.
     let rows: Rc<RefCell<Vec<(gtk::ListBoxRow, Command)>>> = Rc::default();
+    // The search the rows were found for.
+    let shown: Rc<RefCell<String>> = Rc::default();
     let refill = {
         let list = list.clone();
         let none = none.clone();
         let rows = rows.clone();
+        let shown = shown.clone();
         move |query: &str| {
+            query.clone_into(&mut shown.borrow_mut());
             let found = keymap::search(query);
             none.set_visible(found.is_empty());
             *rows.borrow_mut() = fill(&list, &found, query.trim().is_empty());
@@ -282,19 +286,32 @@ pub fn show(ctx: &Rc<Ctx>) {
     let steer = gtk::EventControllerKey::new();
     steer.set_propagation_phase(gtk::PropagationPhase::Capture);
     steer.connect_key_pressed({
+        let ctx = Rc::downgrade(ctx);
         let dialog = dialog.downgrade();
         let search = search.downgrade();
         let list = list.downgrade();
         let rows = rows.clone();
-        move |_, key, _, mods| {
-            let (Some(dialog), Some(search), Some(list)) =
-                (dialog.upgrade(), search.upgrade(), list.upgrade())
-            else {
+        move |_, key, code, mods| {
+            let (Some(ctx), Some(dialog), Some(search), Some(list)) = (
+                ctx.upgrade(),
+                dialog.upgrade(),
+                search.upgrade(),
+                list.upgrade(),
+            ) else {
                 return Propagation::Proceed;
             };
             let Some(step) = keymap::dialog_key(key, mods, search.text().is_empty()) else {
                 return Propagation::Proceed;
             };
+            if step == DialogKey::Run {
+                // The search follows the keys in an idle, which a fast
+                // Enter can beat: run what was typed, not what is shown.
+                if *shown.borrow() != search.text().as_str() {
+                    refill(&search.text());
+                }
+                // Held, Enter does not go on into what it opens.
+                ctx.held.borrow_mut().spend(code);
+            }
             let rows = rows.borrow();
             let at = list
                 .selected_row()

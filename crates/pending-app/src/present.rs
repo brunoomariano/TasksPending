@@ -14,6 +14,7 @@ use pending_core::{
 
 use crate::alert;
 use crate::backend::{Command, Refusal};
+use crate::keymap::Command as KeyCommand;
 use crate::session::{Session, Todo};
 use crate::snooze::{self, until_text};
 use crate::state::ViewState;
@@ -314,6 +315,86 @@ pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
         items.push(MenuItem::action("Delete", CardAction::Delete));
     }
     items
+}
+
+/// The keys that act on a card through an entry of its menu.
+const CARD_KEYS: [KeyCommand; 5] = [
+    KeyCommand::Pick,
+    KeyCommand::NextStage,
+    KeyCommand::PreviousStage,
+    KeyCommand::EditTodo,
+    KeyCommand::Delete,
+];
+
+/// What the key `command` does to `card` at `place`: the entry of its
+/// menu that it stands for, and only when the menu offers that entry.
+pub fn key_action(card: &CardView, place: Place, command: KeyCommand) -> Option<CardAction> {
+    let wanted = match command {
+        KeyCommand::Pick if card.picked() => CardAction::Unpick,
+        KeyCommand::Pick => CardAction::Pick,
+        KeyCommand::NextStage => CardAction::Stage(stage_after(card.stage?, 1)?),
+        KeyCommand::PreviousStage => CardAction::Stage(stage_after(card.stage?, -1)?),
+        KeyCommand::EditTodo => CardAction::Edit,
+        KeyCommand::Delete => CardAction::Delete,
+        _ => return None,
+    };
+    let offered = card_menu(card, place).iter().any(|item| match item {
+        MenuItem::Action { action, .. } => *action == wanted,
+        MenuItem::Submenu { items, .. } => items.iter().any(|(_, action)| *action == wanted),
+    });
+    offered.then_some(wanted)
+}
+
+/// The stage `by` steps along from `stage`, if there is one.
+fn stage_after(stage: Stage, by: isize) -> Option<Stage> {
+    let at = Stage::ALL.iter().position(|other| *other == stage)?;
+    Stage::ALL.get(at.checked_add_signed(by)?).copied()
+}
+
+/// The key that does what the menu entry `action` of `card` at `place`
+/// does, for the entry's hint.
+pub fn action_key(card: &CardView, place: Place, action: CardAction) -> Option<KeyCommand> {
+    CARD_KEYS
+        .into_iter()
+        .find(|command| key_action(card, place, *command) == Some(action))
+}
+
+/// The entries of `card`'s menu that the key `command` opens on their own:
+/// the alert choices for Set an alert, with Cancel the alert while one is
+/// set, and the snooze choices for Snooze.
+pub fn quick_menu(card: &CardView, place: Place, command: KeyCommand) -> Vec<(String, CardAction)> {
+    let wanted: fn(&CardAction) -> bool = match command {
+        KeyCommand::Alert => |action| matches!(action, CardAction::Alert(_)),
+        KeyCommand::Snooze => |action| matches!(action, CardAction::Snooze(_)),
+        _ => return Vec::new(),
+    };
+    let menu = card_menu(card, place);
+    let mut entries: Vec<(String, CardAction)> = menu
+        .iter()
+        .filter_map(|item| match item {
+            MenuItem::Submenu { items, .. } if items.iter().any(|(_, action)| wanted(action)) => {
+                Some(items.clone())
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    if command == KeyCommand::Alert {
+        entries.extend(menu.into_iter().filter_map(|item| match item {
+            MenuItem::Action {
+                label,
+                action: CardAction::CancelAlert,
+            } => Some((label, CardAction::CancelAlert)),
+            _ => None,
+        }));
+    }
+    entries
+}
+
+/// The note after the first Delete on the todo `title`, which waits for
+/// the second.
+pub fn delete_note(title: &str) -> String {
+    format!("Press Delete again to delete \u{201c}{title}\u{201d}")
 }
 
 /// What a todo says it comes from, where a card names its source.
@@ -1477,6 +1558,145 @@ mod tests {
         );
         assert_eq!(todo_dialog_words(false), ("New todo", "Add"));
         assert_eq!(todo_dialog_words(true), ("Edit todo", "Save"));
+    }
+
+    fn plain_card(stage: Option<Stage>, local: bool) -> CardView {
+        CardView {
+            id: if local { "todo:1" } else { "gh:1" }.to_owned(),
+            title: "Review the PR".to_owned(),
+            url: (!local).then(|| "https://example.com/1".to_owned()),
+            body: String::new(),
+            source: "GitHub".to_owned(),
+            stage,
+            changed: false,
+            alert: None,
+            local,
+        }
+    }
+
+    /// A card's keys do what its menu offers, and nothing it does not:
+    /// Enter sends a card on the Board to the Activity and takes it back,
+    /// and takes a card out of the Activity, but a todo has nowhere else
+    /// to be; the stage keys move a card along the Activity and stop at
+    /// its ends; Edit and Delete are a todo's.
+    #[test]
+    fn a_cards_keys_do_what_its_menu_offers() {
+        use crate::keymap::Command as K;
+        let board = plain_card(None, false);
+        assert_eq!(
+            key_action(&board, Place::Board, K::Pick),
+            Some(CardAction::Pick)
+        );
+        assert_eq!(key_action(&board, Place::Board, K::NextStage), None);
+        assert_eq!(key_action(&board, Place::Board, K::EditTodo), None);
+        assert_eq!(key_action(&board, Place::Board, K::Delete), None);
+        assert_eq!(key_action(&board, Place::Board, K::Refresh), None);
+
+        let picked = plain_card(Some(Stage::Picked), false);
+        assert_eq!(
+            key_action(&picked, Place::Board, K::Pick),
+            Some(CardAction::Unpick)
+        );
+        assert_eq!(
+            key_action(&picked, Place::Board, K::NextStage),
+            None,
+            "stages move on the Activity"
+        );
+        assert_eq!(
+            key_action(&picked, Place::Activity, K::Pick),
+            Some(CardAction::Unpick)
+        );
+        assert_eq!(
+            key_action(&picked, Place::Activity, K::NextStage),
+            Some(CardAction::Stage(Stage::InProgress))
+        );
+        assert_eq!(key_action(&picked, Place::Activity, K::PreviousStage), None);
+
+        let done = plain_card(Some(Stage::Done), false);
+        assert_eq!(
+            key_action(&done, Place::Activity, K::PreviousStage),
+            Some(CardAction::Stage(Stage::InProgress))
+        );
+        assert_eq!(key_action(&done, Place::Activity, K::NextStage), None);
+
+        let todo = plain_card(Some(Stage::InProgress), true);
+        assert_eq!(key_action(&todo, Place::Activity, K::Pick), None);
+        assert_eq!(
+            key_action(&todo, Place::Activity, K::EditTodo),
+            Some(CardAction::Edit)
+        );
+        assert_eq!(
+            key_action(&todo, Place::Activity, K::Delete),
+            Some(CardAction::Delete)
+        );
+        assert_eq!(
+            key_action(&todo, Place::Activity, K::NextStage),
+            Some(CardAction::Stage(Stage::Done))
+        );
+    }
+
+    /// A menu entry names the key that does the same, and only that one.
+    #[test]
+    fn menu_entries_name_their_keys() {
+        use crate::keymap::Command as K;
+        let picked = plain_card(Some(Stage::InProgress), false);
+        let at = Place::Activity;
+        assert_eq!(action_key(&picked, at, CardAction::Unpick), Some(K::Pick));
+        assert_eq!(
+            action_key(&picked, at, CardAction::Stage(Stage::Done)),
+            Some(K::NextStage)
+        );
+        assert_eq!(
+            action_key(&picked, at, CardAction::Stage(Stage::Picked)),
+            Some(K::PreviousStage)
+        );
+        assert_eq!(action_key(&picked, at, CardAction::CancelAlert), None);
+        let far = plain_card(Some(Stage::Done), false);
+        assert_eq!(
+            action_key(&far, at, CardAction::Stage(Stage::Picked)),
+            None,
+            "two stages back is no key's"
+        );
+        let todo = plain_card(Some(Stage::Picked), true);
+        assert_eq!(action_key(&todo, at, CardAction::Edit), Some(K::EditTodo));
+        assert_eq!(action_key(&todo, at, CardAction::Delete), Some(K::Delete));
+    }
+
+    /// The first Delete on a todo asks for the second.
+    #[test]
+    fn delete_asks_for_a_second_press() {
+        assert_eq!(
+            delete_note("Call the bank"),
+            "Press Delete again to delete \u{201c}Call the bank\u{201d}"
+        );
+    }
+
+    /// `a` opens the alert choices, with Cancel the alert while one is
+    /// set; `z` the snooze choices, which only a card on the Board has.
+    #[test]
+    fn small_menus_hold_the_alert_and_snooze_choices() {
+        use crate::keymap::Command as K;
+        let actions = |items: Vec<(String, CardAction)>| {
+            items
+                .into_iter()
+                .map(|(_, action)| action)
+                .collect::<Vec<_>>()
+        };
+        let mut card = plain_card(None, false);
+        let alerts = actions(quick_menu(&card, Place::Board, K::Alert));
+        assert_eq!(alerts.len(), alert::CHOICES.len());
+        assert!(alerts.iter().all(|a| matches!(a, CardAction::Alert(_))));
+        card.alert = Some("Alert at 15:45".to_owned());
+        let alerts = actions(quick_menu(&card, Place::Board, K::Alert));
+        assert_eq!(alerts.last(), Some(&CardAction::CancelAlert));
+        assert_eq!(alerts.len(), alert::CHOICES.len() + 1);
+
+        let snoozes = quick_menu(&card, Place::Board, K::Snooze);
+        assert_eq!(snoozes.len(), snooze::CHOICES.len());
+        assert_eq!(snoozes[0].0, snooze::CHOICES[0].1);
+        assert!(quick_menu(&card, Place::Activity, K::Snooze).is_empty());
+        assert!(quick_menu(&plain_card(None, true), Place::Activity, K::Snooze).is_empty());
+        assert!(quick_menu(&card, Place::Board, K::Pick).is_empty());
     }
 
     /// The todo dialog says what becomes of the todo: kept in the file,

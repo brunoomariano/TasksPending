@@ -1,6 +1,7 @@
 //! The window's keys: one table that the key handler, the keys dialog and
-//! the hints on buttons all read, so each key is named once. The mouse
-//! keeps doing everything it did; a key is another way to the same thing.
+//! the hints on buttons and menus all read, so each key is named once. The
+//! mouse keeps doing everything it did; a key is another way to the same
+//! thing.
 
 use gtk4::gdk::{Key, ModifierType};
 
@@ -16,27 +17,79 @@ pub enum Command {
     BoardTab,
     SendAway,
     Quit,
+    Up,
+    Down,
+    Left,
+    Right,
+    First,
+    Last,
+    Pick,
+    NextStage,
+    PreviousStage,
+    OpenLink,
+    EditTodo,
+    Menu,
+    Alert,
+    Snooze,
+    Delete,
 }
 
 /// Where the keys dialog lists a key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Section {
     Window,
+    Moving,
+    Cards,
 }
 
 impl Section {
     pub fn title(self) -> &'static str {
         match self {
             Section::Window => "Window",
+            Section::Moving => "Moving between cards",
+            Section::Cards => "The card in focus",
         }
     }
 }
 
-/// A key with the modifiers held with it.
+/// Where the keyboard focus is, for the keys that need a card.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    /// Not on a card.
+    Elsewhere,
+    /// On something inside a card: its link or its menu button.
+    InCard,
+    /// On the card itself.
+    OnCard,
+}
+
+/// What a key needs to do anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Needs {
+    Nothing,
+    /// The focus on a card or inside one.
+    Card,
+    /// The focus on the card itself, not on its link or menu button,
+    /// which take that key for themselves.
+    CardItself,
+}
+
+impl Needs {
+    fn met(self, focus: Focus) -> bool {
+        match self {
+            Needs::Nothing => true,
+            Needs::Card => focus != Focus::Elsewhere,
+            Needs::CardItself => focus == Focus::OnCard,
+        }
+    }
+}
+
+/// A key with the modifiers held with it, and what it needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Chord {
     pub key: Key,
     pub mods: ModifierType,
+    pub needs: Needs,
 }
 
 const NONE: ModifierType = ModifierType::empty();
@@ -46,7 +99,19 @@ const ALT: ModifierType = ModifierType::ALT_MASK;
 const SUPER: ModifierType = ModifierType::SUPER_MASK;
 
 const fn chord(key: Key, mods: ModifierType) -> Chord {
-    Chord { key, mods }
+    Chord {
+        key,
+        mods,
+        needs: Needs::Nothing,
+    }
+}
+
+const fn on_card(key: Key, mods: ModifierType) -> Chord {
+    Chord {
+        key,
+        mods,
+        needs: Needs::Card,
+    }
 }
 
 /// A command, what the keys dialog calls it, and its keys, the first being
@@ -140,6 +205,101 @@ pub const BINDINGS: &[Binding] = &[
             &[chord(Key::q, CTRL)],
         )
     },
+    // The arrows move the focus as usual off the cards; the letters reach
+    // the cards from anywhere.
+    bind(
+        Command::Up,
+        "Move up",
+        Section::Moving,
+        &[on_card(Key::Up, NONE), chord(Key::k, NONE)],
+    ),
+    bind(
+        Command::Down,
+        "Move down",
+        Section::Moving,
+        &[on_card(Key::Down, NONE), chord(Key::j, NONE)],
+    ),
+    bind(
+        Command::Left,
+        "Move to the column on the left",
+        Section::Moving,
+        &[on_card(Key::Left, NONE), chord(Key::h, NONE)],
+    ),
+    bind(
+        Command::Right,
+        "Move to the column on the right",
+        Section::Moving,
+        &[on_card(Key::Right, NONE), chord(Key::l, NONE)],
+    ),
+    bind(
+        Command::First,
+        "Go to the first card of the column",
+        Section::Moving,
+        &[chord(Key::g, NONE)],
+    ),
+    bind(
+        Command::Last,
+        "Go to the last card of the column",
+        Section::Moving,
+        &[chord(Key::G, NONE)],
+    ),
+    bind(
+        Command::Pick,
+        "Send to or remove from the Activity",
+        Section::Cards,
+        &[Chord {
+            needs: Needs::CardItself,
+            ..chord(Key::Return, NONE)
+        }],
+    ),
+    bind(
+        Command::NextStage,
+        "Move to the next stage",
+        Section::Cards,
+        &[on_card(Key::Right, SHIFT), on_card(Key::L, NONE)],
+    ),
+    bind(
+        Command::PreviousStage,
+        "Move back a stage",
+        Section::Cards,
+        &[on_card(Key::Left, SHIFT), on_card(Key::H, NONE)],
+    ),
+    bind(
+        Command::OpenLink,
+        "Open the link",
+        Section::Cards,
+        &[on_card(Key::o, NONE)],
+    ),
+    bind(
+        Command::EditTodo,
+        "Edit the todo",
+        Section::Cards,
+        &[on_card(Key::e, NONE)],
+    ),
+    bind(
+        Command::Menu,
+        "Open the card's menu",
+        Section::Cards,
+        &[on_card(Key::period, CTRL)],
+    ),
+    bind(
+        Command::Alert,
+        "Set an alert",
+        Section::Cards,
+        &[on_card(Key::a, NONE)],
+    ),
+    bind(
+        Command::Snooze,
+        "Snooze",
+        Section::Cards,
+        &[on_card(Key::z, NONE)],
+    ),
+    bind(
+        Command::Delete,
+        "Delete the todo (press twice)",
+        Section::Cards,
+        &[on_card(Key::Delete, NONE)],
+    ),
 ];
 
 /// The binding of `command`.
@@ -150,13 +310,18 @@ pub fn binding(command: Command) -> &'static Binding {
         .expect("every command has a binding")
 }
 
-/// What `key` with `mods` held does in the window, if the key handler
-/// takes it.
-pub fn lookup(key: Key, mods: ModifierType) -> Option<Command> {
+/// What `key` with `mods` held does with the focus at `focus`, if the key
+/// handler takes it.
+pub fn lookup(key: Key, mods: ModifierType, focus: Focus) -> Option<Command> {
     BINDINGS
         .iter()
         .filter(|binding| !binding.elsewhere)
-        .find(|binding| binding.chords.iter().any(|c| c.matches(key, mods)))
+        .find(|binding| {
+            binding
+                .chords
+                .iter()
+                .any(|c| c.needs.met(focus) && c.matches(key, mods))
+        })
         .map(|binding| binding.command)
 }
 
@@ -165,6 +330,14 @@ pub fn lookup(key: Key, mods: ModifierType) -> Option<Command> {
 fn printable(key: Key) -> bool {
     key.to_unicode().is_some_and(|c| !c.is_control())
 }
+
+/// The modifiers a chord is written with, in that order.
+const MODIFIERS: [(ModifierType, &str, &str); 4] = [
+    (CTRL, "Ctrl+", "<Control>"),
+    (ALT, "Alt+", "<Alt>"),
+    (SUPER, "Super+", "<Super>"),
+    (SHIFT, "Shift+", "<Shift>"),
+];
 
 impl Chord {
     /// Whether `key` pressed with `mods` is this chord. Lock keys and
@@ -185,12 +358,7 @@ impl Chord {
     /// The chord as a person reads it: `Ctrl+K`, `?`, `F5`, `Shift+→`.
     pub fn text(&self) -> String {
         let mut text = String::new();
-        for (mask, name) in [
-            (CTRL, "Ctrl+"),
-            (ALT, "Alt+"),
-            (SUPER, "Super+"),
-            (SHIFT, "Shift+"),
-        ] {
+        for (mask, name, _) in MODIFIERS {
             if self.mods.contains(mask) {
                 text.push_str(name);
             }
@@ -212,6 +380,25 @@ impl Chord {
         };
         text.push_str(&name);
         text
+    }
+
+    /// The chord in GTK's accelerator syntax, for a menu entry's hint:
+    /// `<Control>k`, `question`.
+    pub fn accel(&self) -> String {
+        let mut accel = String::new();
+        for (mask, _, name) in MODIFIERS {
+            if self.mods.contains(mask) {
+                accel.push_str(name);
+            }
+        }
+        accel.push_str(
+            &self
+                .key
+                .name()
+                .map(|name| name.to_string())
+                .unwrap_or_default(),
+        );
+        accel
     }
 }
 
@@ -312,31 +499,38 @@ mod tests {
                 binding.command
             );
             for chord in binding.chords {
-                assert!(!chords.contains(chord), "{chord:?} is taken twice");
-                chords.push(*chord);
+                let pressed = (chord.key, chord.mods);
+                assert!(!chords.contains(&pressed), "{chord:?} is taken twice");
+                chords.push(pressed);
             }
         }
-        assert_eq!(lookup(Key::Escape, NONE), None);
-        assert_eq!(lookup(Key::q, CTRL), None);
+        for focus in [Focus::Elsewhere, Focus::InCard, Focus::OnCard] {
+            assert_eq!(lookup(Key::Escape, NONE, focus), None);
+            assert_eq!(lookup(Key::q, CTRL, focus), None);
+        }
+    }
+
+    fn window(key: Key, mods: ModifierType) -> Option<Command> {
+        lookup(key, mods, Focus::Elsewhere)
     }
 
     /// The keys find their commands; one that is bound to nothing, or held
     /// with a modifier it does not take, finds none.
     #[test]
     fn finds_the_command_for_a_key() {
-        assert_eq!(lookup(Key::n, NONE), Some(Command::NewTodo));
-        assert_eq!(lookup(Key::r, NONE), Some(Command::Refresh));
-        assert_eq!(lookup(Key::F5, NONE), Some(Command::Refresh));
-        assert_eq!(lookup(Key::s, NONE), Some(Command::Sources));
-        assert_eq!(lookup(Key::comma, CTRL), Some(Command::Settings));
-        assert_eq!(lookup(Key::_1, NONE), Some(Command::ActivityTab));
-        assert_eq!(lookup(Key::_2, NONE), Some(Command::BoardTab));
-        assert_eq!(lookup(Key::k, CTRL), Some(Command::ShowKeys));
-        assert_eq!(lookup(Key::x, NONE), None);
-        assert_eq!(lookup(Key::n, CTRL), None, "Ctrl+N is not n");
-        assert_eq!(lookup(Key::n, ALT), None);
-        assert_eq!(lookup(Key::comma, NONE), None, "a comma is not Ctrl+,");
-        assert_eq!(lookup(Key::F5, SHIFT), None, "Shift counts on F5");
+        assert_eq!(window(Key::n, NONE), Some(Command::NewTodo));
+        assert_eq!(window(Key::r, NONE), Some(Command::Refresh));
+        assert_eq!(window(Key::F5, NONE), Some(Command::Refresh));
+        assert_eq!(window(Key::s, NONE), Some(Command::Sources));
+        assert_eq!(window(Key::comma, CTRL), Some(Command::Settings));
+        assert_eq!(window(Key::_1, NONE), Some(Command::ActivityTab));
+        assert_eq!(window(Key::_2, NONE), Some(Command::BoardTab));
+        assert_eq!(window(Key::k, CTRL), Some(Command::ShowKeys));
+        assert_eq!(window(Key::x, NONE), None);
+        assert_eq!(window(Key::n, CTRL), None, "Ctrl+N is not n");
+        assert_eq!(window(Key::n, ALT), None);
+        assert_eq!(window(Key::comma, NONE), None, "a comma is not Ctrl+,");
+        assert_eq!(window(Key::F5, SHIFT), None, "Shift counts on F5");
     }
 
     /// `?` comes with Shift held on most layouts, Caps Lock gives Ctrl+K
@@ -344,34 +538,82 @@ mod tests {
     /// nothing.
     #[test]
     fn reads_keys_as_typed() {
-        assert_eq!(lookup(Key::question, SHIFT), Some(Command::ShowKeys));
-        assert_eq!(lookup(Key::K, CTRL | SHIFT), Some(Command::ShowKeys));
-        assert_eq!(lookup(Key::K, CTRL), Some(Command::ShowKeys));
+        assert_eq!(window(Key::question, SHIFT), Some(Command::ShowKeys));
+        assert_eq!(window(Key::K, CTRL | SHIFT), Some(Command::ShowKeys));
+        assert_eq!(window(Key::K, CTRL), Some(Command::ShowKeys));
         let held = ModifierType::LOCK_MASK | ModifierType::BUTTON1_MASK;
-        assert_eq!(lookup(Key::r, held), Some(Command::Refresh));
-        assert_eq!(lookup(Key::N, SHIFT), None, "N is not n");
+        assert_eq!(window(Key::r, held), Some(Command::Refresh));
+        assert_eq!(window(Key::N, SHIFT), None, "N is not n");
     }
 
-    /// Keys read as a person writes them.
+    /// The keys that act on a card need the focus on one, and Enter on the
+    /// card itself: on its link or its menu button, Enter is theirs. The
+    /// arrows move the focus as usual off the cards, and the letters that
+    /// move reach the cards from anywhere.
+    #[test]
+    fn card_keys_need_a_card() {
+        use Focus::{Elsewhere, InCard, OnCard};
+        assert_eq!(lookup(Key::Down, NONE, Elsewhere), None);
+        assert_eq!(lookup(Key::Down, NONE, InCard), Some(Command::Down));
+        assert_eq!(lookup(Key::j, NONE, Elsewhere), Some(Command::Down));
+        assert_eq!(lookup(Key::k, NONE, OnCard), Some(Command::Up));
+        assert_eq!(lookup(Key::h, NONE, InCard), Some(Command::Left));
+        assert_eq!(lookup(Key::l, NONE, InCard), Some(Command::Right));
+        assert_eq!(lookup(Key::g, NONE, Elsewhere), Some(Command::First));
+        assert_eq!(lookup(Key::G, SHIFT, Elsewhere), Some(Command::Last));
+        assert_eq!(lookup(Key::Return, NONE, OnCard), Some(Command::Pick));
+        assert_eq!(lookup(Key::Return, NONE, InCard), None);
+        assert_eq!(lookup(Key::Return, NONE, Elsewhere), None);
+        assert_eq!(lookup(Key::Right, SHIFT, OnCard), Some(Command::NextStage));
+        assert_eq!(lookup(Key::Right, SHIFT, Elsewhere), None);
+        assert_eq!(lookup(Key::L, SHIFT, InCard), Some(Command::NextStage));
+        assert_eq!(
+            lookup(Key::Left, SHIFT, OnCard),
+            Some(Command::PreviousStage)
+        );
+        assert_eq!(lookup(Key::H, SHIFT, OnCard), Some(Command::PreviousStage));
+        assert_eq!(lookup(Key::o, NONE, Elsewhere), None);
+        assert_eq!(lookup(Key::o, NONE, OnCard), Some(Command::OpenLink));
+        assert_eq!(lookup(Key::e, NONE, InCard), Some(Command::EditTodo));
+        assert_eq!(lookup(Key::period, CTRL, InCard), Some(Command::Menu));
+        assert_eq!(lookup(Key::a, NONE, OnCard), Some(Command::Alert));
+        assert_eq!(lookup(Key::z, NONE, OnCard), Some(Command::Snooze));
+        assert_eq!(lookup(Key::Delete, NONE, OnCard), Some(Command::Delete));
+        assert_eq!(lookup(Key::Delete, NONE, Elsewhere), None);
+        assert_eq!(
+            lookup(Key::n, NONE, OnCard),
+            Some(Command::NewTodo),
+            "the window's keys work on a card too"
+        );
+    }
+
+    /// Keys read as a person writes them, and as GTK names them.
     #[test]
     fn names_the_keys() {
         let named = |command| {
             binding(command)
                 .chords
                 .iter()
-                .map(Chord::text)
+                .map(|c| (c.text(), c.accel()))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(named(Command::ShowKeys), ["?", "Ctrl+K"]);
-        assert_eq!(named(Command::Refresh), ["r", "F5"]);
-        assert_eq!(named(Command::Settings), ["Ctrl+,"]);
-        assert_eq!(named(Command::SendAway), ["Esc"]);
-        assert_eq!(named(Command::Quit), ["Ctrl+Q"]);
+        let pair = |text: &str, accel: &str| (text.to_owned(), accel.to_owned());
         assert_eq!(
-            chord(Key::Right, SHIFT).text(),
-            "Shift+→",
-            "arrows read as arrows"
+            named(Command::ShowKeys),
+            [pair("?", "question"), pair("Ctrl+K", "<Control>k")]
         );
+        assert_eq!(named(Command::Refresh), [pair("r", "r"), pair("F5", "F5")]);
+        assert_eq!(named(Command::Settings), [pair("Ctrl+,", "<Control>comma")]);
+        assert_eq!(named(Command::SendAway), [pair("Esc", "Escape")]);
+        assert_eq!(named(Command::Quit), [pair("Ctrl+Q", "<Control>q")]);
+        assert_eq!(
+            named(Command::NextStage),
+            [pair("Shift+→", "<Shift>Right"), pair("L", "L")]
+        );
+        assert_eq!(named(Command::Down), [pair("↓", "Down"), pair("j", "j")]);
+        assert_eq!(named(Command::Pick), [pair("Enter", "Return")]);
+        assert_eq!(named(Command::Menu), [pair("Ctrl+.", "<Control>period")]);
+        assert_eq!(named(Command::Delete), [pair("Delete", "Delete")]);
         assert_eq!(hinted("Refresh", Command::Refresh), "Refresh (r)");
         assert_eq!(hinted("Settings", Command::Settings), "Settings (Ctrl+,)");
         assert_eq!(
@@ -391,11 +633,23 @@ mod tests {
     fn searches_by_what_a_key_does() {
         assert_eq!(labels("").len(), BINDINGS.len());
         assert_eq!(labels("  "), labels(""));
-        assert_eq!(labels("todo"), ["Write down a todo"]);
-        assert_eq!(labels("TODO"), ["Write down a todo"], "in any case");
         assert_eq!(
-            labels("go to"),
-            ["Go to the Activity", "Go to the Board"],
+            labels("todo"),
+            [
+                "Write down a todo",
+                "Edit the todo",
+                "Delete the todo (press twice)"
+            ]
+        );
+        assert_eq!(labels("WRITE"), ["Write down a todo"], "in any case");
+        assert_eq!(
+            labels("go to the"),
+            [
+                "Go to the Activity",
+                "Go to the Board",
+                "Go to the first card of the column",
+                "Go to the last card of the column",
+            ],
             "a start ranks before what holds it"
         );
         assert_eq!(
@@ -408,6 +662,7 @@ mod tests {
             ["Go to the Board"],
             "each word, anywhere"
         );
+        assert_eq!(labels("stage next"), ["Move to the next stage"]);
         assert_eq!(
             labels("show the"),
             ["Show the keys", "Show the sources"],

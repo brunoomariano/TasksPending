@@ -7,6 +7,7 @@ mod backend;
 mod clock;
 mod dropdown;
 mod keymap;
+mod nav;
 mod omarchy_bar;
 mod present;
 mod session;

@@ -3,6 +3,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use gtk4 as gtk;
 use gtk4::glib::Propagation;
@@ -10,11 +11,12 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use super::board::tracked;
+use super::board::{self, tracked};
 use super::dialogs::{self, dialog};
 use super::{Ctx, hero, wrapped as text};
-use crate::keymap::{self, Binding, Command, DialogKey};
-use crate::present::Tab;
+use crate::keymap::{self, Binding, Command, DialogKey, Focus};
+use crate::nav::{self, Move};
+use crate::present::{self, Tab};
 
 /// Listens for the window's keys before the focused widget does, so a
 /// button with the focus does not take a letter, and leaves them alone
@@ -33,7 +35,12 @@ pub fn listen(ctx: &Rc<Ctx>, window: &adw::ApplicationWindow) {
             if !takes_keys(&window) {
                 return Propagation::Proceed;
             }
-            match keymap::lookup(key, mods) {
+            let focus = match board::focused(&ctx) {
+                Some((_, true)) => Focus::OnCard,
+                Some((_, false)) => Focus::InCard,
+                None => Focus::Elsewhere,
+            };
+            match keymap::lookup(key, mods, focus) {
                 Some(command) => {
                     run(&ctx, command);
                     Propagation::Stop
@@ -89,6 +96,80 @@ pub fn run(ctx: &Rc<Ctx>, command: Command) {
                 let _ = WidgetExt::activate_action(&window, "app.quit", None);
             }
         }
+        Command::Up => move_focus(ctx, Move::Up),
+        Command::Down => move_focus(ctx, Move::Down),
+        Command::Left => move_focus(ctx, Move::Left),
+        Command::Right => move_focus(ctx, Move::Right),
+        Command::First => move_focus(ctx, Move::First),
+        Command::Last => move_focus(ctx, Move::Last),
+        Command::Pick
+        | Command::NextStage
+        | Command::PreviousStage
+        | Command::OpenLink
+        | Command::EditTodo
+        | Command::Menu
+        | Command::Alert
+        | Command::Snooze
+        | Command::Delete => on_card(ctx, command),
+    }
+}
+
+/// Moves the keyboard focus between the cards, from the one that has it,
+/// or to the first one.
+fn move_focus(ctx: &Rc<Ctx>, step: Move) {
+    let from = board::focused(ctx).map(|(spot, _)| spot);
+    if let Some(spot) = nav::step(&board::column_lengths(ctx), from, step) {
+        board::focus_card(ctx, spot, true);
+    }
+}
+
+/// Does `command` to the card in focus, as its menu would.
+fn on_card(ctx: &Rc<Ctx>, command: Command) {
+    let Some((spot, _)) = board::focused(ctx) else {
+        return;
+    };
+    let (card, place, widget, menu) = {
+        let cards = ctx.cards.borrow();
+        let slot = &cards[spot.0][spot.1];
+        (
+            slot.card.clone(),
+            slot.place,
+            slot.widget.clone(),
+            slot.menu.clone(),
+        )
+    };
+    match command {
+        Command::OpenLink => {
+            if let Some(url) = &card.url {
+                board::open_link(ctx, url);
+            }
+        }
+        Command::Menu => {
+            if let Some(menu) = menu.upgrade() {
+                menu.popup();
+            }
+        }
+        Command::Alert | Command::Snooze => {
+            let entries = present::quick_menu(&card, place, command);
+            if let Some(widget) = widget.upgrade().filter(|_| !entries.is_empty()) {
+                board::quick_menu_on(ctx, &card, place, &widget, entries);
+            }
+        }
+        Command::Delete => {
+            let Some(action) = present::key_action(&card, place, command) else {
+                return;
+            };
+            if ctx.armed.borrow_mut().press(&card.id, Instant::now()) {
+                ctx.act(&card, action);
+            } else if let Some(widgets) = ctx.widgets.borrow().as_ref() {
+                hero::show_note(widgets, &present::delete_note(&card.title));
+            }
+        }
+        _ => {
+            if let Some(action) = present::key_action(&card, place, command) {
+                ctx.act(&card, action);
+            }
+        }
     }
 }
 
@@ -99,6 +180,13 @@ pub fn show(ctx: &Rc<Ctx>) {
     let Some(window) = ctx.window() else {
         return;
     };
+    // The card in focus, which a card's command from the list acts on.
+    let card = board::focused(ctx).and_then(|(spot, _)| {
+        ctx.cards.borrow()[spot.0][spot.1]
+            .widget
+            .upgrade()
+            .map(|card| card.downgrade())
+    });
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
     let search = gtk::SearchEntry::builder()
         .placeholder_text("Search by what it does")
@@ -140,6 +228,7 @@ pub fn show(ctx: &Rc<Ctx>) {
         let ctx = Rc::downgrade(ctx);
         let dialog = dialog.downgrade();
         let rows = rows.clone();
+        let card = card.clone();
         move |row: &gtk::ListBoxRow| {
             let command = rows
                 .borrow()
@@ -153,8 +242,15 @@ pub fn show(ctx: &Rc<Ctx>) {
             };
             dialog.close();
             // Once the dialog is gone, so that what the command opens is
-            // not under it, and its keys reach the window again.
-            gtk::glib::idle_add_local_once(move || run(&ctx, command));
+            // not under it, and its keys reach the window again; on the
+            // card that had the focus before it opened.
+            let card = card.clone();
+            gtk::glib::idle_add_local_once(move || {
+                if let Some(card) = card.and_then(|card| card.upgrade()) {
+                    card.grab_focus();
+                }
+                run(&ctx, command);
+            });
         }
     };
     list.connect_row_activated({

@@ -123,6 +123,11 @@ pub struct Ctx {
     /// The file that tells the icon on Omarchy's bar which alerts were
     /// missed; `None` for the sandbox and a picture, which leave it alone.
     pub bar_signal: Option<PathBuf>,
+    /// The cards on the page by column, top to bottom, for the keys that
+    /// move between them and act on the one in focus.
+    pub cards: RefCell<Vec<Vec<board::Slot>>>,
+    /// Delete pressed once on a todo, waiting for the second press.
+    pub armed: RefCell<crate::nav::Armed>,
 }
 
 /// How the window is coloured.
@@ -671,6 +676,8 @@ pub fn run(
         home,
         omarchy_shell,
         bar_signal,
+        cards: RefCell::default(),
+        armed: RefCell::default(),
     });
     // Nothing is missed yet, whatever an earlier run that did not end
     // cleanly left; the icon loses its dot when the app ends.

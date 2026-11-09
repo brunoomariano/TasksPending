@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
+
+The keyboard drives the window, with a dialog that lists every key and finds one by what it does, and todos are kept from one run to the next.
 
 ### Features
 

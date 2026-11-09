@@ -417,6 +417,7 @@ menubutton.card-menu > button {
 }
 
 .card:hover menubutton.card-menu > button,
+.card:focus-visible menubutton.card-menu > button,
 menubutton.card-menu > button:checked,
 menubutton.card-menu > button:focus-visible {
   opacity: 1;
@@ -625,6 +626,13 @@ button.filter:checked {
 .tasks-pending button.control.wake:hover {
   border-color: {{border-strong}};
   background: {{surface-2}};
+}
+
+/* The card the keys act on: the focus ring the buttons have, only when
+   the keyboard put the focus there. */
+.card:focus-visible {
+  outline: 2px solid alpha({{accent}}, 0.6);
+  outline-offset: 2px;
 }
 
 /* The keys dialog: what a key does, then its keys as small caps. */

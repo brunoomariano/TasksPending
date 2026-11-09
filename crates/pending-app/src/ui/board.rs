@@ -11,15 +11,64 @@ use super::dialogs;
 use super::hero::show_note;
 use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped};
-use crate::keymap::{Command as KeyCommand, hinted};
+use crate::keymap::{self, Command as KeyCommand, hinted};
+use crate::nav::{self, Spot};
 use crate::present::{
     ActivityItem, ActivityView, BoardView, CardAction, CardView, GroupView, MenuItem, Notice,
-    Place, StackView, StageView, TODO_UNSAVED, Tab, card_menu, link_note,
+    Place, StackView, StageView, TODO_UNSAVED, Tab, action_key, card_menu, link_note,
 };
 use crate::view::flip;
 
 /// Narrowest a group gets; the board wraps groups onto more rows instead.
 const GROUP_MIN_WIDTH: i32 = 290;
+/// A card on the page, for the keys: what it shows, where, and its widgets.
+pub struct Slot {
+    pub card: CardView,
+    pub place: Place,
+    pub widget: gtk::glib::WeakRef<gtk::Box>,
+    pub menu: gtk::glib::WeakRef<gtk::MenuButton>,
+}
+
+/// Where the keyboard focus is among the cards: the card that has it,
+/// or holds what has it, at its spot, and whether it is the card itself.
+pub fn focused(ctx: &Ctx) -> Option<(Spot, bool)> {
+    let window = ctx.window()?;
+    let focus = gtk::prelude::GtkWindowExt::focus(&window)?;
+    ctx.cards
+        .borrow()
+        .iter()
+        .enumerate()
+        .find_map(|(column, cards)| {
+            cards.iter().enumerate().find_map(|(row, slot)| {
+                let card = slot.widget.upgrade()?;
+                let itself = focus == card.clone().upcast::<gtk::Widget>();
+                (itself || focus.is_ancestor(&card)).then_some(((column, row), itself))
+            })
+        })
+}
+
+/// Gives the card at `spot` the keyboard focus, showing it as keyboard
+/// focus when `shown`.
+pub fn focus_card(ctx: &Ctx, spot: Spot, shown: bool) {
+    let card = ctx
+        .cards
+        .borrow()
+        .get(spot.0)
+        .and_then(|cards| cards.get(spot.1))
+        .and_then(|slot| slot.widget.upgrade());
+    if let Some(card) = card {
+        card.grab_focus();
+        if shown && let Some(window) = ctx.window() {
+            window.set_focus_visible(true);
+        }
+    }
+}
+
+/// How many cards each column holds.
+pub fn column_lengths(ctx: &Ctx) -> Vec<usize> {
+    ctx.cards.borrow().iter().map(Vec::len).collect()
+}
+
 /// Narrowest a stage of the Activity area gets: the three stay side by
 /// side, sharing the width, so each one may be narrower than a group.
 const STAGE_MIN_WIDTH: i32 = 240;
@@ -141,10 +190,35 @@ fn release_focus(page_box: &gtk::Box) {
     }
 }
 
-/// Draws `page` into `page_box`.
+/// Draws `page` into `page_box`. A card that had the keyboard focus has it
+/// again once drawn, wherever it went (to the next stage, say), or the
+/// card that took its place does.
 pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
+    let had_focus = focused(ctx).map(|(spot, _)| {
+        let id = ctx.cards.borrow()[spot.0][spot.1].card.id.clone();
+        (id, spot)
+    });
     release_focus(page_box);
     clear(page_box);
+    ctx.cards.borrow_mut().clear();
+    draw(ctx, page_box, page);
+    if let Some((id, spot)) = had_focus {
+        let ids: Vec<Vec<String>> = ctx
+            .cards
+            .borrow()
+            .iter()
+            .map(|cards| cards.iter().map(|slot| slot.card.id.clone()).collect())
+            .collect();
+        let lengths = column_lengths(ctx);
+        if let Some(spot) =
+            nav::find(&ids, &id, Some(spot.0)).or_else(|| nav::nearest(&lengths, spot))
+        {
+            focus_card(ctx, spot, false);
+        }
+    }
+}
+
+fn draw(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
     match &page.notice {
         Some(Notice::Loading) => {
             page_box.append(&text("Loading…", &["empty"]));
@@ -180,6 +254,7 @@ pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
         .build();
     board.add_css_class("board");
     for group in &page.groups {
+        ctx.cards.borrow_mut().push(Vec::new());
         // Not focusable itself, but focus goes into it: `can-focus` off
         // would keep the keyboard from every card inside.
         let child = gtk::FlowBoxChild::builder()
@@ -208,6 +283,7 @@ fn activity_section(ctx: &Rc<Ctx>, activity: &ActivityView) -> gtk::Box {
         .build();
     let headers = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
     for stage in &activity.stages {
+        ctx.cards.borrow_mut().push(Vec::new());
         stages.append(&stage_widget(ctx, stage, &headers));
     }
     section.append(&stages);
@@ -411,12 +487,37 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
 /// A card: its title (a link when it has one), the three-dot menu, and two
 /// lines of its body with the whole text as a tooltip.
 fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
+    // Focusable itself, for the keys that act on it; Tab goes on into its
+    // link and its menu button.
     let widget = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(4)
         .hexpand(false)
+        .focusable(true)
+        .accessible_role(gtk::AccessibleRole::Group)
         .build();
     widget.add_css_class("card");
+    widget.update_property(&[gtk::accessible::Property::Label(&card.title)]);
+    if !card.body.is_empty() {
+        widget.update_property(&[gtk::accessible::Property::Description(&card.body)]);
+    }
+    // A click on the card, off its link and its menu button, gives it the
+    // focus, so the keys go on from the card the mouse picked.
+    let click = gtk::GestureClick::new();
+    click.connect_pressed(|gesture, _, x, y| {
+        let Some(card) = gesture.widget() else {
+            return;
+        };
+        let on_control = card
+            .pick(x, y, gtk::PickFlags::DEFAULT)
+            .is_some_and(|target| {
+                target.is::<gtk::Button>() || target.ancestor(gtk::Button::static_type()).is_some()
+            });
+        if !on_control {
+            card.grab_focus();
+        }
+    });
+    widget.add_controller(click);
     if card.picked() {
         widget.add_css_class("marked");
     }
@@ -444,24 +545,7 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
             ));
             let ctx = ctx.clone();
             title.connect_activate_link(move |_, uri| {
-                let launcher = gtk::UriLauncher::new(uri);
-                let ctx = ctx.clone();
-                launcher.launch(
-                    ctx.window().as_ref(),
-                    gtk::gio::Cancellable::NONE,
-                    move |result| {
-                        // Closing the app chooser is not a failure.
-                        let Err(error) = result else { return };
-                        if error.matches(gtk::DialogError::Dismissed)
-                            || error.matches(gtk::DialogError::Cancelled)
-                        {
-                            return;
-                        }
-                        if let Some(widgets) = ctx.widgets.borrow().as_ref() {
-                            show_note(widgets, &link_note(error.message()));
-                        }
-                    },
-                );
+                open_link(&ctx, uri);
                 gtk::glib::Propagation::Stop
             });
         }
@@ -469,8 +553,17 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
     }
     header.append(&title);
 
-    header.append(&menu_button(ctx, card, place));
+    let menu = menu_button(ctx, card, place);
+    header.append(&menu);
     widget.append(&header);
+    if let Some(column) = ctx.cards.borrow_mut().last_mut() {
+        column.push(Slot {
+            card: card.clone(),
+            place,
+            widget: widget.downgrade(),
+            menu: menu.downgrade(),
+        });
+    }
 
     if !card.body.is_empty() {
         let body = text(&card.body, &["card-body"]);
@@ -489,16 +582,45 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
     widget
 }
 
-/// The three dots at a card's corner, with the menu of what can be done to
-/// it. Each entry is an action of the button's own group, so the popover
-/// finds them whatever card the button is on.
-fn menu_button(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::MenuButton {
+/// Opens `uri` in the default browser, saying so when it cannot.
+pub fn open_link(ctx: &Rc<Ctx>, uri: &str) {
+    let launcher = gtk::UriLauncher::new(uri);
+    let ctx = ctx.clone();
+    launcher.launch(
+        ctx.window().as_ref(),
+        gtk::gio::Cancellable::NONE,
+        move |result| {
+            // Closing the app chooser is not a failure.
+            let Err(error) = result else { return };
+            if error.matches(gtk::DialogError::Dismissed)
+                || error.matches(gtk::DialogError::Cancelled)
+            {
+                return;
+            }
+            if let Some(widgets) = ctx.widgets.borrow().as_ref() {
+                show_note(widgets, &link_note(error.message()));
+            }
+        },
+    );
+}
+
+/// A menu model of `items` for `card`, each entry an action of the group
+/// returned (inserted as `card`), so the popover finds them whatever card
+/// it is on. An entry that a key also does names that key.
+fn card_model(
+    ctx: &Rc<Ctx>,
+    card: &CardView,
+    place: Place,
+    items: Vec<MenuItem>,
+) -> (gtk::gio::Menu, gtk::gio::SimpleActionGroup) {
     let model = gtk::gio::Menu::new();
     let actions = gtk::gio::SimpleActionGroup::new();
     let mut entries = 0;
     let mut add = |menu: &gtk::gio::Menu, label: &str, action: CardAction| {
         let name = format!("item-{entries}");
         entries += 1;
+        let key = action_key(card, place, action)
+            .and_then(|command| keymap::binding(command).chords.first());
         let simple = gtk::gio::SimpleAction::new(&name, None);
         let ctx = ctx.clone();
         let card = card.clone();
@@ -510,9 +632,13 @@ fn menu_button(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::MenuButton 
             gtk::glib::idle_add_local_once(move || ctx.act(&card, action));
         });
         actions.add_action(&simple);
-        menu.append(Some(label), Some(&format!("card.{name}")));
+        let entry = gtk::gio::MenuItem::new(Some(label), Some(&format!("card.{name}")));
+        if let Some(chord) = key {
+            entry.set_attribute_value("accel", Some(&chord.accel().to_variant()));
+        }
+        menu.append_item(&entry);
     };
-    for item in card_menu(card, place) {
+    for item in items {
         match item {
             MenuItem::Action { label, action } => add(&model, &label, action),
             MenuItem::Submenu { label, items } => {
@@ -524,16 +650,51 @@ fn menu_button(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::MenuButton 
             }
         }
     }
+    (model, actions)
+}
+
+/// The three dots at a card's corner, with the menu of what can be done to
+/// it.
+fn menu_button(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::MenuButton {
+    let (model, actions) = card_model(ctx, card, place, card_menu(card, place));
     let popover = gtk::PopoverMenu::from_model(Some(&model));
     popover.add_css_class("card-menu");
     popover.set_has_arrow(false);
     let button = gtk::MenuButton::builder()
         .icon_name("view-more-symbolic")
         .popover(&popover)
-        .tooltip_text("Card menu")
+        .tooltip_text(hinted("Card menu", KeyCommand::Menu))
         .valign(gtk::Align::Start)
         .build();
     button.add_css_class("card-menu");
     button.insert_action_group("card", Some(&actions));
     button
+}
+
+/// A small menu of `entries` of `card`'s menu (the alert or the snooze
+/// choices, for their key), opened under the card. It is let go of once
+/// closed.
+pub fn quick_menu_on(
+    ctx: &Rc<Ctx>,
+    view: &CardView,
+    place: Place,
+    card: &gtk::Box,
+    entries: Vec<(String, CardAction)>,
+) {
+    let items = entries
+        .into_iter()
+        .map(|(label, action)| MenuItem::Action { label, action })
+        .collect();
+    let (model, actions) = card_model(ctx, view, place, items);
+    let popover = gtk::PopoverMenu::from_model(Some(&model));
+    popover.add_css_class("card-menu");
+    popover.set_has_arrow(false);
+    popover.insert_action_group("card", Some(&actions));
+    popover.set_parent(card);
+    popover.connect_closed(|popover| {
+        // After the entry chosen is done with the popover.
+        let popover = popover.clone();
+        gtk::glib::idle_add_local_once(move || popover.unparent());
+    });
+    popover.popup();
 }

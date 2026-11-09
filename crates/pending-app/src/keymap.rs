@@ -302,6 +302,27 @@ pub const BINDINGS: &[Binding] = &[
     ),
 ];
 
+impl Binding {
+    /// Whether holding the key repeats the command: only the moves do, so
+    /// a key that acts on a card or opens something acts once per press.
+    pub fn repeats(&self) -> bool {
+        self.section == Section::Moving
+    }
+}
+
+/// The key a card menu's entry names for `command`, if any. GTK makes it
+/// a shortcut of the entry while the menu is open, so only the keys that
+/// are safe there have one: not Enter, which picks the entry in focus,
+/// nor Delete, which would delete on one press.
+pub fn menu_hint(command: Command) -> Option<&'static Chord> {
+    match command {
+        Command::NextStage | Command::PreviousStage | Command::EditTodo => {
+            binding(command).chords.first()
+        }
+        _ => None,
+    }
+}
+
 /// The binding of `command`.
 pub fn binding(command: Command) -> &'static Binding {
     BINDINGS
@@ -340,12 +361,21 @@ const MODIFIERS: [(ModifierType, &str, &str); 4] = [
 ];
 
 impl Chord {
-    /// Whether `key` pressed with `mods` is this chord. Lock keys and
-    /// mouse buttons held do not count, nor Shift on a key that gives a
-    /// character; with Ctrl or Alt, a letter counts in either case.
+    /// Whether `key` pressed with `mods` is this chord. Mouse buttons held
+    /// do not count, nor Shift on a key that gives a character; a letter
+    /// reads as if Caps Lock were off, and with Ctrl or Alt counts in
+    /// either case.
     pub fn matches(&self, key: Key, mods: ModifierType) -> bool {
-        let mut mods = mods & (CTRL | SHIFT | ALT | SUPER);
         let mut key = key;
+        if mods.contains(ModifierType::LOCK_MASK) && key.to_lower() != key.to_upper() {
+            // Caps Lock gives L for l, and l for Shift+l.
+            key = if key.is_upper() {
+                key.to_lower()
+            } else {
+                key.to_upper()
+            };
+        }
+        let mut mods = mods & (CTRL | SHIFT | ALT | SUPER);
         if printable(key) {
             mods.remove(SHIFT);
             if mods.intersects(CTRL | ALT) {
@@ -541,9 +571,62 @@ mod tests {
         assert_eq!(window(Key::question, SHIFT), Some(Command::ShowKeys));
         assert_eq!(window(Key::K, CTRL | SHIFT), Some(Command::ShowKeys));
         assert_eq!(window(Key::K, CTRL), Some(Command::ShowKeys));
-        let held = ModifierType::LOCK_MASK | ModifierType::BUTTON1_MASK;
-        assert_eq!(window(Key::r, held), Some(Command::Refresh));
+        assert_eq!(
+            window(Key::r, ModifierType::BUTTON1_MASK),
+            Some(Command::Refresh),
+            "a mouse button held changes nothing"
+        );
         assert_eq!(window(Key::N, SHIFT), None, "N is not n");
+    }
+
+    /// Caps Lock turns the letters GDK reports to capitals, and Shift
+    /// with it back to small ones: the keys read the letter typed as if
+    /// it were off, so l still moves the focus and does not move the card.
+    #[test]
+    fn reads_letters_as_if_caps_lock_were_off() {
+        let lock = ModifierType::LOCK_MASK;
+        assert_eq!(window(Key::R, lock), Some(Command::Refresh));
+        assert_eq!(window(Key::L, lock), Some(Command::Right));
+        assert_eq!(window(Key::G, lock), Some(Command::First));
+        assert_eq!(window(Key::g, lock | SHIFT), Some(Command::Last));
+        assert_eq!(
+            lookup(Key::l, lock | SHIFT, Focus::OnCard),
+            Some(Command::NextStage)
+        );
+        assert_eq!(
+            lookup(Key::L, lock, Focus::OnCard),
+            Some(Command::Right),
+            "not the next stage"
+        );
+        assert_eq!(window(Key::K, CTRL | lock), Some(Command::ShowKeys));
+        assert_eq!(window(Key::question, SHIFT | lock), Some(Command::ShowKeys));
+        assert_eq!(window(Key::_1, lock), Some(Command::ActivityTab));
+    }
+
+    /// Holding a key repeats it. Only the keys that move the focus take
+    /// the repeats: one that acts on a card or opens something acts once
+    /// per press, so holding Delete or Enter does not go down a column.
+    #[test]
+    fn only_the_moves_repeat() {
+        for binding in BINDINGS {
+            let moves = binding.section == Section::Moving;
+            assert_eq!(binding.repeats(), moves, "{:?}", binding.command);
+        }
+    }
+
+    /// The card menu names the keys that are safe to press while it is
+    /// open, where GTK makes them shortcuts of the entries: the stage moves
+    /// and Edit. Not Enter, which picks the entry in focus, nor Delete,
+    /// which there would delete on one press.
+    #[test]
+    fn the_menu_names_only_the_safe_keys() {
+        let hint = |command| menu_hint(command).map(Chord::accel);
+        assert_eq!(hint(Command::NextStage).as_deref(), Some("<Shift>Right"));
+        assert_eq!(hint(Command::PreviousStage).as_deref(), Some("<Shift>Left"));
+        assert_eq!(hint(Command::EditTodo).as_deref(), Some("e"));
+        assert_eq!(hint(Command::Pick), None);
+        assert_eq!(hint(Command::Delete), None);
+        assert_eq!(hint(Command::Refresh), None);
     }
 
     /// The keys that act on a card need the focus on one, and Enter on the

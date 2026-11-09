@@ -25,10 +25,16 @@ use crate::present::{self, Tab};
 pub fn listen(ctx: &Rc<Ctx>, window: &adw::ApplicationWindow) {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    // Every key down, wherever it goes, so that a key still held when a
+    // dialog closes (Enter, having saved a todo) does not act as it
+    // repeats.
+    let held = Rc::new(RefCell::new(nav::Held::default()));
     keys.connect_key_pressed({
         let ctx = Rc::downgrade(ctx);
         let window = window.downgrade();
-        move |_, key, _, mods| {
+        let held = held.clone();
+        move |_, key, code, mods| {
+            let fresh = held.borrow_mut().press(code);
             let (Some(ctx), Some(window)) = (ctx.upgrade(), window.upgrade()) else {
                 return Propagation::Proceed;
             };
@@ -42,14 +48,27 @@ pub fn listen(ctx: &Rc<Ctx>, window: &adw::ApplicationWindow) {
             };
             match keymap::lookup(key, mods, focus) {
                 Some(command) => {
-                    run(&ctx, command);
+                    // Held down, only a move goes on: a key that acts on a
+                    // card acts once per press.
+                    if fresh || keymap::binding(command).repeats() {
+                        run(&ctx, command);
+                    }
                     Propagation::Stop
                 }
                 None => Propagation::Proceed,
             }
         }
     });
+    keys.connect_key_released({
+        let held = held.clone();
+        move |_, _, code, _| held.borrow_mut().release(code)
+    });
     window.add_controller(keys);
+    window.connect_is_active_notify(move |window| {
+        if !window.is_active() {
+            held.borrow_mut().clear();
+        }
+    });
 }
 
 /// Whether the window's own keys apply: not while a dialog is open, a
@@ -177,9 +196,9 @@ fn on_card(ctx: &Rc<Ctx>, command: Command) {
 /// The arrows pick one, Enter or a click runs it, and Esc (or Backspace
 /// with nothing typed) closes it.
 pub fn show(ctx: &Rc<Ctx>) {
-    let Some(window) = ctx.window() else {
+    if ctx.window().is_none() {
         return;
-    };
+    }
     // The card in focus, which a card's command from the list acts on.
     let card = board::focused(ctx).and_then(|(spot, _)| {
         ctx.cards.borrow()[spot.0][spot.1]
@@ -188,8 +207,10 @@ pub fn show(ctx: &Rc<Ctx>) {
             .map(|card| card.downgrade())
     });
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    // The list follows every key typed, so Enter runs what is shown.
     let search = gtk::SearchEntry::builder()
         .placeholder_text("Search by what it does")
+        .search_delay(0)
         .hexpand(true)
         .build();
     content.append(&search);
@@ -306,7 +327,7 @@ pub fn show(ctx: &Rc<Ctx>) {
     });
     dialog.add_controller(steer);
     dialog.set_focus(Some(&search));
-    dialog.present(Some(&window));
+    dialogs::show_over(ctx, &dialog);
 }
 
 /// Scrolls the dialog, when it scrolls, until `row` is in view; the focus

@@ -449,12 +449,12 @@ pub fn update_weather(ctx: &Rc<Ctx>, widgets: &Widgets) {
     weather.report.set_visible(true);
 }
 
-/// A short note under the controls, e.g. why a change was refused.
 /// The Refresh button, for its key to click.
 pub fn refresh_control(widgets: &Widgets) -> gtk::Button {
     widgets.hero.controls.refresh_button.clone()
 }
 
+/// A short note under the controls, e.g. why a change was refused.
 pub fn show_note(widgets: &Widgets, text: &str) {
     let note = widgets.hero.controls.note.clone();
     note.set_label(text);

@@ -192,11 +192,15 @@ run_destdir_case() {
 }
 run_destdir_case
 
-# --uninstall removes what was installed and nothing else.
+# --uninstall removes what was installed and nothing else: the todos the
+# window keeps in the same share folder stay, and the folder goes only when
+# nothing else is in it.
 run_uninstall_case() {
-  local home="$WORK/uninstall/home"
-  local release_bin="$WORK/uninstall/release-bin"
-  local fake_bin="$WORK/uninstall/fake-bin"
+  local name=$1 todos=$2
+  local home="$WORK/uninstall-$name/home"
+  local release_bin="$WORK/uninstall-$name/release-bin"
+  local fake_bin="$WORK/uninstall-$name/fake-bin"
+  local share="$home/.local/share/tasks-pending"
 
   mkdir -p "$home" "$release_bin" "$fake_bin"
   make_fake_binary "$release_bin/tasks-pending"
@@ -205,6 +209,9 @@ TODOIST_API_TOKEN=preserve-this-token
 EOF2
   ln -s "$(type -P true)" "$fake_bin/systemctl"
   for flag in "" --uninstall; do
+    if [[ $flag == --uninstall && $todos == 1 ]]; then
+      printf 'my todos' >"$share/todos.sqlite3"
+    fi
     # shellcheck disable=SC2086
     HOME="$home" \
       XDG_CONFIG_HOME="$home/.config" \
@@ -212,13 +219,21 @@ EOF2
       PREFIX="$home/.local" \
       RELEASE_BIN="$release_bin" \
       SKIP_BUILD=1 \
-      BINARY_LOG="$WORK/uninstall/binary.log" \
+      BINARY_LOG="$WORK/uninstall-$name/binary.log" \
       "$ROOT/scripts/install.sh" $flag >/dev/null
   done
   test ! -e "$home/.local/bin/tasks-pending"
   test ! -e "$home/.local/share/applications/$APP_ID.desktop"
   test ! -e "$home/.local/share/icons/hicolor/scalable/apps/$APP_ID.svg"
   test ! -e "$home/.config/systemd/user/tasks-pending.service"
+  test ! -e "$share/config.example.toml"
+  test ! -e "$share/env.example"
   grep -Fqx 'TODOIST_API_TOKEN=preserve-this-token' "$home/.config/tasks-pending/env"
+  if [[ $todos == 1 ]]; then
+    test "$(cat "$share/todos.sqlite3")" = 'my todos'
+  else
+    test ! -e "$share"
+  fi
 }
-run_uninstall_case
+run_uninstall_case clean 0
+run_uninstall_case todos 1

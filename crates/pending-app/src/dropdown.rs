@@ -187,6 +187,16 @@ pub fn close(window: Option<&Placement>, screen: Option<&Screen>) -> Close {
     }
 }
 
+/// What Esc does, from where the window is: the drop-down goes away by
+/// these steps, as closing it does; any other window stays (`None`), since
+/// Esc never quits.
+pub fn escape(window: Option<&Placement>, screen: Option<&Screen>) -> Option<Vec<Dispatch>> {
+    match close(window, screen) {
+        Close::Hide(steps) => Some(steps),
+        Close::Quit => None,
+    }
+}
+
 /// The shell command that starts `exe`'s window.
 pub fn spawn_command(exe: &Path) -> String {
     let path = exe.to_string_lossy().replace('\'', r"'\''");
@@ -404,6 +414,24 @@ mod tests {
         assert_eq!(close(Some(&dropped("0xa1")), None), Close::Hide(Vec::new()));
         assert_eq!(close(Some(&tiled("0xb2")), Some(&shown)), Close::Quit);
         assert_eq!(close(None, Some(&shown)), Close::Quit);
+    }
+
+    /// Esc sends the drop-down away as closing it does, keeping its page;
+    /// a window opened the usual way, or one off Hyprland, stays as it is:
+    /// Esc never quits.
+    #[test]
+    fn escape_sends_only_the_drop_down_away() {
+        let shown = Screen {
+            shows_dropdown: true,
+            ..SCREEN
+        };
+        assert_eq!(
+            escape(Some(&dropped("0xa1")), Some(&shown)),
+            Some(vec![Dispatch::ToggleSpecial])
+        );
+        assert_eq!(escape(Some(&dropped("0xa1")), None), Some(Vec::new()));
+        assert_eq!(escape(Some(&tiled("0xb2")), Some(&shown)), None);
+        assert_eq!(escape(None, Some(&shown)), None);
     }
 
     /// Each step is the Lua Hyprland dispatches, naming the window by its

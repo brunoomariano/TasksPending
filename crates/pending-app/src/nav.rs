@@ -82,10 +82,11 @@ pub fn nearest(columns: &[usize], spot: Spot) -> Option<Spot> {
 }
 
 /// The keys held down, by hardware code, to tell a press from the repeats
-/// GDK sends while a key stays down.
+/// GDK sends while a key stays down, and which of them ran something.
 #[derive(Debug, Default)]
 pub struct Held {
     down: std::collections::HashSet<u32>,
+    spent: std::collections::HashSet<u32>,
 }
 
 impl Held {
@@ -95,13 +96,26 @@ impl Held {
         self.down.insert(code)
     }
 
+    /// The press of `code` ran something: its repeats go nowhere until it
+    /// comes up.
+    pub fn spend(&mut self, code: u32) {
+        self.spent.insert(code);
+    }
+
+    /// Whether the key `code`, still down, ran something.
+    pub fn spent(&self, code: u32) -> bool {
+        self.spent.contains(&code)
+    }
+
     pub fn release(&mut self, code: u32) {
         self.down.remove(&code);
+        self.spent.remove(&code);
     }
 
     /// The window lost the keys, and their releases go elsewhere.
     pub fn clear(&mut self) {
         self.down.clear();
+        self.spent.clear();
     }
 }
 
@@ -222,6 +236,16 @@ mod tests {
         assert!(held.press(119), "pressed again");
         held.clear();
         assert!(held.press(36), "after the window lost the keys");
+
+        held.spend(36);
+        assert!(held.spent(36));
+        assert!(!held.spent(119));
+        held.release(36);
+        assert!(!held.spent(36), "up again");
+        held.press(36);
+        held.spend(36);
+        held.clear();
+        assert!(!held.spent(36), "the window lost the keys");
     }
 
     /// When the card in focus left the page, the focus goes to the card

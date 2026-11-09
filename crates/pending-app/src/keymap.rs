@@ -5,6 +5,8 @@
 
 use gtk4::gdk::{Key, ModifierType};
 
+use crate::nav::Held;
+
 /// Something a key does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Command {
@@ -484,6 +486,50 @@ pub fn search(query: &str) -> Vec<&'static Binding> {
     found.into_iter().map(|(_, binding)| binding).collect()
 }
 
+/// What the window does with a key that went down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verdict {
+    /// Do the command.
+    Run(Command),
+    /// Keep the key from the focused widget, and do nothing.
+    Swallow,
+    /// Let the focused widget have it.
+    Pass,
+}
+
+/// What the window does with `key`, hardware `code`, going down, `held`
+/// noting every key down. `focus` is where the keyboard focus is, or
+/// `None` while the window's keys stand aside (a dialog or a menu open,
+/// or typing). A key held down repeats, and only the moves go on: a key
+/// whose press ran something goes nowhere until it comes up, not even
+/// into the dialog it opened; one held through a dialog does not act
+/// once the dialog closes; and Esc, whose press closed what it was for,
+/// does not then send the window away.
+pub fn verdict(
+    held: &mut Held,
+    code: u32,
+    key: Key,
+    mods: ModifierType,
+    focus: Option<Focus>,
+) -> Verdict {
+    let fresh = held.press(code);
+    if !fresh && (held.spent(code) || key == Key::Escape) {
+        return Verdict::Swallow;
+    }
+    let Some(focus) = focus else {
+        return Verdict::Pass;
+    };
+    match lookup(key, mods, focus) {
+        Some(command) if binding(command).repeats() => Verdict::Run(command),
+        Some(command) if fresh => {
+            held.spend(code);
+            Verdict::Run(command)
+        }
+        Some(_) => Verdict::Swallow,
+        None => Verdict::Pass,
+    }
+}
+
 /// What a key does in the keys dialog, whose search entry has the focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DialogKey {
@@ -512,6 +558,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+    use gtk4::glib::translate::IntoGlib;
 
     /// Each command has one binding, a label of its own, and keys that no
     /// other command takes; the key handler leaves Esc and Ctrl+Q alone.
@@ -563,9 +610,8 @@ mod tests {
         assert_eq!(window(Key::F5, SHIFT), None, "Shift counts on F5");
     }
 
-    /// `?` comes with Shift held on most layouts, Caps Lock gives Ctrl+K
-    /// as a capital K, and a lock key or a mouse button held changes
-    /// nothing.
+    /// `?` comes with Shift held on most layouts, Ctrl+K can come as a
+    /// capital K, and a mouse button held changes nothing.
     #[test]
     fn reads_keys_as_typed() {
         assert_eq!(window(Key::question, SHIFT), Some(Command::ShowKeys));
@@ -608,10 +654,64 @@ mod tests {
     /// per press, so holding Delete or Enter does not go down a column.
     #[test]
     fn only_the_moves_repeat() {
+        use Command::{Down, First, Last, Left, Right, Up};
+        let moves = [Up, Down, Left, Right, First, Last];
         for binding in BINDINGS {
-            let moves = binding.section == Section::Moving;
-            assert_eq!(binding.repeats(), moves, "{:?}", binding.command);
+            let repeats = moves.contains(&binding.command);
+            assert_eq!(binding.repeats(), repeats, "{:?}", binding.command);
         }
+    }
+
+    /// A key held down: a move goes on; a key that ran something goes
+    /// nowhere until it comes up, not into the dialog it opened either;
+    /// one held through a dialog does not act once it closes; Esc that
+    /// closed a dialog does not send the window away; and in a text field
+    /// a key types, held or not.
+    #[test]
+    fn a_held_key_acts_once() {
+        let held = &mut Held::default();
+        let (on_card, elsewhere) = (Some(Focus::OnCard), Some(Focus::Elsewhere));
+        assert_eq!(down(held, Key::j, on_card), Verdict::Run(Command::Down));
+        assert_eq!(down(held, Key::j, on_card), Verdict::Run(Command::Down));
+
+        assert_eq!(down(held, Key::e, on_card), Verdict::Run(Command::EditTodo));
+        assert_eq!(down(held, Key::e, None), Verdict::Swallow, "not typed");
+
+        assert_eq!(down(held, Key::Return, None), Verdict::Pass, "the dialog's");
+        assert_eq!(down(held, Key::Return, on_card), Verdict::Swallow);
+
+        assert_eq!(down(held, Key::Escape, None), Verdict::Pass, "the dialog's");
+        assert_eq!(down(held, Key::Escape, elsewhere), Verdict::Swallow);
+
+        for key in [Key::e, Key::Return, Key::Escape] {
+            held.release(code(key));
+        }
+        assert_eq!(down(held, Key::e, None), Verdict::Pass, "typed");
+        assert_eq!(down(held, Key::e, None), Verdict::Pass, "and again");
+        assert_eq!(
+            down(held, Key::Return, on_card),
+            Verdict::Run(Command::Pick)
+        );
+        assert_eq!(
+            down(held, Key::Escape, elsewhere),
+            Verdict::Pass,
+            "Esc's own"
+        );
+
+        // Enter running a key from the keys dialog, which spends it.
+        held.release(code(Key::Return));
+        assert_eq!(down(held, Key::Return, None), Verdict::Pass);
+        held.spend(code(Key::Return));
+        assert_eq!(down(held, Key::Return, on_card), Verdict::Swallow);
+    }
+
+    /// `key` going down, with a hardware code of its own.
+    fn down(held: &mut Held, key: Key, focus: Option<Focus>) -> Verdict {
+        verdict(held, code(key), key, NONE, focus)
+    }
+
+    fn code(key: Key) -> u32 {
+        key.into_glib()
     }
 
     /// The card menu names the keys that are safe to press while it is

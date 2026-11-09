@@ -50,6 +50,48 @@ pub fn write(dir: &Path) -> io::Result<bool> {
     Ok(wrote)
 }
 
+/// What the window tells the icon, right in the session's runtime
+/// directory (not in a folder of its own, which Quickshell would not see
+/// appear): the window writes it, the plugin watches it.
+pub const SIGNAL: &str = "tasks-pending-bar.json";
+
+/// The file the window tells the icon through, from the environment
+/// (`env` reads a variable); `None` without a runtime directory.
+pub fn signal_path(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    let runtime = env("XDG_RUNTIME_DIR").filter(|value| !value.is_empty())?;
+    Some(PathBuf::from(runtime).join(SIGNAL))
+}
+
+/// What the file says, given the titles of the cards whose alerts rang
+/// while the window was away ([`crate::alert::Missed`]): whether the icon
+/// shows its dot, and the tooltip naming them.
+pub fn signal(missed: &[&str]) -> String {
+    let tooltip = match missed {
+        [] => "TasksPending".to_owned(),
+        [title] => format!("TasksPending · Alert: {title}"),
+        titles => format!(
+            "TasksPending · {} alerts: {}",
+            titles.len(),
+            titles.join("; ")
+        ),
+    };
+    serde_json::json!({ "dot": !missed.is_empty(), "tooltip": tooltip }).to_string()
+}
+
+/// Writes the file at `path` in one go, a new file moved over the old, so
+/// the icon never reads half of one.
+pub fn tell(path: &Path, missed: &[&str]) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let fresh = path.with_extension("new");
+    if let Err(error) = fs::write(&fresh, signal(missed)) {
+        let _ = fs::remove_file(&fresh);
+        return Err(error);
+    }
+    fs::rename(&fresh, path)
+}
+
 /// Whether the bar shows the icon: Omarchy's `shell.json` places it in
 /// one of the bar's sections, as an entry with its id or as the bare id.
 pub fn in_bar(shell_json: &str) -> bool {
@@ -156,11 +198,90 @@ mod tests {
             "tasks-pending"
         );
         assert!(widget.contains(&format!("moduleName: \"{PLUGIN_ID}\"")));
+        // Font Awesome's tasks mark: without a glyph the bar hides the
+        // button, and the click and the tooltip with it.
+        assert!(widget.contains(r#"text: "\uf0ae""#), "{widget}");
         assert!(
             widget
                 .contains(r#"Util.execArgv([root.setting("command", "tasks-pending"), "toggle"])"#),
             "{widget}"
         );
+    }
+
+    /// The window tells the icon through a file right in the session's
+    /// runtime directory, which is there before the shell starts: Quickshell
+    /// sees a file appear in a folder it watches, never in one that did not
+    /// exist yet. Without a runtime directory, it tells it nothing.
+    #[test]
+    fn tells_the_icon_through_the_runtime_directory() {
+        let runtime = |value: &'static str| {
+            move |name: &str| (name == "XDG_RUNTIME_DIR").then(|| value.to_owned())
+        };
+        assert_eq!(
+            signal_path(&runtime("/run/user/1000")),
+            Some(PathBuf::from("/run/user/1000/tasks-pending-bar.json"))
+        );
+        assert_eq!(signal_path(&runtime("")), None);
+        assert_eq!(signal_path(&|_| None), None);
+    }
+
+    /// The icon shows its dot while alerts were missed, and its tooltip
+    /// names them; with none, no dot and its own name.
+    #[test]
+    fn the_dot_names_the_alerts_missed() {
+        let told = |missed: &[&str]| -> serde_json::Value {
+            serde_json::from_str(&signal(missed)).unwrap()
+        };
+        assert_eq!(
+            told(&[]),
+            serde_json::json!({"dot": false, "tooltip": "TasksPending"})
+        );
+        assert_eq!(
+            told(&["Review the release checklist"]),
+            serde_json::json!({
+                "dot": true,
+                "tooltip": "TasksPending · Alert: Review the release checklist"
+            })
+        );
+        assert_eq!(
+            told(&["Review", "Deploy"]),
+            serde_json::json!({"dot": true, "tooltip": "TasksPending · 2 alerts: Review; Deploy"})
+        );
+    }
+
+    /// Telling writes the folder and the file whole, and telling again
+    /// replaces it, leaving nothing else beside it.
+    #[test]
+    fn tells_in_one_go() {
+        let dir = scratch("tell");
+        let path = dir.join("tasks-pending-bar.json");
+        tell(&path, &["Review"]).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), signal(&["Review"]));
+        tell(&path, &[]).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), signal(&[]));
+        let names: Vec<_> = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["tasks-pending-bar.json"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The icon watches that file, the dot and the tooltip coming from
+    /// what it says.
+    #[test]
+    fn the_icon_watches_what_the_window_tells_it() {
+        let widget = &files()[1].1;
+        for expected in [
+            format!(r#"Quickshell.env("XDG_RUNTIME_DIR") + "/{SIGNAL}""#),
+            "watchChanges: true".to_owned(),
+            "told.dot === true".to_owned(),
+            "told.tooltip".to_owned(),
+            "visible: root.dot".to_owned(),
+            "tooltipText: root.tip".to_owned(),
+        ] {
+            assert!(widget.contains(&expected), "{expected}");
+        }
     }
 
     /// Where Omarchy keeps its user plugins and its shell settings.

@@ -1,12 +1,14 @@
 //! What lasts as long as the window and no longer: the alerts set on
-//! cards, and the todos written down in the window.
+//! cards and those missed, and the todos written down in the window.
 
-use crate::alert::Alerts;
+use crate::alert::{Alerts, Missed};
 use crate::view::Stage;
 
 #[derive(Debug, Default)]
 pub struct Session {
     pub alerts: Alerts,
+    /// The alerts that rang with the window away, for the icon's dot.
+    pub missed: Missed,
     pub todos: Todos,
 }
 

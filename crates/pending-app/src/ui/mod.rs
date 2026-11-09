@@ -119,6 +119,9 @@ pub struct Ctx {
     pub home: Option<PathBuf>,
     /// Omarchy's shell is here to carry the icon on its bar.
     pub omarchy_shell: bool,
+    /// The file that tells the icon on Omarchy's bar which alerts were
+    /// missed; `None` for the sandbox and a picture, which leave it alone.
+    pub bar_signal: Option<PathBuf>,
 }
 
 /// How the window is coloured.
@@ -433,7 +436,30 @@ impl Ctx {
         for (id, alert) in &due {
             notify(self, id, alert);
         }
+        let in_front = self.window().is_some_and(|window| window.is_active());
+        if self.model.borrow_mut().session.missed.rang(&due, in_front) {
+            self.tell_bar();
+        }
         self.redraw(true);
+    }
+
+    /// The window came to the front: the alerts that rang meanwhile were
+    /// seen, and the icon on Omarchy's bar loses its dot.
+    pub fn seen(&self) {
+        if self.model.borrow_mut().session.missed.seen() {
+            self.tell_bar();
+        }
+    }
+
+    /// Tells the icon on Omarchy's bar which alerts were missed.
+    fn tell_bar(&self) {
+        let Some(path) = &self.bar_signal else {
+            return;
+        };
+        let model = self.model.borrow();
+        if let Err(error) = omarchy_bar::tell(path, &model.session.missed.titles()) {
+            tracing::warn!(%error, "telling the icon on Omarchy's bar");
+        }
     }
 
     /// Activity on the window is "looking": the daemon flags what changed
@@ -558,6 +584,11 @@ pub fn run(
     let hyprland = dropdown::socket(&|name| env(name).and_then(|value| value.into_string().ok()))
         .map(Hyprland::new);
     let omarchy_shell = !unique || omarchy_bar::available(env("PATH").as_deref());
+    let bar_signal = unique
+        .then(|| {
+            omarchy_bar::signal_path(&|name| env(name).and_then(|value| value.into_string().ok()))
+        })
+        .flatten();
     if unique && let Some(home) = &home {
         // The icon on Omarchy's bar keeps up with this version, once
         // Settings has put it there.
@@ -603,6 +634,18 @@ pub fn run(
         hyprland,
         home,
         omarchy_shell,
+        bar_signal,
+    });
+    // Nothing is missed yet, whatever an earlier run that did not end
+    // cleanly left; the icon loses its dot when the app ends.
+    ctx.tell_bar();
+    app.connect_shutdown({
+        let path = ctx.bar_signal.clone();
+        move |_| {
+            if let Some(path) = &path {
+                let _ = std::fs::remove_file(path);
+            }
+        }
     });
     // What the icon on Omarchy's bar sends, through `tasks-pending toggle`.
     let toggle = gtk::gio::SimpleAction::new("toggle", None);
@@ -797,6 +840,16 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
         }
     });
     watch_activity(ctx, &window);
+    window.connect_is_active_notify({
+        let ctx = Rc::downgrade(ctx);
+        move |window| {
+            if window.is_active()
+                && let Some(ctx) = ctx.upgrade()
+            {
+                ctx.seen();
+            }
+        }
+    });
     {
         let ctx = ctx.clone();
         window.connect_suspended_notify(move |window| {

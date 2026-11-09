@@ -54,6 +54,8 @@ The last good batch of every source is written to a JSON cache (`$XDG_STATE_HOME
 
 `pending-app` is the GTK4 window. `present::page` turns a snapshot and the user's `View` (board filter, collapsed stacks, hidden items) into what to draw, with no widgets involved, and is tested that way; `ui` rebuilds the widgets whenever that page changes and keeps the hero (clock, weather, controls) updated in place. A worker on the Tokio runtime runs the window's commands against the client one at a time and sends events back to the GTK thread. The stylesheet is generated from the app's own palette (dark or light, following the system), or from Omarchy's theme when Settings asks for it (`theme.rs`), because GTK CSS has no variables on every version the app supports.
 
+The window's keys come from one table, `keymap`, that the key handler (`ui/keys.rs`), the keys dialog, the tooltips and the card menu's hints all read; `nav` decides where a move takes the focus, with the page seen as columns of cards, and a card's key maps to an action of its menu (`present::key_action`), so a key never does what the menu would not. Todos are kept by `todo_store` in a SQLite file in the data dir (rusqlite, SQLite bundled): every change rewrites the list in one transaction, and the file carries an application id and a schema version, so a file that is not TasksPending's is refused untouched and one from a newer schema is only read. The sandbox and screenshots keep them in memory.
+
 ## Sources Available
 
 - `sample` (`pending-core`): fixed cards.

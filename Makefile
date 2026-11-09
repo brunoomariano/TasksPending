@@ -86,7 +86,7 @@ release-smoke: release-local ## Build a release bundle and smoke test it
 install: ## Build a release and install it under PREFIX (default ~/.local)
 	./scripts/install.sh
 
-uninstall: ## Remove what install put in place (your config stays)
+uninstall: ## Remove what install put in place (your config and todos stay)
 	./scripts/install.sh --uninstall
 
 deploy: ## Build, install under ~/.local and (re)start the daemon; fails unless it answers as this build

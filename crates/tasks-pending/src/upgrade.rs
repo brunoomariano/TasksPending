@@ -1,8 +1,9 @@
 //! `tasks-pending upgrade`: fetches the latest release the way the
 //! installer does (bundle and published checksum), swaps it in under the
-//! release directory and restarts the daemon. Only for installs made by
-//! the release installer; a package install upgrades with the package
-//! manager.
+//! release directory and restarts the daemon. Only for the release the
+//! installer unpacks outside Arch; the package it installs on Arch is
+//! pacman's, so `upgrade` gives the install command instead, which
+//! upgrades the package.
 
 use std::ffi::OsString;
 use std::fs;
@@ -13,7 +14,9 @@ use std::time::Duration;
 
 use anyhow::Context;
 use pending_api::update::try_latest_release;
-use pending_core::release::{bundle_asset, is_newer, parse_version, process_var, release_base_url};
+use pending_core::release::{
+    BASE_URL_VARIABLE, bundle_asset, is_newer, parse_version, process_var, release_base_url,
+};
 use sha2::{Digest, Sha256};
 
 /// Longest wait to reach the releases host.
@@ -189,6 +192,72 @@ fn requested_version(text: &str) -> anyhow::Result<Option<String>> {
     Ok(Some(version.to_owned()))
 }
 
+/// `text` as one shell word: as it is when the shell reads nothing in it,
+/// single-quoted otherwise.
+fn shell_word(text: &str) -> String {
+    let plain = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._:/%+=@,-".contains(c));
+    if plain {
+        text.to_owned()
+    } else {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
+}
+
+/// The command that installs a release from `base`, as the README gives
+/// it. The installer takes where and which release from its environment,
+/// so the line says what this run used, whatever the shell exports:
+/// `TASKS_PENDING_RELEASE_BASE_URL` when `base` is not the default, and
+/// `TASKS_PENDING_VERSION` when a `version` (`latest` too) was asked for.
+/// Run again, it updates what it installed, the Arch package included.
+fn install_command(base: &str, version: Option<&str>) -> String {
+    let installer = shell_word(&format!("{base}/latest/download/tasks-pending-install.sh"));
+    let mut told = String::new();
+    if release_base_url(&|_| None).ok().as_deref() != Some(base) {
+        told.push_str(&format!("{BASE_URL_VARIABLE}={} ", shell_word(base)));
+    }
+    if let Some(version) = version {
+        told.push_str(&format!("TASKS_PENDING_VERSION={version} "));
+    }
+    format!("curl --proto '=https' --tlsv1.2 -fsSL {installer} | {told}sh")
+}
+
+/// Why `upgrade` will not swap the executable `install` names for
+/// `target`, or `None` for the release directory's, which it swaps. The
+/// Arch package is pacman's: it gets `command`, the install command, which
+/// upgrades the package.
+fn refusal(install: Install, lib_dir: &Path, target: &str, command: &str) -> Option<String> {
+    match install {
+        Install::Bundle => None,
+        Install::Package => Some(format!(
+            "this tasks-pending is the Arch package, which pacman upgrades, not `tasks-pending upgrade`; to get {target}, run the install command again, which upgrades the package with pacman (it asks for your password):\n\n  {command}"
+        )),
+        Install::NotRelease(dir) => Some(format!(
+            "{} does not hold a TasksPending release (its executable, scripts/install.sh and CHANGELOG.md, and no share/): TASKS_PENDING_LIB_DIR names where the release is unpacked, not an install prefix",
+            dir.display()
+        )),
+        Install::Other(path) => Some(format!(
+            "{} is not {} (the release directory's executable); upgrade the way it was installed (make install / make deploy), or run the release installer",
+            path.display(),
+            release_executable(lib_dir).display()
+        )),
+    }
+}
+
+/// What `--check` says when `target` is newer than `current`: run
+/// `upgrade`, or, for the Arch package, `command`.
+fn available(current: &str, target: &str, install: &Install, command: &str) -> String {
+    let news = format!("tasks-pending {current} is installed; {target} is available");
+    match install {
+        Install::Package => format!(
+            "{news}; run the install command again, which upgrades the package:\n\n  {command}"
+        ),
+        _ => format!("{news} (run `tasks-pending upgrade`)"),
+    }
+}
+
 /// Whether `checksum_text` (the published `.sha256` file) names `asset`
 /// with `hash` (lower-case hex).
 fn checksum_matches(hash: &str, checksum_text: &str, asset: &str) -> bool {
@@ -355,10 +424,19 @@ pub fn run(options: Options) -> anyhow::Result<()> {
             "{target} is older than the installed {current}; pass --allow-downgrade to install it anyway"
         ),
     }
+    // A version asked for, `latest` included, is said in the command, so
+    // that a TASKS_PENDING_VERSION the shell exports does not stand in.
+    let asked = options
+        .version
+        .as_ref()
+        .map(|_| pinned.as_deref().unwrap_or("latest"));
+    let command = install_command(&base, asked);
     if options.check {
-        println!(
-            "tasks-pending {current} is installed; {target} is available (run `tasks-pending upgrade`)"
-        );
+        let install = match (std::env::current_exe(), Layout::from_env()) {
+            (Ok(exe), Ok(layout)) => installed_from(&exe, &layout.lib_dir),
+            (exe, _) => Install::Other(exe.unwrap_or_default()),
+        };
+        println!("{}", available(current, &target, &install, &command));
         return Ok(());
     }
 
@@ -366,20 +444,8 @@ pub fn run(options: Options) -> anyhow::Result<()> {
     let layout = Layout::from_env()?;
     let lib_dir = &layout.lib_dir;
     let exe = std::env::current_exe().context("finding the running executable")?;
-    match installed_from(&exe, lib_dir) {
-        Install::Bundle => {}
-        Install::Package => anyhow::bail!(
-            "this tasks-pending was installed by the package manager; upgrade it with pacman, or with the release installer"
-        ),
-        Install::NotRelease(dir) => anyhow::bail!(
-            "{} does not hold a TasksPending release (its executable, scripts/install.sh and CHANGELOG.md, and no share/): TASKS_PENDING_LIB_DIR names where the release is unpacked, not an install prefix",
-            dir.display()
-        ),
-        Install::Other(path) => anyhow::bail!(
-            "{} is not {} (the release directory's executable); upgrade the way it was installed (make install / make deploy), or run the release installer",
-            path.display(),
-            release_executable(lib_dir).display()
-        ),
+    if let Some(why) = refusal(installed_from(&exe, lib_dir), lib_dir, &target, &command) {
+        anyhow::bail!(why);
     }
 
     let parent = lib_dir
@@ -1133,5 +1199,85 @@ echo 'tasks-pending 0.5.0'
         );
         assert!(installed(&scratch).contains("0.6.1"));
         assert_no_leftovers(&scratch);
+    }
+
+    /// The install command `upgrade` gives is the README's, word for word,
+    /// so the two cannot drift. A version asked for, and a releases
+    /// location of your own, are said to the installer in the line itself,
+    /// not left to what the shell exports, and quoted for the shell.
+    #[test]
+    fn gives_the_readmes_install_command() {
+        let base = release_base_url(&|_| None).unwrap();
+        let command = install_command(&base, None);
+        assert_eq!(
+            command,
+            "curl --proto '=https' --tlsv1.2 -fsSL https://github.com/brunoomariano/TasksPending/releases/latest/download/tasks-pending-install.sh | sh"
+        );
+        for (doc, text) in [
+            ("README.md", include_str!("../../../README.md")),
+            ("docs/install.md", include_str!("../../../docs/install.md")),
+        ] {
+            assert!(
+                text.contains(&command),
+                "{doc} gives another install command"
+            );
+        }
+        assert!(install_command(&base, Some("0.6.1")).ends_with(
+            "/latest/download/tasks-pending-install.sh | TASKS_PENDING_VERSION=0.6.1 sh"
+        ));
+        assert!(
+            install_command(&base, Some("latest")).ends_with(" | TASKS_PENDING_VERSION=latest sh")
+        );
+        assert_eq!(
+            install_command("https://example.test/releases", Some("0.6.1")),
+            "curl --proto '=https' --tlsv1.2 -fsSL https://example.test/releases/latest/download/tasks-pending-install.sh | TASKS_PENDING_RELEASE_BASE_URL=https://example.test/releases TASKS_PENDING_VERSION=0.6.1 sh"
+        );
+        assert_eq!(
+            install_command("https://example.test/a b;c", None),
+            "curl --proto '=https' --tlsv1.2 -fsSL 'https://example.test/a b;c/latest/download/tasks-pending-install.sh' | TASKS_PENDING_RELEASE_BASE_URL='https://example.test/a b;c' sh"
+        );
+        assert!(
+            install_command("https://example.test/it's", None).contains(
+                r"'https://example.test/it'\''s/latest/download/tasks-pending-install.sh'"
+            )
+        );
+    }
+
+    /// A package install is left to pacman: the refusal names the release
+    /// it would get and gives the command that upgrades the package, and
+    /// `--check` gives that command too, in place of `upgrade`. The other
+    /// refusals stay as they were, and the release directory's executable
+    /// is swapped.
+    #[test]
+    fn points_a_package_install_at_the_install_command() {
+        let command = "curl https://example.test/install.sh | sh";
+        let lib = Path::new("/home/me/.local/lib/tasks-pending");
+        let why = |install| refusal(install, lib, "0.8.0", command);
+        assert_eq!(why(Install::Bundle), None);
+        let package = why(Install::Package).unwrap();
+        assert!(package.contains("0.8.0"), "{package}");
+        assert!(package.contains("pacman"), "{package}");
+        assert!(package.ends_with(&format!("\n\n  {command}")), "{package}");
+        let other = why(Install::Other(PathBuf::from(
+            "/usr/local/bin/tasks-pending",
+        )))
+        .unwrap();
+        assert!(other.contains("make deploy"), "{other}");
+        assert!(!other.contains(command), "{other}");
+        let prefix = why(Install::NotRelease(PathBuf::from("/home/me/.local"))).unwrap();
+        assert!(prefix.contains("not an install prefix"), "{prefix}");
+
+        let swap = Install::Bundle;
+        assert_eq!(
+            available("0.7.0", "0.8.0", &swap, command),
+            "tasks-pending 0.7.0 is installed; 0.8.0 is available (run `tasks-pending upgrade`)"
+        );
+        let package = available("0.7.0", "0.8.0", &Install::Package, command);
+        assert!(
+            package.starts_with("tasks-pending 0.7.0 is installed; 0.8.0 is available"),
+            "{package}"
+        );
+        assert!(!package.contains("tasks-pending upgrade"), "{package}");
+        assert!(package.ends_with(&format!("\n\n  {command}")), "{package}");
     }
 }

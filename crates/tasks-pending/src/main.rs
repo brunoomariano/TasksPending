@@ -44,7 +44,7 @@ enum Command {
     Sandbox(SandboxCommand),
     /// Create the config files if missing, refresh the launcher caches and start (or restart) the daemon.
     Setup(SetupCommand),
-    /// Fetch the latest release, check it against its published checksum and install it.
+    /// Fetch the latest release, check it against its published checksum and install it over the one the installer unpacked; on the Arch package, print the install command, which upgrades it.
     Upgrade(UpgradeCommand),
     /// Drop the window down over the screen, or send it away (what the icon on Omarchy's bar runs).
     Toggle,

@@ -387,11 +387,13 @@ pub struct Page {
     pub config_error: Option<String>,
 }
 
-/// What the newer-version line explains when pointed at. Not only the
-/// install script's command: a copy built or installed by hand is updated
-/// the same way it was installed.
-pub const UPDATE_TOOLTIP: &str = "A newer version is published. Update it the way you \
-     installed it: tasks-pending upgrade, after the install script.";
+/// What the newer-version line explains when pointed at. The install
+/// command updates whatever it installed, the Arch package too, where
+/// `tasks-pending upgrade` refuses; a copy built by hand is updated the
+/// same way it was built.
+pub const UPDATE_TOOLTIP: &str = "A newer version is published. Run the install command \
+     again to get it, the curl line in the README (tasks-pending upgrade does it too, \
+     except for the Arch package). A copy built by hand updates the way it was built.";
 
 /// "· v0.7.0 available": a newer published `version`.
 pub fn update_line(version: &str) -> String {
@@ -1927,6 +1929,16 @@ mod tests {
         assert_eq!(shown.version_line, None);
         assert_eq!(shown.snoozed_line.as_deref(), Some("· 1 snoozed"));
         assert_eq!(update_line("0.7.0"), "· v0.7.0 available");
+        // The install command updates whatever it installed, the Arch
+        // package too, where `tasks-pending upgrade` refuses.
+        assert!(
+            UPDATE_TOOLTIP.contains("Run the install command again"),
+            "{UPDATE_TOOLTIP}"
+        );
+        assert!(
+            UPDATE_TOOLTIP.contains("except for the Arch package"),
+            "{UPDATE_TOOLTIP}"
+        );
     }
 
     /// Settings offers every board and every interval, the one in effect

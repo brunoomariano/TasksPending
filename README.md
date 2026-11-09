@@ -18,6 +18,7 @@ A click on the icon (ringed) drops the window down, and the next sends it away. 
 - **What to do next.** GitHub pull requests are split by next action (review requested, returned to you, ready to merge, not approved yet, drafts), with review state, checks and comment counts on the card.
 - **Activity.** Send the cards you are working on to the Activity tab, a board of three stages: Picked, In Progress, Done / to mark. The window opens on it; the Board tab holds the groups, where the picked cards stay highlighted.
 - **One menu per card.** Every action sits behind a three-dot button on the card: send to Activity, move between stages, snooze, alert, and for a todo edit and delete.
+- **The keyboard, too.** What the mouse does has a key, and the mouse keeps working: **?** or **Ctrl+K** lists the keys, searched by what each does. **j**/**k** and **h**/**l** (or the arrows on a card) move between cards, **Enter** sends one to the Activity or takes it back, **Shift+→** and **Shift+←** move it along the stages, **o** opens its link and **Ctrl+.** its menu.
 - **Snooze.** Hide a card for an hour, until tomorrow, until next week, or until it changes. It always comes back when the item changes, and nothing is written to the provider.
 - **Alerts.** Ask to be alerted about a card in 15 minutes, 30 minutes, an hour or three hours: when the time comes, a desktop notification names it, and clicking it brings the window up.
 - **Todos.** Write down something that comes from no source: **New** in the Picked column of the Activity puts it there, it moves through the stages like the other cards, and it is still there after a restart.
@@ -29,6 +30,10 @@ A click on the icon (ringed) drops the window down, and the next sends it away. 
 <p align="center">
   <img src="docs/assets/tasks-pending-board.png" alt="The Board tab: one group of stacks per source, with the picked cards highlighted" width="49%">
   <img src="docs/assets/tasks-pending-todo.png" alt="The New todo dialog: a title, optional details, and the note that todos are kept while alerts last as long as TasksPending runs" width="49%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/tasks-pending-keys.png" alt="The Keys dialog: a search by what a key does over the keys of the window, of moving between cards and of the card in focus" width="49%">
 </p>
 
 <p align="center">

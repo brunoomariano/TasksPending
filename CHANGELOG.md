@@ -2,11 +2,12 @@
 
 ## 0.8.1
 
-TasksPending's icon on Omarchy's bar shows a dot for the alerts that rang while the window was away, and `tasks-pending upgrade` gives the Arch package the command that upgrades it.
+TasksPending's icon on Omarchy's bar shows a dot for the alerts that rang while the window was away, Esc sends the drop-down away, and `tasks-pending upgrade` gives the Arch package the command that upgrades it.
 
 ### Features
 
 - An alert that rings while the window is not in front leaves a dot on TasksPending's icon on Omarchy's bar, in the bar's urgent colour, with the card's title in its tooltip, until the window comes to the front. The window tells the icon through `$XDG_RUNTIME_DIR/tasks-pending-bar.json`, and rewrites the plugin when the new version starts.
+- **Esc** sends the window dropped down from Omarchy's bar away, as the next click on the icon would, keeping its page. A dialog or a menu that is open takes the Esc first, and closes; in the window opened from the launcher, Esc does nothing of its own.
 
 ### Fixed
 

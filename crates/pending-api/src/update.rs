@@ -1,6 +1,7 @@
 //! A quiet, once-a-day look at the latest release, so the window can say
-//! when a newer version exists. Nothing is downloaded; `tasks-pending
-//! upgrade` does that when asked.
+//! when a newer version exists. Nothing is downloaded: the install
+//! command, run again, does that, and so does `tasks-pending upgrade`
+//! outside the Arch package.
 
 use std::fmt;
 use std::future::Future;

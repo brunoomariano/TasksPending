@@ -6,6 +6,7 @@ mod alert;
 mod backend;
 mod clock;
 mod dropdown;
+mod keymap;
 mod omarchy_bar;
 mod present;
 mod session;
@@ -28,7 +29,8 @@ pub const APP_ID: &str = "io.github.brunoomariano.TasksPending";
 
 /// What a screenshot shows: the Activity area with cards at each stage,
 /// the same in the light scheme or in a sample Omarchy theme, the Board
-/// with two cards picked, or one of the dialogs.
+/// with two cards picked, or one of the dialogs (the keys dialog among
+/// them).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Scene {
     #[default]
@@ -40,6 +42,7 @@ pub enum Scene {
     Settings,
     Snoozed,
     Todo,
+    Keys,
 }
 
 #[derive(Debug, Default)]

@@ -4,6 +4,7 @@ mod board;
 mod dialogs;
 mod hero;
 mod icons;
+mod keys;
 mod tabs;
 
 use std::cell::RefCell;
@@ -893,6 +894,8 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
         })),
     ));
     window.add_controller(keys);
+    // The other keys, and the dialog that lists them.
+    self::keys::listen(ctx, &window);
     watch_activity(ctx, &window);
     window.connect_is_active_notify({
         let ctx = Rc::downgrade(ctx);
@@ -1174,7 +1177,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
                 .is_some()
         });
         match scene {
-            Scene::Activity | Scene::Light | Scene::Omarchy | Scene::Todo => {
+            Scene::Activity | Scene::Light | Scene::Omarchy | Scene::Todo | Scene::Keys => {
                 pick_along_the_stages(&ctx, &firsts, true)
             }
             Scene::Board | Scene::Settings | Scene::Sources => {
@@ -1195,6 +1198,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
             Scene::Settings => dialogs::show_settings(&ctx),
             Scene::Snoozed => dialogs::show_snoozed(&ctx),
             Scene::Todo => dialogs::show_todo(&ctx, None),
+            Scene::Keys => keys::show(&ctx),
             Scene::Activity | Scene::Board | Scene::Light | Scene::Omarchy => {}
         });
     });

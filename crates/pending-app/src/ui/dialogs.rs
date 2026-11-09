@@ -7,7 +7,7 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use super::board::{clear, notice, tracked};
+use super::board::{self, clear, notice, tracked};
 use super::icons::{size, source_icon, symbolic};
 use super::{Ctx, wrapped as text};
 use crate::backend::Command;
@@ -26,7 +26,15 @@ const INDENT: i32 = 18;
 
 /// A dialog titled `title` over the window, holding `content`.
 fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) {
-    dialog(title, content).present(ctx.window().as_ref());
+    show_over(ctx, &dialog(title, content));
+}
+
+/// Shows `dialog` over the window. The card that had the keyboard focus
+/// has it back once the dialog closes, also when a redraw while it was
+/// open (a todo saved, a refresh) made that card anew.
+pub(super) fn show_over(ctx: &Rc<Ctx>, dialog: &adw::Dialog) {
+    board::keep_focus_through(ctx, dialog);
+    dialog.present(ctx.window().as_ref());
 }
 
 /// A dialog titled `title` holding `content`, not shown yet.
@@ -101,7 +109,7 @@ pub fn show_sources(ctx: &Rc<Ctx>) {
 /// The snoozed cards, each with when it comes back and a button to wake it.
 pub fn show_snoozed(ctx: &Rc<Ctx>) {
     if let Some(dialog) = snoozed_dialog(ctx) {
-        dialog.present(ctx.window().as_ref());
+        show_over(ctx, &dialog);
     }
 }
 
@@ -162,8 +170,8 @@ fn snoozed_dialog(ctx: &Rc<Ctx>) -> Option<adw::Dialog> {
 }
 
 /// Writing down a todo, or rewriting the one with id `editing`: a title,
-/// optional details, and the note that nothing is saved. Enter in a field
-/// is the button.
+/// optional details, and a note on whether todos are kept. Enter in a
+/// field is the button.
 pub fn show_todo(ctx: &Rc<Ctx>, editing: Option<&str>) {
     let existing = editing.and_then(|id| ctx.model.borrow().session.todos.get(id).cloned());
     if editing.is_some() && existing.is_none() {
@@ -246,7 +254,7 @@ pub fn show_todo(ctx: &Rc<Ctx>, editing: Option<&str>) {
             }
         });
     }
-    dialog.present(ctx.window().as_ref());
+    show_over(ctx, &dialog);
 }
 
 /// Settings: which board to show, the auto-refresh interval, the theme,

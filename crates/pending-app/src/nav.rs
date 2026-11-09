@@ -46,19 +46,21 @@ pub fn step(columns: &[usize], from: Option<Spot>, step: Move) -> Option<Spot> {
     })
 }
 
-/// Where the card `id` is on a page of `columns`, in the column `prefer`
-/// when it is there (a card can sit in two stacks of a group, or two
-/// groups).
-pub fn find(columns: &[Vec<String>], id: &str, prefer: Option<usize>) -> Option<Spot> {
-    let row_in = |column: usize| {
-        columns
-            .get(column)
-            .and_then(|cards| cards.iter().position(|card| card == id))
-            .map(|row| (column, row))
+/// Where the card `id` is on a page of `columns`. A card can sit in two
+/// stacks of a group, or in two groups: the copy in the column of `was`,
+/// nearest its row, wins.
+pub fn find(columns: &[Vec<String>], id: &str, was: Option<Spot>) -> Option<Spot> {
+    let rows = |column: usize| {
+        columns.get(column).into_iter().flat_map(move |cards| {
+            cards
+                .iter()
+                .enumerate()
+                .filter(move |(_, card)| *card == id)
+                .map(move |(row, _)| (column, row))
+        })
     };
-    prefer
-        .and_then(row_in)
-        .or_else(|| (0..columns.len()).find_map(row_in))
+    was.and_then(|(column, row)| rows(column).min_by_key(|(_, at)| at.abs_diff(row)))
+        .or_else(|| (0..columns.len()).find_map(|column| rows(column).next()))
 }
 
 /// The card nearest to `spot` on a page whose columns hold `columns`
@@ -77,6 +79,30 @@ pub fn nearest(columns: &[usize], spot: Spot) -> Option<Spot> {
             left.or(right)
         })
     })
+}
+
+/// The keys held down, by hardware code, to tell a press from the repeats
+/// GDK sends while a key stays down.
+#[derive(Debug, Default)]
+pub struct Held {
+    down: std::collections::HashSet<u32>,
+}
+
+impl Held {
+    /// The key `code` went down: whether it is a fresh press, not a
+    /// repeat.
+    pub fn press(&mut self, code: u32) -> bool {
+        self.down.insert(code)
+    }
+
+    pub fn release(&mut self, code: u32) {
+        self.down.remove(&code);
+    }
+
+    /// The window lost the keys, and their releases go elsewhere.
+    pub fn clear(&mut self) {
+        self.down.clear();
+    }
 }
 
 /// How long the first press of Delete waits for the second: as long as
@@ -167,14 +193,35 @@ mod tests {
         let columns = page(&[&["a", "b"], &["c", "a"]]);
         assert_eq!(find(&columns, "b", None), Some((0, 1)));
         assert_eq!(find(&columns, "a", None), Some((0, 0)));
-        assert_eq!(find(&columns, "a", Some(1)), Some((1, 1)));
+        assert_eq!(find(&columns, "a", Some((1, 0))), Some((1, 1)));
         assert_eq!(
-            find(&columns, "c", Some(0)),
+            find(&columns, "c", Some((0, 0))),
             Some((1, 0)),
             "or wherever it went"
         );
-        assert_eq!(find(&columns, "z", Some(0)), None);
-        assert_eq!(find(&columns, "a", Some(9)), Some((0, 0)));
+        assert_eq!(find(&columns, "z", Some((0, 0))), None);
+        assert_eq!(find(&columns, "a", Some((9, 0))), Some((0, 0)));
+
+        // The same card in two stacks of a group: the copy that had the
+        // focus keeps it.
+        let twice = page(&[&["a", "b", "a", "c"]]);
+        assert_eq!(find(&twice, "a", Some((0, 2))), Some((0, 2)));
+        assert_eq!(find(&twice, "a", Some((0, 3))), Some((0, 2)));
+        assert_eq!(find(&twice, "a", Some((0, 0))), Some((0, 0)));
+    }
+
+    /// A key held down repeats: the first press is fresh, the repeats are
+    /// not, until the key comes up or the window loses the keys.
+    #[test]
+    fn tells_a_press_from_a_repeat() {
+        let mut held = Held::default();
+        assert!(held.press(119));
+        assert!(!held.press(119), "a repeat");
+        assert!(held.press(36), "another key");
+        held.release(119);
+        assert!(held.press(119), "pressed again");
+        held.clear();
+        assert!(held.press(36), "after the window lost the keys");
     }
 
     /// When the card in focus left the page, the focus goes to the card

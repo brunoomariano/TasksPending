@@ -6,6 +6,8 @@ use std::rc::Rc;
 
 use gtk4 as gtk;
 use gtk4::prelude::*;
+use libadwaita as adw;
+use libadwaita::prelude::*;
 
 use super::dialogs;
 use super::hero::show_note;
@@ -203,19 +205,50 @@ pub fn render(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
     ctx.cards.borrow_mut().clear();
     draw(ctx, page_box, page);
     if let Some((id, spot)) = had_focus {
-        let ids: Vec<Vec<String>> = ctx
-            .cards
-            .borrow()
-            .iter()
-            .map(|cards| cards.iter().map(|slot| slot.card.id.clone()).collect())
-            .collect();
-        let lengths = column_lengths(ctx);
-        if let Some(spot) =
-            nav::find(&ids, &id, Some(spot.0)).or_else(|| nav::nearest(&lengths, spot))
-        {
-            focus_card(ctx, spot, false);
-        }
+        refocus(ctx, &id, spot);
     }
+}
+
+/// Gives the keyboard focus to the card `id`, which had it at `was`,
+/// wherever it is now, or to the card that took its place.
+fn refocus(ctx: &Ctx, id: &str, was: Spot) {
+    let ids: Vec<Vec<String>> = ctx
+        .cards
+        .borrow()
+        .iter()
+        .map(|cards| cards.iter().map(|slot| slot.card.id.clone()).collect())
+        .collect();
+    let lengths = column_lengths(ctx);
+    if let Some(spot) = nav::find(&ids, id, Some(was)).or_else(|| nav::nearest(&lengths, was)) {
+        focus_card(ctx, spot, false);
+    }
+}
+
+/// Once `dialog` closes, gives the focus back to the card that had it when
+/// it opened, if libadwaita could not (the card was made anew meanwhile)
+/// and no other dialog took over.
+pub fn keep_focus_through(ctx: &Rc<Ctx>, dialog: &adw::Dialog) {
+    let Some((spot, _)) = focused(ctx) else {
+        return;
+    };
+    let id = ctx.cards.borrow()[spot.0][spot.1].card.id.clone();
+    let ctx = Rc::downgrade(ctx);
+    dialog.connect_closed(move |_| {
+        let ctx = ctx.clone();
+        let id = id.clone();
+        // After libadwaita has put the focus back where it could.
+        gtk::glib::idle_add_local_once(move || {
+            let Some(ctx) = ctx.upgrade() else {
+                return;
+            };
+            let Some(window) = ctx.window() else {
+                return;
+            };
+            if window.visible_dialog().is_none() && focused(&ctx).is_none() {
+                refocus(&ctx, &id, spot);
+            }
+        });
+    });
 }
 
 fn draw(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
@@ -606,7 +639,8 @@ pub fn open_link(ctx: &Rc<Ctx>, uri: &str) {
 
 /// A menu model of `items` for `card`, each entry an action of the group
 /// returned (inserted as `card`), so the popover finds them whatever card
-/// it is on. An entry that a key also does names that key.
+/// it is on. An entry that a key also does names that key, when it is safe
+/// to press with the menu open ([`keymap::menu_hint`]).
 fn card_model(
     ctx: &Rc<Ctx>,
     card: &CardView,
@@ -619,8 +653,7 @@ fn card_model(
     let mut add = |menu: &gtk::gio::Menu, label: &str, action: CardAction| {
         let name = format!("item-{entries}");
         entries += 1;
-        let key = action_key(card, place, action)
-            .and_then(|command| keymap::binding(command).chords.first());
+        let key = action_key(card, place, action).and_then(keymap::menu_hint);
         let simple = gtk::gio::SimpleAction::new(&name, None);
         let ctx = ctx.clone();
         let card = card.clone();

@@ -20,7 +20,7 @@ A click on the icon (ringed) drops the window down, and the next sends it away. 
 - **One menu per card.** Every action sits behind a three-dot button on the card: send to Activity, move between stages, snooze, alert, and for a todo edit and delete.
 - **Snooze.** Hide a card for an hour, until tomorrow, until next week, or until it changes. It always comes back when the item changes, and nothing is written to the provider.
 - **Alerts.** Ask to be alerted about a card in 15 minutes, 30 minutes, an hour or three hours: when the time comes, a desktop notification names it, and clicking it brings the window up.
-- **Todos.** Write down something that comes from no source: **New** in the Picked column of the Activity puts it there, it moves through the stages like the other cards, and it lasts only while TasksPending runs.
+- **Todos.** Write down something that comes from no source: **New** in the Picked column of the Activity puts it there, it moves through the stages like the other cards, and it is still there after a restart.
 - **What changed.** A small dot marks the cards that changed since you last looked.
 - **Omarchy's theme.** The window has its own palette, dark unless the system asks for light. On Omarchy, Settings can switch it to the theme Omarchy applied, and it changes with it.
 - **On Omarchy's bar.** Settings can put an icon on Omarchy's bar: a click drops the window down over whatever you are doing, on the page it was on, and the next click, or Esc, sends it away. `tasks-pending toggle` does the same from a key. An alert that rang while the window was away leaves a dot on the icon until the window comes to the front.
@@ -28,7 +28,7 @@ A click on the icon (ringed) drops the window down, and the next sends it away. 
 
 <p align="center">
   <img src="docs/assets/tasks-pending-board.png" alt="The Board tab: one group of stacks per source, with the picked cards highlighted" width="49%">
-  <img src="docs/assets/tasks-pending-todo.png" alt="The New todo dialog: a title, optional details, and the note that todos are kept only while TasksPending runs" width="49%">
+  <img src="docs/assets/tasks-pending-todo.png" alt="The New todo dialog: a title, optional details, and the note that todos are kept while alerts last as long as TasksPending runs" width="49%">
 </p>
 
 <p align="center">

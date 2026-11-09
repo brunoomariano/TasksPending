@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- Todos are kept: they are in `~/.local/share/tasks-pending/todos.sqlite3` (`$XDG_DATA_HOME` when set), a SQLite file only you can read, and back as you left them after a restart. A file there that is not TasksPending's is left untouched, one written by a newer TasksPending is read but not written, and while the todos cannot be saved the Activity says so and why. Alerts still last as long as TasksPending runs. `make uninstall` and `scripts/install.sh --uninstall` now remove only the examples they installed in that folder, leaving the todos.
+
 ## 0.8.1
 
 TasksPending's icon on Omarchy's bar shows a dot for the alerts that rang while the window was away, Esc sends the drop-down away, and `tasks-pending upgrade` gives the Arch package the command that upgrades it.

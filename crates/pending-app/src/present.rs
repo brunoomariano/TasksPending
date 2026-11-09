@@ -154,6 +154,8 @@ pub struct ActivityView {
     pub count: usize,
     /// What to say under the stages while nothing is picked.
     pub hint: Option<&'static str>,
+    /// Why the todos are not being saved, while they are not.
+    pub unsaved: Option<String>,
 }
 
 /// The hint under an empty Activity area.
@@ -316,8 +318,21 @@ pub fn card_menu(card: &CardView, place: Place) -> Vec<MenuItem> {
 
 /// What a todo says it comes from, where a card names its source.
 pub const TODO_GROUP: &str = "Todo";
-/// What the todo dialog says about keeping them.
-pub const TODO_NOTE: &str = "Kept only while TasksPending runs: quitting it forgets every todo.";
+/// What the Activity area says over its stages while the todos cannot be
+/// saved, over why.
+pub const TODO_UNSAVED: &str = "Todos are not being saved";
+
+/// What the todo dialog says about keeping them: `kept` when they outlast
+/// the window, unless they are `unsaved` for that reason.
+pub fn todo_note(kept: bool, unsaved: Option<&str>) -> String {
+    match unsaved {
+        Some(why) => {
+            format!("{TODO_UNSAVED} ({why}): quitting TasksPending forgets the changes.")
+        }
+        None if kept => "Todos are kept; alerts last as long as TasksPending runs.".to_owned(),
+        None => "Kept only while TasksPending runs: quitting it forgets every todo.".to_owned(),
+    }
+}
 
 /// The todo dialog's title and button, for a new todo or one being
 /// rewritten.
@@ -1056,6 +1071,7 @@ fn activity(snapshot: &DashboardSnapshot, flags: &Flags) -> ActivityView {
         stages,
         count,
         hint: (count == 0).then_some(ACTIVITY_HINT),
+        unsaved: flags.session.todos.unsaved().map(str::to_owned),
     }
 }
 
@@ -1109,6 +1125,8 @@ fn snoozed(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use chrono::TimeZone;
     use pending_core::{Board, CardSeverity, Column, Group};
 
@@ -1459,10 +1477,44 @@ mod tests {
         );
         assert_eq!(todo_dialog_words(false), ("New todo", "Add"));
         assert_eq!(todo_dialog_words(true), ("Edit todo", "Save"));
+    }
+
+    /// The todo dialog says what becomes of the todo: kept in the file,
+    /// kept for the run (the sandbox), or not saved, and why.
+    #[test]
+    fn the_todo_dialog_says_whether_todos_are_kept() {
         assert_eq!(
-            TODO_NOTE,
+            todo_note(true, None),
+            "Todos are kept; alerts last as long as TasksPending runs."
+        );
+        assert_eq!(
+            todo_note(false, None),
             "Kept only while TasksPending runs: quitting it forgets every todo."
         );
+        assert_eq!(
+            todo_note(true, Some("disk full")),
+            "Todos are not being saved (disk full): quitting TasksPending forgets the changes."
+        );
+    }
+
+    /// While the todos cannot be saved, the Activity area says so over its
+    /// stages, with why.
+    #[test]
+    fn the_activity_says_when_todos_are_not_saved() {
+        let shown = super::page(&snapshot(), &View::default(), &Session::default());
+        assert_eq!(shown.activity.unsaved, None);
+
+        let session = Session {
+            todos: crate::session::Todos::open(Path::new("/dev/null/tasks-pending/todos.sqlite3")),
+            ..Session::default()
+        };
+        let shown = super::page(&snapshot(), &View::default(), &session);
+        let unsaved = shown.activity.unsaved.expect("a note");
+        assert!(
+            unsaved.contains("/dev/null/tasks-pending/todos.sqlite3"),
+            "{unsaved}"
+        );
+        assert_eq!(TODO_UNSAVED, "Todos are not being saved");
     }
 
     /// Settings shows the icon as Omarchy's settings place it, except

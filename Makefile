@@ -52,7 +52,6 @@ screenshots: ## Regenerate the README pictures from the sandbox window
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-sandbox-light.png --scene light
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-omarchy.png --scene omarchy
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-board.png --scene board
-	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-sources.png --scene sources
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-settings.png --scene settings
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-snoozed.png --scene snoozed
 	./target/debug/tasks-pending sandbox --screenshot docs/assets/tasks-pending-todo.png --scene todo

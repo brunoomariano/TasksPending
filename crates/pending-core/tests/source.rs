@@ -34,7 +34,7 @@ fn sample_snapshot_is_built_from_the_sample_source() {
 
 /// The documentation sandbox is deterministic, needs no credentials, and
 /// shows enough varied cards to exercise the dashboard's normal layout,
-/// with one source degraded on purpose so the Sources dialog has
+/// with one source degraded on purpose so the sources in Settings have
 /// something to say.
 #[test]
 fn sandbox_snapshot_has_simulated_cards_across_boards() {

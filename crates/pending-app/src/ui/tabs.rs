@@ -32,8 +32,11 @@ pub fn build(ctx: &Rc<Ctx>) -> Tabs {
             Tab::Activity => KeyCommand::ActivityTab,
             Tab::Board => KeyCommand::BoardTab,
         };
+        // Tab switches them; a click leaves the keyboard focus on the
+        // cards.
         let button = gtk::ToggleButton::builder()
             .child(&content)
+            .focusable(false)
             .tooltip_text(hinted(view.label, key))
             .build();
         button.add_css_class("tab");

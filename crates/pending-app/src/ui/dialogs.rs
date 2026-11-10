@@ -1,4 +1,5 @@
-//! The dialogs: sources, settings, the snoozed cards, and a todo.
+//! The dialogs: settings (the sources first), the snoozed cards, and a
+//! todo.
 
 use std::rc::Rc;
 
@@ -13,8 +14,9 @@ use super::{Ctx, wrapped as text};
 use crate::backend::Command;
 use crate::omarchy_bar;
 use crate::present::{
-    BarState, BoardSwitches, Choice, SwitchView, bar_choices, bar_note, bar_view, board_choices,
-    interval_choices, switches, theme_choices, theme_note, todo_dialog_words, todo_note,
+    BarState, BoardSwitches, Choice, Page, SwitchView, bar_choices, bar_note, bar_view,
+    board_choices, interval_choices, switches, theme_choices, theme_note, todo_dialog_words,
+    todo_note,
 };
 use crate::view::{View, flip};
 
@@ -61,12 +63,8 @@ pub(super) fn dialog(title: &str, content: &gtk::Box) -> adw::Dialog {
 }
 
 /// Every source with its state and last fetch, and the config error when
-/// the file on disk was rejected.
-pub fn show_sources(ctx: &Rc<Ctx>) {
-    let Some(page) = ctx.current_page() else {
-        return;
-    };
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+/// the file on disk was rejected: the top of Settings.
+fn append_sources(ctx: &Rc<Ctx>, page: &Page, content: &gtk::Box) {
     if let Some(error) = &page.config_error {
         content.append(&notice(
             "stale",
@@ -103,7 +101,6 @@ pub fn show_sources(ctx: &Rc<Ctx>) {
         }
         content.append(&row);
     }
-    present(ctx, "Sources", &content);
 }
 
 /// The snoozed cards, each with when it comes back and a button to wake it.
@@ -307,6 +304,10 @@ fn pill(label: &str, active: bool) -> gtk::ToggleButton {
 
 fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) {
     clear(content);
+    if let Some(page) = ctx.current_page() {
+        content.append(&heading("Sources"));
+        append_sources(ctx, &page, content);
+    }
     let Some(snapshot) = ctx.model.borrow().state.snapshot().cloned() else {
         content.append(&text("Nothing to set up yet.", &["empty"]));
         return;

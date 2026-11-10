@@ -16,7 +16,8 @@ use crate::backend::Command;
 use crate::clock::{clock_text, date_text, drawing};
 use crate::keymap::{Command as KeyCommand, hinted};
 use crate::present::{
-    Page, UPDATE_TOOLTIP, refresh_button, refresh_widths, update_line, weather_icon_name,
+    Page, UPDATE_TOOLTIP, refresh_button, refresh_widths, settings_tooltip, update_line,
+    weather_icon_name,
 };
 use crate::view::View;
 
@@ -36,6 +37,8 @@ const WEATHER_SLOT_WIDTH: i32 = 180;
 const SOURCE_LINE_CHARS: i32 = 34;
 /// How long a note under the controls stays.
 const NOTE_FOR: Duration = Duration::from_secs(6);
+/// The settings button's icon while no source needs a look.
+const SETTINGS_ICON: &str = "emblem-system-symbolic";
 
 pub struct Hero {
     pub root: gtk::CenterBox,
@@ -59,10 +62,10 @@ pub struct Weather {
 /// dashboard was read, a passing note, and where the dashboard comes from.
 struct Controls {
     root: gtk::Box,
-    sources_icon: gtk::Image,
     refresh_button: gtk::Button,
     refresh_label: gtk::Label,
     settings_button: gtk::Button,
+    settings_icon: gtk::Image,
     filter_dot: gtk::Box,
     updated_line: gtk::Box,
     updated: gtk::Label,
@@ -78,24 +81,6 @@ fn label(text: &str, classes: &[&str]) -> gtk::Label {
         label.add_css_class(class);
     }
     label
-}
-
-fn control_button(
-    icon: &str,
-    text: &str,
-    classes: &[&str],
-) -> (gtk::Button, gtk::Image, gtk::Label) {
-    let image = symbolic(icon, size::CONTROL);
-    let label = gtk::Label::new(Some(text));
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    content.append(&image);
-    content.append(&label);
-    let button = gtk::Button::builder().child(&content).build();
-    button.add_css_class("control");
-    for class in classes {
-        button.add_css_class(class);
-    }
-    (button, image, label)
 }
 
 /// A control button that keeps one size whatever it says: as wide as it
@@ -125,7 +110,10 @@ fn steady_button(icon: &str, widths: &[String], classes: &[&str]) -> (gtk::Butto
     let (shown, label) = content(widths.first().map_or("", String::as_str));
     stack.add_child(&shown);
     stack.set_visible_child(&shown);
-    let button = gtk::Button::builder().child(&stack).build();
+    let button = gtk::Button::builder()
+        .child(&stack)
+        .focusable(false)
+        .build();
     button.add_css_class("control");
     for class in classes {
         button.add_css_class(class);
@@ -216,22 +204,21 @@ fn clock() -> adw::Clamp {
 
 impl Controls {
     fn new(ctx: &Rc<Ctx>) -> Self {
-        let (sources_button, sources_icon, _) =
-            control_button("view-list-symbolic", "Sources", &[]);
         let (refresh_button, refresh_label) =
             steady_button("view-refresh-symbolic", &refresh_widths(), &["primary"]);
-        let (settings_button, filter_dot) = settings_button();
-        sources_button.set_tooltip_text(Some(&hinted("Show the sources", KeyCommand::Sources)));
+        let (settings_button, settings_icon, filter_dot) = settings_button();
         refresh_button.set_tooltip_text(Some(&hinted("Refresh the sources", KeyCommand::Refresh)));
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        actions.append(&sources_button);
         actions.append(&refresh_button);
         actions.append(&settings_button);
 
         let updated = label("", &[]);
         updated.set_single_line_mode(true);
         let version = label("", &[]);
-        let snoozed_button = gtk::Button::builder().visible(false).build();
+        let snoozed_button = gtk::Button::builder()
+            .visible(false)
+            .focusable(false)
+            .build();
         snoozed_button.add_css_class("quiet-link");
         let update = label("", &[]);
         update.set_visible(false);
@@ -266,10 +253,6 @@ impl Controls {
 
         {
             let ctx = ctx.clone();
-            sources_button.connect_clicked(move |_| dialogs::show_sources(&ctx));
-        }
-        {
-            let ctx = ctx.clone();
             settings_button.connect_clicked(move |_| dialogs::show_settings(&ctx));
         }
         {
@@ -286,10 +269,10 @@ impl Controls {
 
         Controls {
             root,
-            sources_icon,
             refresh_button,
             refresh_label,
             settings_button,
+            settings_icon,
             filter_dot,
             updated_line,
             updated,
@@ -301,23 +284,26 @@ impl Controls {
     }
 }
 
-/// The settings button, and the dot it wears while the view hides
-/// something.
-fn settings_button() -> (gtk::Button, gtk::Box) {
+/// The settings button, its icon (a warning while a source needs a look),
+/// and the dot it wears while the view hides something.
+fn settings_button() -> (gtk::Button, gtk::Image, gtk::Box) {
     let filter_dot = gtk::Box::builder()
         .valign(gtk::Align::Start)
         .halign(gtk::Align::End)
         .visible(false)
         .build();
     filter_dot.add_css_class("filter-dot");
-    let icon = symbolic("emblem-system-symbolic", size::CONTROL);
+    let icon = symbolic(SETTINGS_ICON, size::CONTROL);
     let overlay = gtk::Overlay::builder().child(&icon).build();
     overlay.add_overlay(&filter_dot);
-    let button = gtk::Button::builder().child(&overlay).build();
+    let button = gtk::Button::builder()
+        .child(&overlay)
+        .focusable(false)
+        .build();
     button.add_css_class("control");
     button.add_css_class("icon-only");
     button.set_tooltip_text(Some("Settings"));
-    (button, filter_dot)
+    (button, icon, filter_dot)
 }
 
 /// Where the dashboard comes from, kept short so the clock keeps its room;
@@ -381,32 +367,33 @@ fn start_clock(date: gtk::Label, digits: gtk::DrawingArea) {
 }
 
 /// The controls for the current page: the refresh hold, the settings dot,
-/// attention on Sources, the update line. The refresh button is settled
-/// whether or not there is a page: a refresh refused while the dashboard
-/// is unavailable must not leave it off.
+/// a source needing a look, the update line. The refresh button
+/// is settled whether or not there is a page: a refresh refused while the
+/// dashboard is unavailable must not leave it off.
 pub fn update_controls(ctx: &Rc<Ctx>, widgets: &Widgets, page: Option<&Page>, view: &View) {
     let controls = &widgets.hero.controls;
     let (label, enabled) = refresh_button(ctx.model.borrow().refresh_hold.as_ref(), Instant::now());
     controls.refresh_button.set_sensitive(enabled);
     controls.refresh_label.set_label(&label);
+    let attention = page.is_some_and(|page| page.attention);
     controls
         .settings_button
-        .set_tooltip_text(Some(&hinted(&view.settings_label(), KeyCommand::Settings)));
+        .set_tooltip_text(Some(&settings_tooltip(view, attention)));
+    controls.settings_icon.set_icon_name(Some(if attention {
+        "dialog-warning-symbolic"
+    } else {
+        SETTINGS_ICON
+    }));
+    if attention {
+        controls.settings_icon.add_css_class("attention");
+    } else {
+        controls.settings_icon.remove_css_class("attention");
+    }
     controls.filter_dot.set_visible(view.is_filtering());
     let Some(page) = page else {
         controls.updated_line.set_visible(false);
         return;
     };
-    controls.sources_icon.set_icon_name(Some(if page.attention {
-        "dialog-warning-symbolic"
-    } else {
-        "view-list-symbolic"
-    }));
-    if page.attention {
-        controls.sources_icon.add_css_class("attention");
-    } else {
-        controls.sources_icon.remove_css_class("attention");
-    }
     controls.updated.set_label(&page.updated);
     controls
         .version

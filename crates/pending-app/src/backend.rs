@@ -11,7 +11,7 @@ use std::time::Duration;
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use pending_api::{LiveServer, Router, sandbox_app, serve_router, start_live};
-use pending_client::{Client, DEFAULT_DAEMON_URL, Error};
+use pending_client::{Client, DEFAULT_DAEMON_URL, Error, Files};
 use pending_core::{DashboardSnapshot, WeatherReport};
 use pending_runtime::config::Origin;
 use pending_runtime::live::{Env, Watch};
@@ -58,6 +58,8 @@ pub enum Command {
     Weather,
     /// Ask whether a newer version was published.
     Version,
+    /// Ask which config and env file the dashboard follows.
+    Files,
 }
 
 /// What the dashboard tells the window.
@@ -74,6 +76,9 @@ pub enum Event {
     Acted(Result<(), String>),
     /// A newer published version, when the daemon knows of one.
     Update(Option<String>),
+    /// The files the dashboard follows, or `None` when it did not say
+    /// (a daemon from before 0.10.0).
+    Files(Option<Files>),
 }
 
 /// Why the daemon did not take a refresh.
@@ -268,6 +273,7 @@ struct Reads {
     poll: bool,
     weather: bool,
     version: bool,
+    files: bool,
 }
 
 impl Reads {
@@ -303,6 +309,13 @@ impl Reads {
             if events.send(Event::Update(available)).is_err() {
                 return false;
             }
+        }
+        if self.files
+            && events
+                .send(Event::Files(client.files().await.ok()))
+                .is_err()
+        {
+            return false;
         }
         true
     }
@@ -340,6 +353,7 @@ impl ReadQueue {
                 Command::Look => pending.look = true,
                 Command::Weather => pending.weather = true,
                 Command::Version => pending.version = true,
+                Command::Files => pending.files = true,
                 change => {
                     drop(pending);
                     if matches!(
@@ -422,7 +436,11 @@ async fn change_lane(
             Command::Snooze { id, until } => acted(client.snooze(&id, until).await, &reads),
             Command::Wake { id } => acted(client.wake(&id).await, &reads),
             // The read lane makes these.
-            Command::Poll | Command::Look | Command::Weather | Command::Version => continue,
+            Command::Poll
+            | Command::Look
+            | Command::Weather
+            | Command::Version
+            | Command::Files => continue,
         };
         if events.send(event).is_err() {
             return;
@@ -889,6 +907,14 @@ mod tests {
         commands.send(Command::Version).unwrap();
         let update = next(&runtime, &mut events);
         assert!(matches!(update, Event::Update(_)), "{update:?}");
+
+        // The sandbox follows no file: Settings edits a config in memory.
+        commands.send(Command::Files).unwrap();
+        let files = next(&runtime, &mut events);
+        assert!(
+            matches!(&files, Event::Files(Some(files)) if *files == Files::default()),
+            "{files:?}"
+        );
     }
 
     /// A daemon answering at the address is used as it is: nothing is

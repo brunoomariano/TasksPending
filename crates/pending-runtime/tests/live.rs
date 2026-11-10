@@ -203,3 +203,30 @@ async fn cards_are_snoozed_through_the_running_dashboard() {
     assert!(live.snapshot().snoozed.is_empty());
     assert_eq!(live.snapshot().marked, std::slice::from_ref(&id));
 }
+
+/// The env file is read with the config: a change to it rebuilds the
+/// sources, as a change to the config does, and the dashboard says which
+/// two files it follows.
+#[tokio::test]
+async fn an_env_file_change_rebuilds_the_sources() {
+    let dir = scratch("env-file");
+    let path = dir.join("config.toml");
+    std::fs::write(&path, config("first", "Work")).unwrap();
+    let home = dir.to_string_lossy().into_owned();
+    let env: Env = Arc::new(move |key| (key == "XDG_CONFIG_HOME").then(|| home.clone().into()));
+    let (live, _origin) = Live::start(Some(path.clone()), env, None).expect("valid config");
+    let files = live.files();
+    assert_eq!(files.config, Some(path.clone()));
+    let env_file = dir.join("tasks-pending").join("env");
+    assert_eq!(files.env, Some(env_file.clone()));
+    let before = live.generation();
+
+    assert!(!live.reload_if_changed(), "nothing changed");
+    std::fs::create_dir_all(env_file.parent().unwrap()).unwrap();
+    std::fs::write(&env_file, "TODOIST_API_TOKEN=x\n").unwrap();
+    assert!(live.reload_if_changed(), "the env file changed");
+    assert_eq!(live.generation(), before + 1);
+    assert!(!live.reload_if_changed(), "and is now the one in use");
+    settle().await;
+    assert_eq!(source_names(&live), vec!["first"]);
+}

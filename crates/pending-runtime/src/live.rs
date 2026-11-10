@@ -1,6 +1,8 @@
 //! The running dashboard: an [`Aggregator`] built from the config file, rebuilt
-//! when the file changes (on a manual refresh, or when a watch notices it).
+//! when the file or the env file changes (on a manual refresh, or when a
+//! watch notices it).
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -9,12 +11,14 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use pending_core::DashboardSnapshot;
+use pending_core::api::Files;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::Aggregator;
 use crate::cache::Cache;
 use crate::config::{LoadError, Origin, load_plan, locate};
+use crate::envfile::{EnvFile, env_path, overlay};
 use crate::looks::Looks;
 use crate::marks::{MarkError, Marks};
 use crate::snoozes::{SnoozeError, Snoozes};
@@ -35,7 +39,12 @@ pub struct Live {
 
 struct Inner {
     cli: Option<PathBuf>,
+    /// The process environment, under the env file.
     env: Env,
+    env_file: Option<PathBuf>,
+    /// The variables the env file set at start, which systemd also put in
+    /// `env`.
+    started: Arc<BTreeSet<String>>,
     cache: Option<PathBuf>,
     marks: Marks,
     snoozes: Snoozes,
@@ -49,6 +58,8 @@ struct State {
     /// The config file text last loaded (or rejected); `None` when there is
     /// no file.
     text: Option<String>,
+    /// The env file text the sources were last built with.
+    env_text: Option<String>,
     /// Why the current file was rejected; the previous config keeps running.
     error: Option<String>,
 }
@@ -61,8 +72,12 @@ impl Live {
         env: Env,
         cache: Option<PathBuf>,
     ) -> Result<(Self, Origin), LoadError> {
-        let text = read_config(&cli, &env);
-        let (plan, origin) = load_plan(cli.clone(), &*env)?;
+        let env_file = env_path(&*env);
+        let env_text = read(env_file.as_deref());
+        let started = Arc::new(EnvFile::parse(env_text.as_deref().unwrap_or_default()).keys());
+        let seen = seen_env(&env, env_text.as_deref(), &started);
+        let text = read_config(&cli, &seen);
+        let (plan, origin) = load_plan(cli.clone(), &*seen)?;
         let aggregator =
             Aggregator::start_with_cache(plan.specs, plan.timeout, cache.clone().map(Cache::new));
         // Marks and snoozes live next to the cache; without a cache they
@@ -80,6 +95,8 @@ impl Live {
             inner: Arc::new(Inner {
                 cli,
                 env,
+                env_file,
+                started,
                 cache,
                 marks,
                 snoozes,
@@ -87,6 +104,7 @@ impl Live {
                 state: Mutex::new(State {
                     aggregator,
                     text,
+                    env_text,
                     error: None,
                 }),
                 generation: AtomicU64::new(0),
@@ -143,16 +161,22 @@ impl Live {
         }
     }
 
-    /// Rebuilds the sources when the config file's text changed. A file that
-    /// fails to load leaves the running config in place and is reported in
-    /// the snapshot. Returns whether the sources were rebuilt.
+    /// Rebuilds the sources when the config file's or the env file's text
+    /// changed. A config that fails to load leaves the running one in place
+    /// and is reported in the snapshot. Returns whether the sources were
+    /// rebuilt.
     pub fn reload_if_changed(&self) -> bool {
-        let text = read_config(&self.inner.cli, &self.inner.env);
-        if self.state().text == text {
-            return false;
+        let env_text = read(self.inner.env_file.as_deref());
+        let seen = seen_env(&self.inner.env, env_text.as_deref(), &self.inner.started);
+        let text = read_config(&self.inner.cli, &seen);
+        {
+            let state = self.state();
+            if state.text == text && state.env_text == env_text {
+                return false;
+            }
         }
         // Built outside the lock: loading may run `gh auth token`.
-        match load_plan(self.inner.cli.clone(), &*self.inner.env) {
+        match load_plan(self.inner.cli.clone(), &*seen) {
             Ok((plan, origin)) => {
                 let aggregator = Aggregator::start_with_cache(
                     plan.specs,
@@ -162,6 +186,7 @@ impl Live {
                 let mut state = self.state();
                 state.aggregator = aggregator;
                 state.text = text;
+                state.env_text = env_text;
                 state.error = None;
                 self.inner.generation.fetch_add(1, Ordering::SeqCst);
                 info!(origin = ?origin, "config reloaded");
@@ -171,9 +196,20 @@ impl Live {
                 warn!(%error, "config not reloaded; keeping the previous one");
                 let mut state = self.state();
                 state.text = text;
+                state.env_text = env_text;
                 state.error = Some(error.to_string());
                 false
             }
+        }
+    }
+
+    /// The config file and the env file this dashboard follows.
+    pub fn files(&self) -> Files {
+        let env_text = read(self.inner.env_file.as_deref());
+        let seen = seen_env(&self.inner.env, env_text.as_deref(), &self.inner.started);
+        Files {
+            config: locate(self.inner.cli.clone(), &*seen).map(|location| location.path),
+            env: self.inner.env_file.clone(),
         }
     }
 
@@ -228,6 +264,20 @@ fn assemble(
     // Last: only cards still on the boards are flagged as changed.
     looks.apply(&mut snapshot);
     snapshot
+}
+
+/// The environment the sources see: the env file `text` over the process's.
+fn seen_env(env: &Env, text: Option<&str>, started: &Arc<BTreeSet<String>>) -> Env {
+    overlay(
+        env.clone(),
+        EnvFile::parse(text.unwrap_or_default()),
+        started.clone(),
+    )
+}
+
+/// A file's text, if it exists and is readable.
+fn read(path: Option<&std::path::Path>) -> Option<String> {
+    std::fs::read_to_string(path?).ok()
 }
 
 /// The config file's current text, if it exists and is readable.

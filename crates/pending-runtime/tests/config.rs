@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use pending_core::StackSort;
 use pending_runtime::config::{
-    ConfigLocation, LoadError, Origin, load_plan, load_plan_with, locate,
+    ConfigLocation, LoadError, Origin, WriteError, check, load_plan, load_plan_with, locate,
+    write_file,
 };
 
 fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
@@ -923,4 +924,88 @@ fn invalid_linear_stack_filters_name_the_source_and_stack() {
             "{message}"
         );
     }
+}
+
+/// A config is checked as it would load, stack keys and patterns
+/// included, without looking up any credential.
+#[test]
+fn checks_a_config_without_loading_it() {
+    let path = Path::new("/somewhere/config.toml");
+    let good = "[[sources]]\nname = \"gh\"\nkind = \"github\"\n\n\
+                [[sources.stacks]]\nname = \"Mine\"\nquery = \"is:pr\"\n";
+    let config = check(good, path).expect("a valid config");
+    assert_eq!(config.sources[0].stacks[0].name, "Mine");
+
+    let not_toml = check("[[sources]\n", path).unwrap_err();
+    assert!(matches!(not_toml, LoadError::Parse { .. }), "{not_toml}");
+    let twice = check(
+        "[[sources]]\nname = \"a\"\nkind = \"sample\"\n[[sources]]\nname = \"a\"\nkind = \"sample\"\n",
+        path,
+    )
+    .unwrap_err();
+    assert!(matches!(twice, LoadError::Invalid { .. }), "{twice}");
+    let unknown = check(&good.replace("query", "qeury"), path).unwrap_err();
+    assert!(
+        unknown.to_string().contains("`Mine`"),
+        "names the stack: {unknown}"
+    );
+    let pattern = check(&format!("{good}exclude = [\"(\"]\n"), path).unwrap_err();
+    assert!(pattern.to_string().contains("`Mine`"), "{pattern}");
+}
+
+/// The file is replaced whole, keeping its permissions; a file changed
+/// since it was read is left alone; a new one is made with its folder.
+#[test]
+fn writes_the_config_in_one_step() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch("write");
+    let path = dir.join("new").join("config.toml");
+    write_file(&path, "one = 1\n", None, false).expect("a new file");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "one = 1\n");
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    write_file(&path, "two = 2\n", Some("one = 1\n"), false).expect("unchanged since read");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "two = 2\n");
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o640);
+
+    let refused = write_file(&path, "three = 3\n", Some("one = 1\n"), false).unwrap_err();
+    assert!(matches!(refused, WriteError::Changed(_)), "{refused}");
+    let refused = write_file(&path, "three = 3\n", None, false).unwrap_err();
+    assert!(matches!(refused, WriteError::Changed(_)), "it exists now");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "two = 2\n");
+    let left: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["config.toml"], "nothing left beside it");
+}
+
+/// A config linked from a dotfiles repository is written there, and the
+/// link stays; the env file is made readable by its owner only.
+#[test]
+fn writes_through_links_and_keeps_secrets_private() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch("link");
+    let repo = dir.join("dotfiles").join("config.toml");
+    std::fs::create_dir_all(repo.parent().unwrap()).unwrap();
+    std::fs::write(&repo, "a = 1\n").unwrap();
+    let link = dir.join("config.toml");
+    std::os::unix::fs::symlink(&repo, &link).unwrap();
+    write_file(&link, "a = 2\n", Some("a = 1\n"), false).expect("through the link");
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(std::fs::read_to_string(&repo).unwrap(), "a = 2\n");
+
+    let env = dir.join("private").join("env");
+    write_file(&env, "TOKEN=x\n", None, true).expect("a new env file");
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&env), 0o600);
+    assert_eq!(mode(env.parent().unwrap()), 0o700);
 }

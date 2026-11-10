@@ -13,7 +13,7 @@ use serde::de::DeserializeOwned;
 
 /// Where `tasks-pending serve` listens by default.
 pub use pending_core::api::DEFAULT_DAEMON_URL;
-pub use pending_core::api::{Health, VersionReport};
+pub use pending_core::api::{Files, Health, VersionReport};
 
 /// Longest wait for one answer. The daemon answers from memory, so this is
 /// generous; it only ends a request the daemon will never answer.
@@ -216,6 +216,11 @@ impl Client {
             .send()
             .await?;
         Self::done(response.status())
+    }
+
+    /// The config file and the env file the daemon follows.
+    pub async fn files(&self) -> Result<Files, Error> {
+        self.get_json("/api/v1/files").await
     }
 
     /// The daemon's version, and a newer published one when it knows of it.

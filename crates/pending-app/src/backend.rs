@@ -36,11 +36,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 pub enum Command {
     /// Read the snapshot now.
     Poll,
-    /// Refresh every source, then read the snapshot a moment later;
-    /// `manual` when the user asked, not the auto-refresh timer.
-    Refresh {
-        manual: bool,
-    },
+    /// Refresh every source, then read the snapshot a moment later.
+    Refresh,
     SetMark {
         id: String,
         marked: bool,
@@ -68,10 +65,7 @@ pub enum Event {
     Snapshot(Result<DashboardSnapshot, String>),
     Weather(Option<WeatherReport>),
     /// A refresh was accepted, or why not.
-    Refreshed {
-        manual: bool,
-        result: Result<(), Refusal>,
-    },
+    Refreshed(Result<(), Refusal>),
     /// A mark, snooze or wake went through, or why not.
     Acted(Result<(), String>),
     /// A newer published version, when the daemon knows of one.
@@ -427,10 +421,10 @@ async fn change_lane(
 ) {
     while let Some(command) = inbox.recv().await {
         let (event, read_after) = match command {
-            Command::Refresh { manual } => {
+            Command::Refresh => {
                 let result = client.refresh().await.map_err(Refusal::from);
                 let read_after = result.is_ok().then_some(AFTER_REFRESH);
-                (Event::Refreshed { manual, result }, read_after)
+                (Event::Refreshed(result), read_after)
             }
             Command::SetMark { id, marked } => acted(client.set_mark(&id, marked).await, &reads),
             Command::Snooze { id, until } => acted(client.snooze(&id, until).await, &reads),
@@ -681,18 +675,17 @@ mod tests {
             _ => (Duration::ZERO, 200, "{}".to_owned()),
         });
         let (commands, mut events) = spawn_worker(&runtime, fake.client());
-        commands.send(Command::Refresh { manual: true }).unwrap();
+        commands.send(Command::Refresh).unwrap();
         let refreshed = next(&runtime, &mut events);
         assert!(
-            matches!(refreshed, Event::Refreshed { result: Ok(()), .. }),
+            matches!(refreshed, Event::Refreshed(Ok(()))),
             "{refreshed:?}"
         );
         let read = next(&runtime, &mut events);
         assert!(matches!(read, Event::Snapshot(Ok(_))), "{read:?}");
     }
 
-    /// A refused refresh says why, the daemon's wait or the failure, and
-    /// who asked for it.
+    /// A refused refresh says why: the daemon's wait or the failure.
     #[test]
     fn tells_why_a_refresh_was_refused() {
         let runtime = runtime();
@@ -701,31 +694,19 @@ mod tests {
             (Duration::ZERO, 429, body)
         });
         let (commands, mut events) = spawn_worker(&runtime, busy.client());
-        commands.send(Command::Refresh { manual: false }).unwrap();
+        commands.send(Command::Refresh).unwrap();
         let event = next(&runtime, &mut events);
         assert!(
-            matches!(
-                event,
-                Event::Refreshed {
-                    manual: false,
-                    result: Err(Refusal::Wait(7)),
-                }
-            ),
+            matches!(event, Event::Refreshed(Err(Refusal::Wait(7)))),
             "{event:?}"
         );
 
         let broken = Fake::start(|_, _| (Duration::ZERO, 500, String::new()));
         let (commands, mut events) = spawn_worker(&runtime, broken.client());
-        commands.send(Command::Refresh { manual: true }).unwrap();
+        commands.send(Command::Refresh).unwrap();
         let event = next(&runtime, &mut events);
         assert!(
-            matches!(
-                &event,
-                Event::Refreshed {
-                    manual: true,
-                    result: Err(Refusal::Failed(error)),
-                } if error == "HTTP 500"
-            ),
+            matches!(&event, Event::Refreshed(Err(Refusal::Failed(error))) if error == "HTTP 500"),
             "{event:?}"
         );
     }

@@ -262,7 +262,7 @@ impl Controls {
             let ctx = ctx.clone();
             refresh_button.connect_clicked(move |button| {
                 button.set_sensitive(false);
-                ctx.send(Command::Refresh { manual: true });
+                ctx.send(Command::Refresh);
             });
         }
 

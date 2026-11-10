@@ -1,7 +1,7 @@
 //! Choices of the person looking at the dashboard that only this app
-//! keeps: the board filter, collapsed stacks, hidden items, the
-//! auto-refresh interval, the theme and how far along each picked card
-//! is. Remembered in a small file; fine to lose.
+//! keeps: the board filter, collapsed stacks, the theme and how far along
+//! each picked card is. Remembered in a small file; fine to lose. What is
+//! shown and how often it refreshes is the config's, edited in Settings.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -12,10 +12,6 @@ use pending_runtime::config::state_dir;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-/// Intervals offered in Settings, in minutes; 0 is off.
-pub const AUTO_REFRESH_CHOICES: [u32; 5] = [0, 1, 5, 15, 30];
-pub const DEFAULT_AUTO_REFRESH_MINUTES: u32 = 1;
 
 /// How far along a card in the Activity area is: the three columns of its
 /// board, in order. A card arrives as picked.
@@ -56,7 +52,7 @@ pub enum Theme {
     Omarchy,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct View {
     /// Only this board's groups; `None` shows every board.
@@ -68,10 +64,6 @@ pub struct View {
     pub open_columns: BTreeSet<String>,
     /// Stacks collapsed to their header.
     pub collapsed: BTreeSet<String>,
-    /// Boards, groups and stacks switched off (see [`hide_key`]).
-    pub hidden: BTreeSet<String>,
-    /// Minutes between automatic refreshes of every source; 0 is off.
-    pub auto_refresh_minutes: u32,
     /// Where the colours come from.
     pub theme: Theme,
     /// The stage of each picked card that moved on from [`Stage::Picked`],
@@ -79,26 +71,13 @@ pub struct View {
     pub stages: BTreeMap<String, Stage>,
 }
 
-impl Default for View {
-    fn default() -> Self {
-        Self {
-            board: None,
-            expanded: BTreeSet::new(),
-            open_columns: BTreeSet::new(),
-            collapsed: BTreeSet::new(),
-            hidden: BTreeSet::new(),
-            auto_refresh_minutes: DEFAULT_AUTO_REFRESH_MINUTES,
-            theme: Theme::default(),
-            stages: BTreeMap::new(),
-        }
-    }
-}
-
 impl View {
     /// The view saved at `path`, or the default when there is none or it
     /// cannot be read. Each setting is read on its own, so one that is not
     /// understood falls back to its default without taking the others
-    /// along; so does an interval that is not offered.
+    /// along. Settings of earlier versions (the hidden boards, groups and
+    /// stacks, and the auto-refresh interval, now the config's) are left
+    /// out.
     pub fn load(path: &Path) -> Self {
         let mut view = Self::default();
         let text = match fs::read_to_string(path) {
@@ -121,11 +100,6 @@ impl View {
         saved.read("expanded", &mut view.expanded);
         saved.read("open_columns", &mut view.open_columns);
         saved.read("collapsed", &mut view.collapsed);
-        saved.read("hidden", &mut view.hidden);
-        saved.read("auto_refresh_minutes", &mut view.auto_refresh_minutes);
-        if !AUTO_REFRESH_CHOICES.contains(&view.auto_refresh_minutes) {
-            view.auto_refresh_minutes = DEFAULT_AUTO_REFRESH_MINUTES;
-        }
         saved.read("theme", &mut view.theme);
         saved.read("stages", &mut view.stages);
         view
@@ -172,21 +146,17 @@ impl View {
         }
     }
 
-    /// Whether something is filtered or hidden.
+    /// Whether only one board is shown.
     pub fn is_filtering(&self) -> bool {
-        self.board.is_some() || !self.hidden.is_empty()
+        self.board.is_some()
     }
 
     /// What the settings currently change, for the settings button.
     pub fn changes(&self) -> Vec<String> {
-        let mut changes = Vec::new();
-        if let Some(board) = &self.board {
-            changes.push(format!("showing {board}"));
-        }
-        if !self.hidden.is_empty() {
-            changes.push(format!("{} hidden", self.hidden.len()));
-        }
-        changes
+        self.board
+            .iter()
+            .map(|board| format!("showing {board}"))
+            .collect()
     }
 }
 
@@ -241,21 +211,6 @@ pub fn column_key(board: &str, source: &str, column: &str) -> String {
     format!("{board}/{source}/{column}")
 }
 
-/// Keys of the things settings can hide.
-pub mod hide_key {
-    pub fn board(board: &str) -> String {
-        format!("board:{board}")
-    }
-
-    pub fn group(board: &str, source: &str) -> String {
-        format!("group:{board}/{source}")
-    }
-
-    pub fn column(board: &str, source: &str, column: &str) -> String {
-        format!("column:{board}/{source}/{column}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,7 +220,7 @@ mod tests {
     }
 
     /// A saved view comes back as it was; a missing or broken file is the
-    /// default; an interval that is not offered becomes the default.
+    /// default; the settings of earlier versions are left out.
     #[test]
     fn saves_loads_and_validates() {
         let dir = temp_path("roundtrip");
@@ -274,7 +229,6 @@ mod tests {
 
         let mut view = View {
             board: Some("Work".to_owned()),
-            auto_refresh_minutes: 15,
             theme: Theme::Omarchy,
             ..View::default()
         };
@@ -282,19 +236,23 @@ mod tests {
         view.collapsed.insert("Work/github/Drafts".to_owned());
         view.expanded.insert("Work/github".to_owned());
         view.open_columns.insert("Work/github/Review".to_owned());
-        view.hidden.insert("board:Personal".to_owned());
         view.set_stage("gh:2", Stage::InProgress);
         view.save(&path);
         assert_eq!(View::load(&path), view);
 
         fs::write(
             &path,
-            r#"{"auto_refresh_minutes": 7, "hidden": ["board:X"]}"#,
+            r#"{"board": "Work", "auto_refresh_minutes": 5, "hidden": ["board:X"]}"#,
         )
         .unwrap();
         let loaded = View::load(&path);
-        assert_eq!(loaded.auto_refresh_minutes, DEFAULT_AUTO_REFRESH_MINUTES);
-        assert!(loaded.hidden.contains("board:X"));
+        assert_eq!(loaded.board.as_deref(), Some("Work"));
+        loaded.save(&path);
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(
+            !saved.contains("hidden") && !saved.contains("auto_refresh"),
+            "{saved}"
+        );
 
         fs::write(&path, "not json").unwrap();
         assert_eq!(View::load(&path), View::default());
@@ -368,14 +326,13 @@ mod tests {
         let path = dir.join("app-view.json");
         fs::write(
             &path,
-            r#"{"board": "Work", "hidden": 5, "auto_refresh_minutes": "often",
+            r#"{"board": "Work", "expanded": 5,
                 "collapsed": ["Work/github/Drafts"], "theme": "neon", "later": true}"#,
         )
         .unwrap();
         let view = View::load(&path);
         assert_eq!(view.board.as_deref(), Some("Work"));
-        assert!(view.hidden.is_empty());
-        assert_eq!(view.auto_refresh_minutes, DEFAULT_AUTO_REFRESH_MINUTES);
+        assert!(view.expanded.is_empty());
         assert_eq!(view.theme, Theme::TasksPending);
         assert!(view.collapsed.contains("Work/github/Drafts"));
         let _ = fs::remove_dir_all(&dir);
@@ -425,27 +382,14 @@ mod tests {
         let mut view = View::default();
         assert!(view.changes().is_empty());
         assert!(!view.is_filtering());
-        view = View {
-            board: Some("Work".to_owned()),
-            ..view
-        };
-        flip(&mut view.hidden, "board:Personal");
-        flip(&mut view.hidden, "group:Work/jira");
-        assert_eq!(view.changes(), ["showing Work", "2 hidden"]);
+        view.board = Some("Work".to_owned());
+        assert_eq!(view.changes(), ["showing Work"]);
         assert!(view.is_filtering());
-        flip(&mut view.hidden, "group:Work/jira");
-        assert_eq!(view.changes(), ["showing Work", "1 hidden"]);
     }
 
     #[test]
     fn keys_tell_things_apart() {
         assert_eq!(group_key("Work", "github"), "Work/github");
         assert_eq!(column_key("Work", "github", "Drafts"), "Work/github/Drafts");
-        assert_eq!(hide_key::board("Work"), "board:Work");
-        assert_eq!(hide_key::group("Work", "github"), "group:Work/github");
-        assert_eq!(
-            hide_key::column("Work", "github", "Drafts"),
-            "column:Work/github/Drafts"
-        );
     }
 }

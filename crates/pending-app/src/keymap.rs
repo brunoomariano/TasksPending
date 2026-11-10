@@ -17,6 +17,8 @@ pub enum Command {
     ActivityTab,
     BoardTab,
     SwitchTab,
+    Snoozed,
+    OpenStacks,
     SendAway,
     Quit,
     Up,
@@ -190,6 +192,20 @@ pub const BINDINGS: &[Binding] = &[
         Section::Window,
         &[chord(Key::Tab, NONE), chord(Key::Tab, SHIFT)],
     ),
+    // The keyboard reaches the cards only, so what the mouse opens to show
+    // more of them has keys: these two, and Down past a stack's last card.
+    bind(
+        Command::Snoozed,
+        "Show the snoozed cards",
+        Section::Window,
+        &[chord(Key::s, NONE)],
+    ),
+    bind(
+        Command::OpenStacks,
+        "Open the collapsed stacks",
+        Section::Window,
+        &[chord(Key::c, NONE)],
+    ),
     Binding {
         elsewhere: true,
         ..bind(
@@ -218,7 +234,7 @@ pub const BINDINGS: &[Binding] = &[
     ),
     bind(
         Command::Down,
-        "Move down",
+        "Move down (shows the rest of a stack)",
         Section::Moving,
         &[chord(Key::Down, NONE), chord(Key::j, NONE)],
     ),
@@ -604,7 +620,8 @@ mod tests {
         assert_eq!(window(Key::n, NONE), Some(Command::NewTodo));
         assert_eq!(window(Key::r, NONE), Some(Command::Refresh));
         assert_eq!(window(Key::F5, NONE), Some(Command::Refresh));
-        assert_eq!(window(Key::s, NONE), None, "Sources live in Settings");
+        assert_eq!(window(Key::s, NONE), Some(Command::Snoozed));
+        assert_eq!(window(Key::c, NONE), Some(Command::OpenStacks));
         assert_eq!(window(Key::comma, CTRL), Some(Command::Settings));
         assert_eq!(window(Key::Tab, NONE), Some(Command::SwitchTab));
         assert_eq!(window(Key::Tab, SHIFT), Some(Command::SwitchTab));
@@ -817,6 +834,8 @@ mod tests {
             [pair("Tab", "Tab"), pair("Shift+Tab", "<Shift>Tab")]
         );
         assert_eq!(named(Command::Menu), [pair("Ctrl+.", "<Control>period")]);
+        assert_eq!(named(Command::Snoozed), [pair("s", "s")]);
+        assert_eq!(named(Command::OpenStacks), [pair("c", "c")]);
         assert_eq!(named(Command::Delete), [pair("Delete", "Delete")]);
         assert_eq!(hinted("Refresh", Command::Refresh), "Refresh (r)");
         assert_eq!(hinted("Settings", Command::Settings), "Settings (Ctrl+,)");
@@ -870,8 +889,18 @@ mod tests {
             "each word, anywhere"
         );
         assert_eq!(labels("stage next"), ["Move to the next stage"]);
-        assert_eq!(labels("show the"), ["Show the keys"]);
+        assert_eq!(
+            labels("show the"),
+            [
+                "Show the keys",
+                "Show the snoozed cards",
+                "Move down (shows the rest of a stack)"
+            ]
+        );
         assert_eq!(labels("sources"), ["Refresh the sources"]);
+        assert_eq!(labels("snoozed"), ["Show the snoozed cards"]);
+        assert_eq!(labels("collapsed"), ["Open the collapsed stacks"]);
+        assert_eq!(labels("rest"), ["Move down (shows the rest of a stack)"]);
         assert_eq!(labels("ctrl k"), ["Show the keys"], "by its key");
         assert_eq!(labels("tab"), ["Switch between the Activity and the Board"]);
         assert_eq!(labels("ctrl+,"), ["Open Settings"]);

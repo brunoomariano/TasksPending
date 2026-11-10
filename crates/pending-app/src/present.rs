@@ -71,6 +71,24 @@ pub struct StackView {
     pub empty_note: Option<String>,
 }
 
+impl StackView {
+    /// The stack's key while it hides cards: Down from the last card it
+    /// shows opens it, as its "more" button does.
+    pub fn to_open(&self) -> Option<&str> {
+        (self.more > 0).then_some(self.key.as_str())
+    }
+}
+
+/// The keys of the stacks collapsed among `groups`, which c opens.
+pub fn collapsed_stacks(groups: &[GroupView]) -> Vec<String> {
+    groups
+        .iter()
+        .flat_map(|group| &group.stacks)
+        .filter(|stack| stack.collapsed)
+        .map(|stack| stack.key.clone())
+        .collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroupView {
     pub key: String,
@@ -2223,6 +2241,39 @@ mod tests {
     fn refreshes_every_source_as_often_as_set() {
         assert_eq!(auto_refresh_every(0), None);
         assert_eq!(auto_refresh_every(15), Some(Duration::from_secs(15 * 60)));
+    }
+
+    /// What the mouse opens, the keys open too: Down from the last card a
+    /// stack shows opens it while it hides cards, as its "more" button
+    /// does, and c opens the stacks collapsed on the page.
+    #[test]
+    fn the_keys_open_what_the_mouse_opens() {
+        let shown = page(&snapshot(), &View::default());
+        assert_eq!(
+            shown.groups[1].stacks[0].to_open(),
+            Some("Work/github/Review"),
+            "7 cards, 5 shown"
+        );
+        assert_eq!(
+            shown.groups[0].stacks[0].to_open(),
+            None,
+            "every card shown"
+        );
+        let mut view = View::default();
+        view.open_columns.insert("Work/github/Review".to_owned());
+        let shown = page(&snapshot(), &view);
+        assert_eq!(shown.groups[1].stacks[0].to_open(), None, "open already");
+
+        assert_eq!(collapsed_stacks(&shown.groups), Vec::<String>::new());
+        let mut view = View::default();
+        view.collapsed.insert("Work/github/Review".to_owned());
+        view.collapsed.insert("Home/gone/Stack".to_owned());
+        let shown = page(&snapshot(), &view);
+        assert_eq!(
+            collapsed_stacks(&shown.groups),
+            ["Work/github/Review"],
+            "only those on the page"
+        );
     }
 
     /// What the group header's toggle and a stack's "more" button say.

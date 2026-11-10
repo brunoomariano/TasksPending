@@ -217,6 +217,7 @@ impl Controls {
         let snoozed_button = gtk::Button::builder()
             .visible(false)
             .focusable(false)
+            .tooltip_text(hinted("Show the snoozed cards", KeyCommand::Snoozed))
             .build();
         snoozed_button.add_css_class("quiet-link");
         let update = label("", &[]);

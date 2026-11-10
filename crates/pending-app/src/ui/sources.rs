@@ -440,7 +440,7 @@ fn append_order(
                 return;
             };
             if open
-                .change(&content, |doc| doc.move_source(index, to))
+                .change(&content, |doc| doc.swap_sources(index, to))
                 .is_some()
             {
                 place.set(to);

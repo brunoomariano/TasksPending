@@ -698,8 +698,8 @@ dialog.tasks-pending .notice.said {
   background: {{surface-2}};
 }
 
-/* The card the keys act on: the focus ring the buttons have, only when
-   the keyboard put the focus there. */
+/* The card the keys act on: a ring in the text colour, as the buttons
+   have, only when the keyboard put the focus there. */
 .card:focus-visible {
   outline: 2px solid {{text}};
   outline-offset: 2px;

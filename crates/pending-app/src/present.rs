@@ -517,6 +517,23 @@ pub const UPDATE_TOOLTIP: &str = "A newer version is published. Run the install 
      again to get it, the curl line in the README (tasks-pending upgrade does it too, \
      except for the Arch package). A copy built by hand updates the way it was built.";
 
+/// What the line under the controls says when this TasksPending was
+/// replaced on disk while it ran (an upgrade): the window still runs the
+/// old one, and every launch brings that one back up.
+pub const RESTART_LINE: &str = "· restart to update";
+pub const RESTART_TOOLTIP: &str = "TasksPending was updated while this window ran, and it \
+     still runs the version from before. Quit it (Ctrl+Q) and open it again to use the new one.";
+
+/// The note at the end of the line under the controls, and its tooltip:
+/// restart, when this TasksPending was `replaced` on disk, which says
+/// more than a newer `update` published; else that update; else none.
+pub fn update_note(replaced: bool, update: Option<&str>) -> Option<(String, &'static str)> {
+    if replaced {
+        return Some((RESTART_LINE.to_owned(), RESTART_TOOLTIP));
+    }
+    update.map(|version| (update_line(version), UPDATE_TOOLTIP))
+}
+
 /// "· v0.7.0 available": a newer published `version`.
 pub fn update_line(version: &str) -> String {
     format!("· v{version} available")
@@ -2266,6 +2283,26 @@ mod tests {
             UPDATE_TOOLTIP.contains("except for the Arch package"),
             "{UPDATE_TOOLTIP}"
         );
+    }
+
+    /// A window that outlived an upgrade asks for a restart, before it
+    /// names a newer version published.
+    #[test]
+    fn asks_for_a_restart_after_an_upgrade() {
+        assert_eq!(
+            update_note(true, None),
+            Some((RESTART_LINE.to_owned(), RESTART_TOOLTIP))
+        );
+        assert_eq!(
+            update_note(true, Some("0.9.2")),
+            Some((RESTART_LINE.to_owned(), RESTART_TOOLTIP))
+        );
+        assert_eq!(
+            update_note(false, Some("0.9.2")),
+            Some(("· v0.9.2 available".to_owned(), UPDATE_TOOLTIP))
+        );
+        assert_eq!(update_note(false, None), None);
+        assert!(RESTART_TOOLTIP.contains("Ctrl+Q"), "{RESTART_TOOLTIP}");
     }
 
     /// Settings offers every board and every interval, the one in effect

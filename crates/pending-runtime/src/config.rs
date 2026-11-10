@@ -247,7 +247,7 @@ pub fn write_file(
         let path = path.to_owned();
         move |source| WriteError::Io { path, source }
     };
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    let path = resolve(path);
     let now = match std::fs::read_to_string(&path) {
         Ok(text) => Some(text),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
@@ -285,6 +285,27 @@ pub fn write_file(
         return Err(io(&path)(error));
     }
     Ok(())
+}
+
+/// Where writing `path` lands: the file at the end of its links, which
+/// need not exist yet (a link into a dotfiles repository whose file is
+/// still to be written).
+fn resolve(path: &Path) -> PathBuf {
+    if let Ok(path) = std::fs::canonicalize(path) {
+        return path;
+    }
+    let mut path = path.to_owned();
+    // As many links as Linux follows.
+    for _ in 0..40 {
+        let Ok(target) = std::fs::read_link(&path) else {
+            break;
+        };
+        path = match path.parent() {
+            Some(dir) => dir.join(target),
+            None => target,
+        };
+    }
+    path
 }
 
 fn plan(

@@ -73,7 +73,7 @@ impl Live {
         cache: Option<PathBuf>,
     ) -> Result<(Self, Origin), LoadError> {
         let env_file = env_path(&*env);
-        let env_text = read(env_file.as_deref());
+        let env_text = read_env(env_file.as_deref(), None);
         let started = Arc::new(EnvFile::parse(env_text.as_deref().unwrap_or_default()).keys());
         let seen = seen_env(&env, env_text.as_deref(), &started);
         let text = read_config(&cli, &seen);
@@ -166,7 +166,8 @@ impl Live {
     /// and is reported in the snapshot. Returns whether the sources were
     /// rebuilt.
     pub fn reload_if_changed(&self) -> bool {
-        let env_text = read(self.inner.env_file.as_deref());
+        let last = self.state().env_text.clone();
+        let env_text = read_env(self.inner.env_file.as_deref(), last);
         let seen = seen_env(&self.inner.env, env_text.as_deref(), &self.inner.started);
         let text = read_config(&self.inner.cli, &seen);
         {
@@ -205,7 +206,7 @@ impl Live {
 
     /// The config file and the env file this dashboard follows.
     pub fn files(&self) -> Files {
-        let env_text = read(self.inner.env_file.as_deref());
+        let env_text = self.state().env_text.clone();
         let seen = seen_env(&self.inner.env, env_text.as_deref(), &self.inner.started);
         Files {
             config: locate(self.inner.cli.clone(), &*seen).map(|location| location.path),
@@ -275,9 +276,20 @@ fn seen_env(env: &Env, text: Option<&str>, started: &Arc<BTreeSet<String>>) -> E
     )
 }
 
-/// A file's text, if it exists and is readable.
-fn read(path: Option<&std::path::Path>) -> Option<String> {
-    std::fs::read_to_string(path?).ok()
+/// The env file's text, `None` when there is none. One that cannot be
+/// read (not text, or not readable by the daemon after an edit as root)
+/// leaves `last` in use: the sources keep the tokens they had rather than
+/// losing them all.
+fn read_env(path: Option<&std::path::Path>, last: Option<String>) -> Option<String> {
+    let path = path?;
+    match std::fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            warn!(path = %path.display(), %error, "env file not read; keeping the last one");
+            last
+        }
+    }
 }
 
 /// The config file's current text, if it exists and is readable.

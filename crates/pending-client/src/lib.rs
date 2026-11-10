@@ -376,6 +376,16 @@ mod tests {
         assert_eq!(version.available, None);
     }
 
+    /// The sandbox follows no file; a daemon from before 0.10.0 has no
+    /// such route, which the window takes as not knowing.
+    #[tokio::test]
+    async fn reads_the_files_the_dashboard_follows() {
+        let files = sandbox().await.files().await.unwrap();
+        assert_eq!(files, Files::default());
+        let older = serve(pending_api::Router::new()).await;
+        assert!(matches!(older.files().await, Err(Error::Status(404))));
+    }
+
     /// The sandbox weather is the fixed sample.
     #[tokio::test]
     async fn reads_the_weather() {

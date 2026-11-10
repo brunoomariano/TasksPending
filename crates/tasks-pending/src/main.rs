@@ -93,9 +93,7 @@ enum SceneArg {
     Omarchy,
     /// The Board, with two cards picked.
     Board,
-    /// The Sources dialog.
-    Sources,
-    /// The Settings dialog.
+    /// The Settings dialog, the sources at its top.
     Settings,
     /// The Snoozed dialog, with one card snoozed.
     Snoozed,
@@ -112,7 +110,6 @@ impl From<SceneArg> for Scene {
             SceneArg::Light => Self::Light,
             SceneArg::Omarchy => Self::Omarchy,
             SceneArg::Board => Self::Board,
-            SceneArg::Sources => Self::Sources,
             SceneArg::Settings => Self::Settings,
             SceneArg::Snoozed => Self::Snoozed,
             SceneArg::Todo => Self::Todo,

@@ -103,10 +103,13 @@ pub fn run(ctx: &Rc<Ctx>, command: Command) {
                 button.emit_clicked();
             }
         }
-        Command::Sources => dialogs::show_sources(ctx),
         Command::Settings => dialogs::show_settings(ctx),
         Command::ActivityTab => ctx.show_tab(Tab::Activity),
         Command::BoardTab => ctx.show_tab(Tab::Board),
+        Command::SwitchTab => {
+            let tab = ctx.model.borrow().tab;
+            ctx.show_tab(tab.other());
+        }
         Command::SendAway => {
             ctx.escape();
         }

@@ -39,7 +39,6 @@ pub enum Scene {
     Light,
     Omarchy,
     Board,
-    Sources,
     Settings,
     Snoozed,
     Todo,

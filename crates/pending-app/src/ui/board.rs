@@ -286,6 +286,8 @@ fn draw(ctx: &Rc<Ctx>, page_box: &gtk::Box, page: &BoardView) {
         .valign(gtk::Align::Start)
         .build();
     board.add_css_class("board");
+    // The focus goes to the cards in it, never to the board itself.
+    board.set_focusable(false);
     for group in &page.groups {
         ctx.cards.borrow_mut().push(Vec::new());
         // Not focusable itself, but focus goes into it: `can-focus` off
@@ -328,7 +330,10 @@ fn activity_section(ctx: &Rc<Ctx>, activity: &ActivityView) -> gtk::Box {
             .build();
         row.add_css_class("empty");
         row.append(&text(hint, &[]));
-        let open = gtk::Button::builder().label("Open the Board").build();
+        let open = gtk::Button::builder()
+            .label("Open the Board")
+            .focusable(false)
+            .build();
         open.add_css_class("link-button");
         let ctx = ctx.clone();
         open.connect_clicked(move |_| ctx.show_tab(Tab::Board));
@@ -379,6 +384,7 @@ fn new_todo_button(ctx: &Rc<Ctx>) -> gtk::Button {
     content.append(&gtk::Label::new(Some("New")));
     let add = gtk::Button::builder()
         .child(&content)
+        .focusable(false)
         .halign(gtk::Align::End)
         .hexpand(true)
         .tooltip_text(hinted("Write down a todo", KeyCommand::NewTodo))
@@ -426,6 +432,7 @@ fn group_widget(ctx: &Rc<Ctx>, group: &GroupView) -> gtk::Box {
         content.append(&gtk::Label::new(Some(&empty.label)));
         let toggle = gtk::Button::builder()
             .child(&content)
+            .focusable(false)
             .halign(gtk::Align::End)
             .hexpand(true)
             .tooltip_text(empty.tooltip)
@@ -473,6 +480,7 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
     let header = gtk::Button::builder()
         .child(&content)
         .halign(gtk::Align::Fill)
+        .focusable(false)
         .build();
     header.add_css_class("stack-header");
     if stack.collapsed {
@@ -503,6 +511,7 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
         let more = gtk::Button::builder()
             .label(label)
             .halign(gtk::Align::Center)
+            .focusable(false)
             .build();
         more.add_css_class("link-button");
         let ctx = ctx.clone();
@@ -520,8 +529,8 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
 /// A card: its title (a link when it has one), the three-dot menu, and two
 /// lines of its body with the whole text as a tooltip.
 fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
-    // Focusable itself, for the keys that act on it; Tab goes on into its
-    // link and its menu button.
+    // Focusable itself, for the keys that act on it: on the page, only the
+    // cards take the keyboard focus.
     let widget = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(4)
@@ -576,6 +585,9 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
                 gtk::glib::markup_escape_text(url),
                 gtk::glib::markup_escape_text(&card.title)
             ));
+            // A label with a link takes the focus on a click; the card
+            // keeps it instead, and o opens the link.
+            title.set_focusable(false);
             let ctx = ctx.clone();
             title.connect_activate_link(move |_, uri| {
                 open_link(&ctx, uri);
@@ -587,6 +599,7 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
     header.append(&title);
 
     let menu = menu_button(ctx, card, place);
+    give_back_focus(&menu, &widget);
     header.append(&menu);
     widget.append(&header);
     if let Some(column) = ctx.cards.borrow_mut().last_mut() {
@@ -696,12 +709,45 @@ fn menu_button(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::MenuButton 
     let button = gtk::MenuButton::builder()
         .icon_name("view-more-symbolic")
         .popover(&popover)
+        .focusable(false)
         .tooltip_text(hinted("Card menu", KeyCommand::Menu))
         .valign(gtk::Align::Start)
         .build();
     button.add_css_class("card-menu");
     button.insert_action_group("card", Some(&actions));
+    // The button inside takes the focus otherwise: Ctrl+. opens the menu.
+    if let Some(inner) = button.first_child() {
+        inner.set_focusable(false);
+    }
     button
+}
+
+/// Once `menu` closes, the keyboard focus goes back to `card` when GTK
+/// left it nowhere, or on something inside the card: the focus is on
+/// cards only.
+fn give_back_focus(menu: &gtk::MenuButton, card: &gtk::Box) {
+    let Some(popover) = menu.popover() else {
+        return;
+    };
+    let card = card.downgrade();
+    popover.connect_closed(move |_| {
+        let card = card.clone();
+        // After GTK has put the focus back.
+        gtk::glib::idle_add_local_once(move || {
+            let Some(card) = card.upgrade() else {
+                return;
+            };
+            let Some(root) = card.root() else {
+                return;
+            };
+            let lost = root
+                .focus()
+                .is_none_or(|focus| focus != card && focus.is_ancestor(&card));
+            if lost {
+                card.grab_focus();
+            }
+        });
+    });
 }
 
 /// A small menu of `entries` of `card`'s menu (the alert or the snooze

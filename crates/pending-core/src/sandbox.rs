@@ -448,7 +448,7 @@ fn report(
 }
 
 /// A source whose last refresh failed: its cards are the ones from the
-/// refresh before, shown under a warning, and the Sources dialog says why.
+/// refresh before, shown under a warning, and Settings says why.
 fn stale_report(
     name: &str,
     kind: SourceKind,

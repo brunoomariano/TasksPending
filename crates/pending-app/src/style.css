@@ -36,8 +36,10 @@ window.tasks-pending {
   text-shadow: none;
 }
 
+/* The keyboard focus is a ring in the text colour, never the accent,
+   which marks what is picked or active. */
 .tasks-pending button:focus-visible {
-  outline: 2px solid alpha({{accent}}, 0.6);
+  outline: 2px solid alpha({{text}}, 0.85);
   outline-offset: 2px;
 }
 
@@ -46,6 +48,12 @@ window.tasks-pending {
 .hero {
   padding: 24px 28px 20px;
   border-bottom: 1px solid {{border}};
+}
+
+/* Room between the clock and the controls, however wide the clock grows
+   into the space the controls leave. */
+.hero > .controls {
+  margin-left: 24px;
 }
 
 .clock-date {
@@ -631,7 +639,7 @@ button.filter:checked {
 /* The card the keys act on: the focus ring the buttons have, only when
    the keyboard put the focus there. */
 .card:focus-visible {
-  outline: 2px solid alpha({{accent}}, 0.6);
+  outline: 2px solid {{text}};
   outline-offset: 2px;
 }
 

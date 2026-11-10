@@ -13,10 +13,10 @@ pub enum Command {
     ShowKeys,
     NewTodo,
     Refresh,
-    Sources,
     Settings,
     ActivityTab,
     BoardTab,
+    SwitchTab,
     SendAway,
     Quit,
     Up,
@@ -166,12 +166,6 @@ pub const BINDINGS: &[Binding] = &[
         &[chord(Key::r, NONE), chord(Key::F5, NONE)],
     ),
     bind(
-        Command::Sources,
-        "Show the sources",
-        Section::Window,
-        &[chord(Key::s, NONE)],
-    ),
-    bind(
         Command::Settings,
         "Open Settings",
         Section::Window,
@@ -188,6 +182,12 @@ pub const BINDINGS: &[Binding] = &[
         "Go to the Board",
         Section::Window,
         &[chord(Key::_2, NONE)],
+    ),
+    bind(
+        Command::SwitchTab,
+        "Switch between the Activity and the Board",
+        Section::Window,
+        &[chord(Key::Tab, NONE), chord(Key::Tab, SHIFT)],
     ),
     Binding {
         elsewhere: true,
@@ -207,31 +207,31 @@ pub const BINDINGS: &[Binding] = &[
             &[chord(Key::q, CTRL)],
         )
     },
-    // The arrows move the focus as usual off the cards; the letters reach
-    // the cards from anywhere.
+    // The keys that move reach the cards from anywhere in the window: the
+    // keyboard focus goes only to cards.
     bind(
         Command::Up,
         "Move up",
         Section::Moving,
-        &[on_card(Key::Up, NONE), chord(Key::k, NONE)],
+        &[chord(Key::Up, NONE), chord(Key::k, NONE)],
     ),
     bind(
         Command::Down,
         "Move down",
         Section::Moving,
-        &[on_card(Key::Down, NONE), chord(Key::j, NONE)],
+        &[chord(Key::Down, NONE), chord(Key::j, NONE)],
     ),
     bind(
         Command::Left,
         "Move to the column on the left",
         Section::Moving,
-        &[on_card(Key::Left, NONE), chord(Key::h, NONE)],
+        &[chord(Key::Left, NONE), chord(Key::h, NONE)],
     ),
     bind(
         Command::Right,
         "Move to the column on the right",
         Section::Moving,
-        &[on_card(Key::Right, NONE), chord(Key::l, NONE)],
+        &[chord(Key::Right, NONE), chord(Key::l, NONE)],
     ),
     bind(
         Command::First,
@@ -368,7 +368,12 @@ impl Chord {
     /// reads as if Caps Lock were off, and with Ctrl or Alt counts in
     /// either case.
     pub fn matches(&self, key: Key, mods: ModifierType) -> bool {
-        let mut key = key;
+        // GDK reports Shift+Tab as its own key.
+        let mut key = if key == Key::ISO_Left_Tab {
+            Key::Tab
+        } else {
+            key
+        };
         if mods.contains(ModifierType::LOCK_MASK) && key.to_lower() != key.to_upper() {
             // Caps Lock gives L for l, and l for Shift+l.
             key = if key.is_upper() {
@@ -598,8 +603,16 @@ mod tests {
         assert_eq!(window(Key::n, NONE), Some(Command::NewTodo));
         assert_eq!(window(Key::r, NONE), Some(Command::Refresh));
         assert_eq!(window(Key::F5, NONE), Some(Command::Refresh));
-        assert_eq!(window(Key::s, NONE), Some(Command::Sources));
+        assert_eq!(window(Key::s, NONE), None, "Sources live in Settings");
         assert_eq!(window(Key::comma, CTRL), Some(Command::Settings));
+        assert_eq!(window(Key::Tab, NONE), Some(Command::SwitchTab));
+        assert_eq!(window(Key::Tab, SHIFT), Some(Command::SwitchTab));
+        assert_eq!(
+            window(Key::ISO_Left_Tab, SHIFT),
+            Some(Command::SwitchTab),
+            "Shift+Tab, as GDK reports it"
+        );
+        assert_eq!(window(Key::Tab, CTRL), None);
         assert_eq!(window(Key::_1, NONE), Some(Command::ActivityTab));
         assert_eq!(window(Key::_2, NONE), Some(Command::BoardTab));
         assert_eq!(window(Key::k, CTRL), Some(Command::ShowKeys));
@@ -731,12 +744,15 @@ mod tests {
 
     /// The keys that act on a card need the focus on one, and Enter on the
     /// card itself: on its link or its menu button, Enter is theirs. The
-    /// arrows move the focus as usual off the cards, and the letters that
-    /// move reach the cards from anywhere.
+    /// keys that move, the arrows as the letters, reach the cards from
+    /// anywhere: the focus goes only to cards.
     #[test]
     fn card_keys_need_a_card() {
         use Focus::{Elsewhere, InCard, OnCard};
-        assert_eq!(lookup(Key::Down, NONE, Elsewhere), None);
+        assert_eq!(lookup(Key::Down, NONE, Elsewhere), Some(Command::Down));
+        assert_eq!(lookup(Key::Up, NONE, Elsewhere), Some(Command::Up));
+        assert_eq!(lookup(Key::Left, NONE, Elsewhere), Some(Command::Left));
+        assert_eq!(lookup(Key::Right, NONE, Elsewhere), Some(Command::Right));
         assert_eq!(lookup(Key::Down, NONE, InCard), Some(Command::Down));
         assert_eq!(lookup(Key::j, NONE, Elsewhere), Some(Command::Down));
         assert_eq!(lookup(Key::k, NONE, OnCard), Some(Command::Up));
@@ -795,6 +811,10 @@ mod tests {
         );
         assert_eq!(named(Command::Down), [pair("↓", "Down"), pair("j", "j")]);
         assert_eq!(named(Command::Pick), [pair("Enter", "Return")]);
+        assert_eq!(
+            named(Command::SwitchTab),
+            [pair("Tab", "Tab"), pair("Shift+Tab", "<Shift>Tab")]
+        );
         assert_eq!(named(Command::Menu), [pair("Ctrl+.", "<Control>period")]);
         assert_eq!(named(Command::Delete), [pair("Delete", "Delete")]);
         assert_eq!(hinted("Refresh", Command::Refresh), "Refresh (r)");
@@ -837,8 +857,11 @@ mod tests {
         );
         assert_eq!(
             labels("the board"),
-            ["Go to the Board"],
-            "or what holds it, in order"
+            [
+                "Go to the Board",
+                "Switch between the Activity and the Board"
+            ],
+            "or what holds it, ties in the table's order"
         );
         assert_eq!(
             labels("board go"),
@@ -846,12 +869,10 @@ mod tests {
             "each word, anywhere"
         );
         assert_eq!(labels("stage next"), ["Move to the next stage"]);
-        assert_eq!(
-            labels("show the"),
-            ["Show the keys", "Show the sources"],
-            "ties keep the table's order"
-        );
+        assert_eq!(labels("show the"), ["Show the keys"]);
+        assert_eq!(labels("sources"), ["Refresh the sources"]);
         assert_eq!(labels("ctrl k"), ["Show the keys"], "by its key");
+        assert_eq!(labels("tab"), ["Switch between the Activity and the Board"]);
         assert_eq!(labels("ctrl+,"), ["Open Settings"]);
         assert_eq!(labels("f5"), ["Refresh the sources"]);
         assert_eq!(labels("nothing like it"), Vec::<&str>::new());
@@ -862,8 +883,8 @@ mod tests {
             "a later label that starts with it ranks first"
         );
         // A label that holds the query outranks a key it names.
-        assert_eq!(labels("s")[0], "Show the keys");
-        assert!(labels("s").contains(&"Show the sources"));
+        assert_eq!(labels("k")[0], "Show the keys");
+        assert_eq!(labels("k").last(), Some(&"Move up"));
     }
 
     /// In the keys dialog, Esc closes it, as Backspace does once the query

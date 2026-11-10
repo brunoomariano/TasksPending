@@ -16,8 +16,7 @@ use crate::backend::Command;
 use crate::clock::{clock_text, date_text, drawing};
 use crate::keymap::{Command as KeyCommand, hinted};
 use crate::present::{
-    Page, UPDATE_TOOLTIP, refresh_button, refresh_widths, settings_tooltip, update_line,
-    weather_icon_name,
+    Page, refresh_button, refresh_widths, settings_tooltip, update_note, weather_icon_name,
 };
 use crate::view::View;
 
@@ -222,7 +221,6 @@ impl Controls {
         snoozed_button.add_css_class("quiet-link");
         let update = label("", &[]);
         update.set_visible(false);
-        update.set_tooltip_text(Some(UPDATE_TOOLTIP));
         let updated_line = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(6)
@@ -367,7 +365,7 @@ fn start_clock(date: gtk::Label, digits: gtk::DrawingArea) {
 }
 
 /// The controls for the current page: the refresh hold, the settings dot,
-/// a source needing a look, the update line. The refresh button
+/// a source needing a look, the update or restart note. The refresh button
 /// is settled whether or not there is a page: a refresh refused while the
 /// dashboard is unavailable must not leave it off.
 pub fn update_controls(ctx: &Rc<Ctx>, widgets: &Widgets, page: Option<&Page>, view: &View) {
@@ -406,9 +404,10 @@ pub fn update_controls(ctx: &Rc<Ctx>, widgets: &Widgets, page: Option<&Page>, vi
         .snoozed_button
         .set_visible(page.snoozed_line.is_some());
     let update = ctx.model.borrow().update.clone();
-    match update {
-        Some(version) => {
-            controls.update.set_label(&update_line(&version));
+    match update_note(crate::running_replaced(), update.as_deref()) {
+        Some((line, tooltip)) => {
+            controls.update.set_label(&line);
+            controls.update.set_tooltip_text(Some(tooltip));
             controls.update.set_visible(true);
         }
         None => controls.update.set_visible(false),

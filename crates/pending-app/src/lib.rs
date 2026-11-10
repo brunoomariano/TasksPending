@@ -28,6 +28,19 @@ use pending_runtime::live::{Env, process_env};
 /// its desktop entry.
 pub const APP_ID: &str = "io.github.brunoomariano.TasksPending";
 
+/// Whether the running program was replaced on disk, given where
+/// `/proc/self/exe` points: Linux marks a file removed or written over
+/// since the program started.
+pub fn replaced_on_disk(exe: &std::path::Path) -> bool {
+    exe.to_string_lossy().ends_with(" (deleted)")
+}
+
+/// Whether this TasksPending was replaced on disk while it ran, as an
+/// upgrade does: the window keeps running the old one until it quits.
+pub fn running_replaced() -> bool {
+    std::fs::read_link("/proc/self/exe").is_ok_and(|exe| replaced_on_disk(&exe))
+}
+
 /// What a screenshot shows: the Activity area with cards at each stage,
 /// the same in the light scheme or in a sample Omarchy theme, the Board
 /// with two cards picked, or one of the dialogs (the keys dialog among
@@ -355,6 +368,21 @@ mod tests {
             ..AppOptions::default()
         };
         assert_eq!(view_file(&screenshot, &env), None);
+    }
+
+    /// An upgrade replaces the program on disk, and Linux then shows the
+    /// running one as deleted; a folder named so does not count.
+    #[test]
+    fn tells_when_the_program_was_replaced() {
+        use std::path::Path;
+        assert!(replaced_on_disk(Path::new(
+            "/usr/bin/tasks-pending (deleted)"
+        )));
+        assert!(!replaced_on_disk(Path::new("/usr/bin/tasks-pending")));
+        assert!(!replaced_on_disk(Path::new(
+            "/home/me/old (deleted)/tasks-pending"
+        )));
+        assert!(!running_replaced(), "the test binary is where it was");
     }
 
     /// The todos are kept in the data dir, as XDG names it; the sandbox

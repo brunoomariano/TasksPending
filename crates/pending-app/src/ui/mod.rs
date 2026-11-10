@@ -914,6 +914,8 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
                 && let Some(ctx) = ctx.upgrade()
             {
                 ctx.seen();
+                // An upgrade while the window was away asks for a restart.
+                ctx.refresh_controls();
             }
         }
     });

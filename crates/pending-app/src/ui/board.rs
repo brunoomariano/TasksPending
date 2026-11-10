@@ -29,6 +29,9 @@ pub struct Slot {
     pub place: Place,
     pub widget: gtk::glib::WeakRef<gtk::Box>,
     pub menu: gtk::glib::WeakRef<gtk::MenuButton>,
+    /// The stack Down opens from here: set on the last card a stack shows
+    /// while it hides more.
+    pub opens: Option<String>,
 }
 
 /// Where the keyboard focus is among the cards: the card that has it,
@@ -64,6 +67,11 @@ pub fn focus_card(ctx: &Ctx, spot: Spot, shown: bool) {
             window.set_focus_visible(true);
         }
     }
+}
+
+/// The stack Down opens from the card at `spot`, if any.
+pub fn opens(ctx: &Ctx, spot: Spot) -> Option<String> {
+    ctx.cards.borrow().get(spot.0)?.get(spot.1)?.opens.clone()
 }
 
 /// How many cards each column holds.
@@ -507,6 +515,16 @@ fn stack_widget(ctx: &Rc<Ctx>, stack: &StackView, after: bool) -> gtk::Box {
     for card in &stack.cards {
         cards.append(&card_widget(ctx, card, Place::Board));
     }
+    // Down from the last card shown opens the stack, as the button does.
+    if let Some(key) = stack.to_open()
+        && let Some(slot) = ctx
+            .cards
+            .borrow_mut()
+            .last_mut()
+            .and_then(|column| column.last_mut())
+    {
+        slot.opens = Some(key.to_owned());
+    }
     if let Some(label) = &stack.more_label {
         let more = gtk::Button::builder()
             .label(label)
@@ -608,6 +626,7 @@ fn card_widget(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::Box {
             place,
             widget: widget.downgrade(),
             menu: menu.downgrade(),
+            opens: None,
         });
     }
 

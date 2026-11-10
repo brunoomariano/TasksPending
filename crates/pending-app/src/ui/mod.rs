@@ -5,6 +5,8 @@ mod dialogs;
 mod hero;
 mod icons;
 mod keys;
+mod settings;
+mod sources;
 mod tabs;
 
 use std::cell::RefCell;
@@ -111,8 +113,12 @@ pub struct Ctx {
     pub runtime_handle: tokio::runtime::Handle,
     pub widgets: RefCell<Option<Widgets>>,
     pub styling: Styling,
-    /// The page of the Settings dialog while it is open.
-    pub settings_page: gtk::glib::WeakRef<gtk::Box>,
+    /// Settings, while it is open.
+    pub settings: RefCell<Option<Rc<settings::Open>>>,
+    /// The config file and the env file Settings changes in the sandbox
+    /// and a picture: in memory, for as long as the window. `None`
+    /// elsewhere: the files are the ones the dashboard follows.
+    pub sandbox_files: Option<(crate::settings::Place, crate::settings::Place)>,
     /// Hyprland, which places the window as a drop-down; `None` off it.
     pub hyprland: Option<Hyprland>,
     /// The user's home, where Omarchy keeps its settings and plugins;
@@ -667,7 +673,8 @@ pub fn run(
             switches: RefCell::new(None),
             settling: RefCell::new(None),
         },
-        settings_page: gtk::glib::WeakRef::new(),
+        settings: RefCell::new(None),
+        sandbox_files: (!unique).then(settings::sandbox_files),
         hyprland,
         home,
         omarchy_shell,
@@ -823,7 +830,7 @@ fn follow_omarchy(ctx: &Rc<Ctx>) {
                     let follows = ctx.model.borrow().view.theme == Theme::Omarchy;
                     if follows {
                         ctx.restyle();
-                        dialogs::refresh_settings(&ctx);
+                        settings::refresh(&ctx);
                     }
                 }
             });
@@ -1048,7 +1055,10 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
                     ctx.model.borrow_mut().update = version;
                     ctx.refresh_controls();
                 }
-                Event::Files(files) => ctx.model.borrow_mut().files = files,
+                Event::Files(files) => {
+                    ctx.model.borrow_mut().files = files;
+                    settings::refresh(&ctx);
+                }
             }
         }
     });
@@ -1174,7 +1184,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
             Scene::Activity | Scene::Light | Scene::Omarchy | Scene::Todo | Scene::Keys => {
                 pick_along_the_stages(&ctx, &firsts, true)
             }
-            Scene::Board | Scene::Settings => {
+            Scene::Board | Scene::Settings | Scene::Source | Scene::Stack => {
                 ctx.show_tab(Tab::Board);
                 for id in ids.into_iter().take(2) {
                     ctx.send(Command::SetMark { id, marked: true });
@@ -1188,7 +1198,11 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
         }
         let ctx = ctx.clone();
         gtk::glib::timeout_add_local_once(DIALOG_AFTER - SCENE_AFTER, move || match scene {
-            Scene::Settings => dialogs::show_settings(&ctx),
+            Scene::Settings => settings::show(&ctx),
+            // The source whose token expired, and a stack that shows one
+            // of several things.
+            Scene::Source => settings::show_at(&ctx, "Jira demo", None),
+            Scene::Stack => settings::show_at(&ctx, "GitLab demo", Some(0)),
             Scene::Snoozed => dialogs::show_snoozed(&ctx),
             Scene::Todo => dialogs::show_todo(&ctx, None),
             Scene::Keys => keys::show(&ctx),

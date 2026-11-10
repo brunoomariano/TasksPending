@@ -13,7 +13,7 @@ use libadwaita::prelude::*;
 
 use super::board::{self, tracked};
 use super::dialogs::{self, dialog};
-use super::{Ctx, hero, wrapped as text};
+use super::{Ctx, hero, settings, wrapped as text};
 use crate::keymap::{self, Binding, Command, DialogKey, Focus, Verdict};
 use crate::nav::{self, Move};
 use crate::present::{self, Tab};
@@ -103,7 +103,7 @@ pub fn run(ctx: &Rc<Ctx>, command: Command) {
                 button.emit_clicked();
             }
         }
-        Command::Settings => dialogs::show_settings(ctx),
+        Command::Settings => settings::show(ctx),
         Command::ActivityTab => ctx.show_tab(Tab::Activity),
         Command::BoardTab => ctx.show_tab(Tab::Board),
         Command::SwitchTab => {

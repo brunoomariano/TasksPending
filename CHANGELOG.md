@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The keyboard moves only between the cards. The arrows do what **h**/**j**/**k**/**l** do from anywhere in the window, and the focus no longer lands on the buttons, the tabs, a stack's header, an empty stack or a card's link and menu button; the mouse clicks them as before. **Tab** (or **Shift+Tab**) switches between the Activity and the Board. The card in focus wears a ring in the text colour, so it no longer looks like a picked card or the open tab.
+- The sources are at the top of Settings, and the Sources button and its **s** key are gone: the gear shows the warning icon while a source needs a look.
+
+### Fixed
+
+- A window still running after an upgrade says `· restart to update` under the controls. Until it quits, every launch brings that old window back up, which is why the keys dialog and the card keys of 0.9.0 seemed missing after upgrading from 0.8.
+
 ## 0.9.0
 
 The keyboard drives the window, with a dialog that lists every key and finds one by what it does, and todos are kept from one run to the next.

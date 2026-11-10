@@ -11,6 +11,7 @@ mod nav;
 mod omarchy_bar;
 mod present;
 mod session;
+mod settings;
 mod snooze;
 mod state;
 mod theme;
@@ -44,7 +45,7 @@ pub fn running_replaced() -> bool {
 /// What a screenshot shows: the Activity area with cards at each stage,
 /// the same in the light scheme or in a sample Omarchy theme, the Board
 /// with two cards picked, or one of the dialogs (the keys dialog among
-/// them).
+/// them, and Settings at a source's page or a stack's).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Scene {
     #[default]
@@ -53,6 +54,10 @@ pub enum Scene {
     Omarchy,
     Board,
     Settings,
+    /// Settings at the page of a source, with its credentials.
+    Source,
+    /// Settings at the page of a stack.
+    Stack,
     Snoozed,
     Todo,
     Keys,

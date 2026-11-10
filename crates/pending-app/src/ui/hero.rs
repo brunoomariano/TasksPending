@@ -9,9 +9,9 @@ use gtk4 as gtk;
 use gtk4::prelude::*;
 use libadwaita as adw;
 
-use super::dialogs;
 use super::icons::{size, symbolic};
 use super::{Ctx, Widgets};
+use super::{dialogs, settings};
 use crate::backend::Command;
 use crate::clock::{clock_text, date_text, drawing};
 use crate::keymap::{Command as KeyCommand, hinted};
@@ -252,7 +252,7 @@ impl Controls {
 
         {
             let ctx = ctx.clone();
-            settings_button.connect_clicked(move |_| dialogs::show_settings(&ctx));
+            settings_button.connect_clicked(move |_| settings::show(&ctx));
         }
         {
             let ctx = ctx.clone();

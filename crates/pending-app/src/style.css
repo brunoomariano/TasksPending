@@ -610,6 +610,80 @@ button.filter:checked {
   font-weight: 600;
 }
 
+/* Settings: each board with its switch, its sources and stacks as rows,
+   the kinds of a new source, and the words of a stack as chips. */
+.board-line {
+  margin-top: 8px;
+  padding: 4px 0;
+}
+
+.board-line .board-name {
+  font-weight: 600;
+}
+
+.source-row {
+  padding: 8px 10px 8px 12px;
+}
+
+.source-row.off .card-title,
+.source-row.off image {
+  opacity: 0.5;
+}
+
+.field-label {
+  color: {{text-2}};
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.tasks-pending button.kind-choice {
+  padding: 10px 12px;
+  border: 1px solid {{border}};
+  border-radius: 8px;
+  background: {{surface}};
+  color: {{text}};
+}
+
+.tasks-pending button.kind-choice:hover {
+  border-color: {{border-strong}};
+  background: {{surface-2}};
+}
+
+.chip {
+  padding: 1px 2px 1px 10px;
+  border: 1px solid {{border}};
+  border-radius: 999px;
+  background: {{surface-2}};
+  color: {{text}};
+  font-size: 0.85em;
+}
+
+.tasks-pending .chip button.chip-remove {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  border-radius: 999px;
+  color: {{text-3}};
+}
+
+.tasks-pending .chip button.chip-remove:hover {
+  color: {{text}};
+  background: {{card-hover}};
+}
+
+.tasks-pending button.control.wake.destructive {
+  color: {{danger}};
+}
+
+.tasks-pending button.control.wake.destructive:hover {
+  border-color: alpha({{danger}}, 0.5);
+  background: alpha({{danger}}, 0.08);
+}
+
+dialog.tasks-pending .notice.said {
+  margin: 4px 0;
+}
+
 .tasks-pending button.control.wake {
   min-height: 30px;
   padding: 0 12px;

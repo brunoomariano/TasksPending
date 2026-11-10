@@ -1,5 +1,5 @@
-//! The dialogs: settings (the sources first), the snoozed cards, and a
-//! todo.
+//! The dialogs: the snoozed cards and a todo, and what Settings and the
+//! keys dialog build theirs with.
 
 use std::rc::Rc;
 
@@ -8,25 +8,15 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use super::board::{self, clear, notice, tracked};
-use super::icons::{size, source_icon, symbolic};
+use super::board::{self, tracked};
+use super::icons::{size, source_icon};
 use super::{Ctx, wrapped as text};
 use crate::backend::Command;
-use crate::omarchy_bar;
-use crate::present::{
-    BarState, Choice, Page, bar_choices, bar_note, bar_view, board_choices, theme_choices,
-    theme_note, todo_dialog_words, todo_note,
-};
-use crate::view::View;
+use crate::present::{todo_dialog_words, todo_note};
 
 /// Every dialog's width: enough for a source's message or a stack's name
 /// on one line, and the same for all three so they open in one place.
-const DIALOG_WIDTH: i32 = 600;
-
-/// A dialog titled `title` over the window, holding `content`.
-fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) {
-    show_over(ctx, &dialog(title, content));
-}
+pub(super) const DIALOG_WIDTH: i32 = 600;
 
 /// Shows `dialog` over the window. The card that had the keyboard focus
 /// has it back once the dialog closes, also when a redraw while it was
@@ -57,47 +47,6 @@ pub(super) fn dialog(title: &str, content: &gtk::Box) -> adw::Dialog {
         .build();
     dialog.add_css_class("tasks-pending");
     dialog
-}
-
-/// Every source with its state and last fetch, and the config error when
-/// the file on disk was rejected: the top of Settings.
-fn append_sources(ctx: &Rc<Ctx>, page: &Page, content: &gtk::Box) {
-    if let Some(error) = &page.config_error {
-        content.append(&notice(
-            "stale",
-            "Config not reloaded (the previous one is still running)",
-            error,
-        ));
-    }
-    for source in &page.sources {
-        let row = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        row.add_css_class("row-card");
-        let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        top.append(&source_icon(ctx, source.icon.as_ref(), size::LOGO));
-        let name = text(&source.name, &[]);
-        name.add_css_class("card-title");
-        top.append(&name);
-        let boards = gtk::Label::new(Some(&source.boards));
-        boards.add_css_class("badge");
-        top.append(&boards);
-        let status = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(6)
-            .halign(gtk::Align::End)
-            .hexpand(true)
-            .build();
-        status.add_css_class("status");
-        status.add_css_class(source.status_class);
-        status.append(&symbolic(source.status_icon, size::TEXT));
-        status.append(&gtk::Label::new(Some(source.status_text)));
-        top.append(&status);
-        row.append(&top);
-        row.append(&text(&source.time, &["row-time"]));
-        if let Some(message) = &source.message {
-            row.append(&text(message, &["row-body"]));
-        }
-        content.append(&row);
-    }
 }
 
 /// The snoozed cards, each with when it comes back and a button to wake it.
@@ -251,44 +200,12 @@ pub fn show_todo(ctx: &Rc<Ctx>, editing: Option<&str>) {
     show_over(ctx, &dialog);
 }
 
-/// Settings: which board to show, the theme and the icon on Omarchy's bar
-/// (where Omarchy's shell is). Rebuilt on each change.
-pub fn show_settings(ctx: &Rc<Ctx>) {
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    fill_settings(ctx, &content);
-    ctx.settings_page.set(Some(&content));
-    present(ctx, "Settings", &content);
-}
-
-/// Fills the open Settings again, for a change made outside it (Omarchy
-/// switching themes).
-pub fn refresh_settings(ctx: &Rc<Ctx>) {
-    if let Some(content) = ctx.settings_page.upgrade() {
-        fill_settings(ctx, &content);
-    }
-}
-
-/// Fills `content` with the settings, and again on each change.
-fn fill_settings(ctx: &Rc<Ctx>, content: &gtk::Box) {
-    // Weakly: the switches inside `content` hold `rebuild`, and a strong
-    // reference back would keep the dialog's widgets alive once it closes.
-    let rebuild: Rc<dyn Fn()> = {
-        let ctx = ctx.clone();
-        let content = content.downgrade();
-        Rc::new(move || {
-            if let Some(content) = content.upgrade() {
-                fill_settings(&ctx, &content);
-            }
-        })
-    };
-    fill_settings_with(ctx, content, rebuild);
-}
-
 fn heading(label: &str) -> gtk::Label {
     tracked(label, &["dialog-heading"])
 }
 
-fn pill(label: &str, active: bool) -> gtk::ToggleButton {
+/// A pill in Settings, on when `active`.
+pub(super) fn pill(label: &str, active: bool) -> gtk::ToggleButton {
     let button = gtk::ToggleButton::builder()
         .label(label)
         .active(active)
@@ -297,216 +214,8 @@ fn pill(label: &str, active: bool) -> gtk::ToggleButton {
     button
 }
 
-fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) {
-    clear(content);
-    if let Some(page) = ctx.current_page() {
-        content.append(&heading("Sources"));
-        append_sources(ctx, &page, content);
-    }
-    let Some(snapshot) = ctx.model.borrow().state.snapshot().cloned() else {
-        content.append(&text("Nothing to set up yet.", &["empty"]));
-        return;
-    };
-    let view = ctx.model.borrow().view.clone();
-    content.append(&heading("Board"));
-    content.append(&pills(
-        ctx,
-        &rebuild,
-        board_choices(&snapshot, &view),
-        |view, board| view.board = board,
-    ));
-    content.append(&heading("Theme"));
-    content.append(&pills(
-        ctx,
-        &rebuild,
-        theme_choices(&view),
-        |view, theme| view.theme = theme,
-    ));
-    if let Some(note) = theme_note(&view, ctx.model.borrow().omarchy.as_ref()) {
-        content.append(&text(&note, &["dialog-note"]));
-    }
-    if let Some((on, state)) = bar_state(ctx) {
-        content.append(&heading("Omarchy bar"));
-        content.append(&bar_pills(ctx, &rebuild, on));
-        content.append(&text(&bar_note(&state), &["dialog-note"]));
-    }
-}
-
-/// A pill for each of `choices`; choosing one applies it with `set`.
-fn pills<T: Clone + 'static>(
-    ctx: &Rc<Ctx>,
-    rebuild: &Rc<dyn Fn()>,
-    choices: Vec<Choice<T>>,
-    set: fn(&mut View, T),
-) -> gtk::FlowBox {
-    let row = gtk::FlowBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .column_spacing(6)
-        .row_spacing(6)
-        .max_children_per_line(10)
-        .build();
-    for choice in choices {
-        let button = pill(&choice.label, choice.active);
-        let ctx = ctx.clone();
-        let rebuild = rebuild.clone();
-        let value = choice.value;
-        button.connect_clicked(move |_| {
-            let value = value.clone();
-            ctx.change_view(|view| set(view, value));
-            rebuild();
-        });
-        row.insert(&flow_child(&button), -1);
-    }
-    row
-}
-
-/// Whether the icon is on Omarchy's bar, and what to say about it; `None`
-/// without Omarchy's shell. Omarchy's settings say where it is
-/// ([`bar_view`]); the sandbox reads none, and the icon is off there.
-fn bar_state(ctx: &Rc<Ctx>) -> Option<(bool, BarState)> {
-    if !ctx.omarchy_shell {
-        return None;
-    }
-    let placed = ctx.home.as_ref().is_some_and(|home| {
-        std::fs::read_to_string(omarchy_bar::shell_config(home))
-            .is_ok_and(|settings| omarchy_bar::in_bar(&settings))
-    });
-    let mut model = ctx.model.borrow_mut();
-    let asked = model.bar_wanted.map(|(on, at)| (on, at.elapsed()));
-    let view = bar_view(placed, asked, model.bar_change.as_ref());
-    if !view.keep_asked {
-        model.bar_wanted = None;
-    }
-    Some((view.on, view.state))
-}
-
-/// Off and On for the icon on Omarchy's bar.
-fn bar_pills(ctx: &Rc<Ctx>, rebuild: &Rc<dyn Fn()>, on: bool) -> gtk::FlowBox {
-    let row = gtk::FlowBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .column_spacing(6)
-        .row_spacing(6)
-        .build();
-    let changing = matches!(ctx.model.borrow().bar_change, Some(BarState::Changing(_)));
-    for choice in bar_choices(on) {
-        let button = pill(&choice.label, choice.active);
-        button.set_sensitive(!changing);
-        let ctx = ctx.clone();
-        let rebuild = rebuild.clone();
-        let wanted = choice.value;
-        button.connect_clicked(move |_| {
-            if wanted == on {
-                // Already so: the pill stays as it was.
-                rebuild();
-            } else {
-                set_bar(&ctx, wanted, rebuild.clone());
-            }
-        });
-        row.insert(&flow_child(&button), -1);
-    }
-    row
-}
-
-/// Puts the icon on Omarchy's bar (writing the plugin first) or takes it
-/// off, with Omarchy's own commands, off the main loop; Settings says it
-/// is under way, then how it went.
-fn set_bar(ctx: &Rc<Ctx>, on: bool, rebuild: Rc<dyn Fn()>) {
-    let Some(home) = ctx.home.clone() else {
-        ctx.model.borrow_mut().bar_change = Some(BarState::Failed(
-            "the sandbox leaves Omarchy's bar alone".to_owned(),
-        ));
-        rebuild();
-        return;
-    };
-    if on && let Err(error) = omarchy_bar::write(&omarchy_bar::plugin_dir(&home)) {
-        ctx.model.borrow_mut().bar_change = Some(BarState::Failed(format!(
-            "could not write the plugin ({error})"
-        )));
-        rebuild();
-        return;
-    }
-    ctx.model.borrow_mut().bar_change = Some(BarState::Changing(on));
-    rebuild();
-    let ctx = ctx.clone();
-    gtk::glib::spawn_future_local(async move {
-        let outcome = run_all(omarchy_bar::steps(on)).await;
-        {
-            let mut model = ctx.model.borrow_mut();
-            match outcome {
-                Ok(()) => {
-                    model.bar_change = None;
-                    model.bar_wanted = Some((on, std::time::Instant::now()));
-                }
-                Err(why) => model.bar_change = Some(BarState::Failed(why)),
-            }
-        }
-        rebuild();
-    });
-}
-
-/// How long one of Omarchy's commands may take before Settings gives up
-/// on it (its shell gives up on itself after three seconds).
-const OMARCHY_ANSWERS_WITHIN: std::time::Duration = std::time::Duration::from_secs(15);
-
-/// Runs the steps in turn until a command fails, saying why: the last
-/// line it wrote to its error output, or that it could not run or did
-/// not answer in time.
-async fn run_all(steps: Vec<omarchy_bar::Step>) -> Result<(), String> {
-    for step in steps {
-        match step {
-            omarchy_bar::Step::Run(argv) => {
-                let (ok, _, errors) = run(&argv).await?;
-                if !ok {
-                    let line = argv.join(" ");
-                    return Err(omarchy_bar::refusal(&errors)
-                        .map_or_else(|| format!("{line} failed"), str::to_owned));
-                }
-            }
-            omarchy_bar::Step::AwaitListed => {
-                // As Omarchy's `plugin add` does: 40 looks, 50 ms apart.
-                // Enabling then says plainly if it is still not found.
-                for _ in 0..40 {
-                    if let Ok((true, list, _)) = run(&omarchy_bar::LIST).await
-                        && omarchy_bar::listed(&list)
-                    {
-                        break;
-                    }
-                    gtk::glib::timeout_future(std::time::Duration::from_millis(50)).await;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Runs one command off the main loop: whether it succeeded, and what it
-/// wrote to its output and its error output.
-async fn run(argv: &[&str]) -> Result<(bool, String, String), String> {
-    let line = argv.join(" ");
-    let args: Vec<&std::ffi::OsStr> = argv.iter().map(std::ffi::OsStr::new).collect();
-    let process = gtk::gio::Subprocess::newv(
-        &args,
-        gtk::gio::SubprocessFlags::STDOUT_PIPE | gtk::gio::SubprocessFlags::STDERR_PIPE,
-    )
-    .map_err(|error| format!("{line} did not run ({error})"))?;
-    let answered = gtk::glib::future_with_timeout(
-        OMARCHY_ANSWERS_WITHIN,
-        process.communicate_utf8_future(None),
-    )
-    .await;
-    let Ok(outcome) = answered else {
-        process.force_exit();
-        return Err(format!("{line} did not answer"));
-    };
-    let (output, errors) = outcome.map_err(|error| format!("{line} did not finish ({error})"))?;
-    Ok((
-        process.is_successful(),
-        output.map(String::from).unwrap_or_default(),
-        errors.map(String::from).unwrap_or_default(),
-    ))
-}
-
-fn flow_child(widget: &impl IsA<gtk::Widget>) -> gtk::FlowBoxChild {
+/// `widget` in a row of pills, which leaves the focus to the widget.
+pub(super) fn flow_child(widget: &impl IsA<gtk::Widget>) -> gtk::FlowBoxChild {
     gtk::FlowBoxChild::builder()
         .child(widget)
         .focusable(false)

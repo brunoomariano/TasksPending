@@ -44,10 +44,13 @@ enum Line {
 }
 
 impl EnvFile {
-    /// Reads `text` as systemd does: blank lines and those starting with
-    /// `#` or `;` are comments, then `KEY=value`, with the spacing around
-    /// the value dropped and `'…'` or `"…"` quotes taken off. A line it
-    /// cannot read is kept, and ignored, as systemd ignores it.
+    /// Reads `text` as systemd reads the usual lines: blank lines and those
+    /// starting with `#` or `;` are comments, then `KEY=value`, with the
+    /// spacing around the value dropped and `'…'` or `"…"` quotes taken
+    /// off. A line it cannot read is kept, and ignored, as systemd ignores
+    /// it. It reads one line at a time, so a value systemd would join (a
+    /// trailing backslash, quotes over several lines) or cut (a comment
+    /// after a quoted value) is taken as written; Settings writes none.
     pub fn parse(text: &str) -> Self {
         let lines = text
             .lines()

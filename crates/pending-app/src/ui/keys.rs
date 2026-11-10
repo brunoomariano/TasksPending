@@ -120,6 +120,8 @@ pub fn run(ctx: &Rc<Ctx>, command: Command) {
                 .map(|page| present::collapsed_stacks(&page.groups))
                 .unwrap_or_default();
             if !collapsed.is_empty() {
+                // The stacks are on the Board: it is in front when they open.
+                ctx.show_tab(Tab::Board);
                 ctx.change_view(|view| {
                     for key in &collapsed {
                         view.collapsed.remove(key);

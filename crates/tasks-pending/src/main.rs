@@ -95,6 +95,10 @@ enum SceneArg {
     Board,
     /// The Settings dialog, the sources at its top.
     Settings,
+    /// Settings at a source's page, with its credentials.
+    Source,
+    /// Settings at a stack's page.
+    Stack,
     /// The Snoozed dialog, with one card snoozed.
     Snoozed,
     /// The dialog that writes down a todo, over the Board.
@@ -111,6 +115,8 @@ impl From<SceneArg> for Scene {
             SceneArg::Omarchy => Self::Omarchy,
             SceneArg::Board => Self::Board,
             SceneArg::Settings => Self::Settings,
+            SceneArg::Source => Self::Source,
+            SceneArg::Stack => Self::Stack,
             SceneArg::Snoozed => Self::Snoozed,
             SceneArg::Todo => Self::Todo,
             SceneArg::Keys => Self::Keys,

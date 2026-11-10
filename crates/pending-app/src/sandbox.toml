@@ -1,0 +1,131 @@
+# The sandbox's config. It lives in memory: Settings changes it, and the
+# sandbox's board stays as it is.
+
+[[sources]]
+name = "GitHub demo"
+kind = "github"
+board = "Work"
+
+  [[sources.stacks]]
+  name = "Review requested"
+  query = "is:open is:pr review-requested:@me"
+
+  [[sources.stacks]]
+  name = "Returned to you"
+  query = "is:open is:pr author:@me review:changes_requested"
+
+  [[sources.stacks]]
+  name = "Ready to merge"
+  query = "is:open is:pr author:@me review:approved"
+
+  [[sources.stacks]]
+  name = "Not approved yet"
+  query = "is:open is:pr author:@me review:required -is:draft"
+
+  [[sources.stacks]]
+  name = "Drafts"
+  query = "is:open is:pr author:@me draft:true"
+  sort = "oldest"
+
+[[sources]]
+name = "GitLab demo"
+kind = "gitlab"
+board = "Work"
+
+  [[sources.stacks]]
+  name = "Merge requests"
+  merge_requests = "review_requested"
+
+  [[sources.stacks]]
+  name = "Issues"
+  issues = "assigned"
+
+  [[sources.stacks]]
+  name = "To-dos"
+  todos = true
+
+[[sources]]
+name = "Jira demo"
+kind = "jira"
+board = "Work"
+
+  [[sources.stacks]]
+  name = "Sprint"
+  jql = "assignee = currentUser() AND sprint in openSprints()"
+
+  [[sources.stacks]]
+  name = "Waiting on me"
+  jql = "assignee = currentUser() AND status = \"Waiting for review\""
+  severity = "warning"
+
+[[sources]]
+name = "Linear demo"
+kind = "linear"
+board = "Work"
+
+  [[sources.stacks]]
+  name = "In progress"
+  state_type = ["started"]
+
+  [[sources.stacks]]
+  name = "Blocked"
+  state = ["Blocked"]
+
+  [[sources.stacks]]
+  name = "To do"
+  state_type = ["unstarted"]
+
+[[sources]]
+name = "Plane demo"
+kind = "plane"
+board = "Work"
+
+  [[sources.stacks]]
+  name = "In review"
+  state = ["In Review"]
+
+  [[sources.stacks]]
+  name = "Assigned to me"
+
+[[sources]]
+name = "Todoist demo"
+kind = "todoist"
+board = "Personal"
+
+  [[sources.stacks]]
+  name = "Overdue"
+  filter = "overdue"
+
+  [[sources.stacks]]
+  name = "Today"
+  filter = "today"
+
+  [[sources.stacks]]
+  name = "Later"
+  filter = "7 days & !today"
+
+[[sources]]
+name = "Calendar demo"
+kind = "google"
+board = "Personal"
+
+  [[sources.stacks]]
+  name = "Today"
+  when = ["now", "today"]
+
+  [[sources.stacks]]
+  name = "Upcoming"
+  when = ["tomorrow", "later"]
+
+[[sources]]
+name = "iCal demo"
+kind = "ical"
+board = "Personal"
+
+  [[sources.stacks]]
+  name = "This week"
+  when = ["now", "today", "tomorrow"]
+
+  [[sources.stacks]]
+  name = "Next month"
+  when = ["later"]

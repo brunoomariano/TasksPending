@@ -99,6 +99,14 @@ impl ConfigDoc {
         Ok(())
     }
 
+    /// Swaps the sources at `a` and `b`, with their stacks and comments;
+    /// the sources between them stay where they are.
+    pub fn swap_sources(&mut self, a: usize, b: usize) -> Result<(), EditError> {
+        let (low, high) = (a.min(b), a.max(b));
+        self.move_source(high, low)?;
+        self.move_source(low + 1, high)
+    }
+
     /// Sets a source's `key`, or removes it so its default applies. `board`
     /// is written under the old name, `lane`, where the file uses it.
     pub fn set_source(
@@ -576,6 +584,30 @@ board = "Home"
         assert_eq!(doc.remove_source(1), Err(EditError::NoSource(1)));
         assert_eq!(doc.move_source(0, 1), Err(EditError::NoSource(1)));
         assert_eq!(doc.remove_stack(0, 1), Err(EditError::NoStack(0, 1)));
+    }
+
+    /// Two sources swap places around the ones between them, which stay
+    /// where they are.
+    #[test]
+    fn swaps_sources_around_the_others() {
+        let text: String = ["a", "b", "c", "d"]
+            .iter()
+            .map(|name| format!("[[sources]]\nname = \"{name}\"\nkind = \"sample\"\n\n"))
+            .collect();
+        let order = |doc: &ConfigDoc| -> Vec<String> {
+            names(&loaded(doc))
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect()
+        };
+        let mut doc = ConfigDoc::parse(&text).unwrap();
+        doc.swap_sources(0, 2).unwrap();
+        assert_eq!(order(&doc), ["c", "b", "a", "d"]);
+        doc.swap_sources(3, 1).unwrap();
+        assert_eq!(order(&doc), ["c", "d", "a", "b"]);
+        doc.swap_sources(2, 3).unwrap();
+        assert_eq!(order(&doc), ["c", "d", "b", "a"]);
+        assert_eq!(doc.swap_sources(0, 4), Err(EditError::NoSource(4)));
     }
 
     /// A source's and a stack's keys change in place, comments kept; a

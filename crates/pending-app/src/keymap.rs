@@ -59,7 +59,8 @@ impl Section {
 pub enum Focus {
     /// Not on a card.
     Elsewhere,
-    /// On something inside a card: its link or its menu button.
+    /// On something inside a card: only its open menu, now that a card's
+    /// link and menu button take no focus.
     InCard,
     /// On the card itself.
     OnCard,
@@ -71,8 +72,8 @@ pub enum Needs {
     Nothing,
     /// The focus on a card or inside one.
     Card,
-    /// The focus on the card itself, not on its link or menu button,
-    /// which take that key for themselves.
+    /// The focus on the card itself, not inside it, in its open menu,
+    /// which takes that key for itself.
     CardItself,
 }
 
@@ -743,7 +744,7 @@ mod tests {
     }
 
     /// The keys that act on a card need the focus on one, and Enter on the
-    /// card itself: on its link or its menu button, Enter is theirs. The
+    /// card itself: inside it, in its open menu, Enter is the menu's. The
     /// keys that move, the arrows as the letters, reach the cards from
     /// anywhere: the focus goes only to cards.
     #[test]

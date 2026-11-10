@@ -43,6 +43,12 @@ window.tasks-pending {
   outline-offset: 2px;
 }
 
+/* The other controls (switches, rows in dialogs) keep Adwaita's ring, in
+   the same colour. */
+.tasks-pending :focus-visible {
+  outline-color: alpha({{text}}, 0.85);
+}
+
 /* Hero: the clock, with the weather on one side and the controls on the
    other. */
 .hero {
@@ -513,7 +519,7 @@ dialog.tasks-pending entry {
 }
 
 dialog.tasks-pending entry:focus-within {
-  border-color: {{accent}};
+  border-color: alpha({{text}}, 0.85);
   outline: none;
 }
 

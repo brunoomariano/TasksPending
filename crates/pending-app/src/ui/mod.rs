@@ -851,9 +851,13 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
         .margin_start(PAGE_SIDE)
         .margin_end(PAGE_SIDE)
         .build();
+    // Not focusable itself, though the cards inside it are: GTK would
+    // otherwise give the scroller the first focus, before the cards are
+    // drawn, and keep it there.
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
+        .focusable(false)
         .child(&page)
         .build();
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);

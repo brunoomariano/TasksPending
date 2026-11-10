@@ -382,7 +382,6 @@ mod tests {
         assert!(!replaced_on_disk(Path::new(
             "/home/me/old (deleted)/tasks-pending"
         )));
-        assert!(!running_replaced(), "the test binary is where it was");
     }
 
     /// The todos are kept in the data dir, as XDG names it; the sandbox

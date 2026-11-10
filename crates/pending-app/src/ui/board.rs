@@ -743,7 +743,7 @@ fn menu_button(ctx: &Rc<Ctx>, card: &CardView, place: Place) -> gtk::MenuButton 
 
 /// Once `menu` closes, the keyboard focus goes back to `card` when GTK
 /// left it nowhere, or on something inside the card: the focus is on
-/// cards only.
+/// cards only. A dialog the menu opened (Edit) keeps it.
 fn give_back_focus(menu: &gtk::MenuButton, card: &gtk::Box) {
     let Some(popover) = menu.popover() else {
         return;
@@ -759,6 +759,12 @@ fn give_back_focus(menu: &gtk::MenuButton, card: &gtk::Box) {
             let Some(root) = card.root() else {
                 return;
             };
+            if root
+                .downcast_ref::<adw::ApplicationWindow>()
+                .is_some_and(|window| window.visible_dialog().is_some())
+            {
+                return;
+            }
             let lost = root
                 .focus()
                 .is_none_or(|focus| focus != card && focus.is_ancestor(&card));

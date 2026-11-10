@@ -177,8 +177,8 @@ impl View {
         self.board.is_some() || !self.hidden.is_empty()
     }
 
-    /// "Settings", plus what the settings currently change.
-    pub fn settings_label(&self) -> String {
+    /// What the settings currently change, for the settings button.
+    pub fn changes(&self) -> Vec<String> {
         let mut changes = Vec::new();
         if let Some(board) = &self.board {
             changes.push(format!("showing {board}"));
@@ -186,11 +186,7 @@ impl View {
         if !self.hidden.is_empty() {
             changes.push(format!("{} hidden", self.hidden.len()));
         }
-        if changes.is_empty() {
-            "Settings".to_owned()
-        } else {
-            format!("Settings ({})", changes.join(", "))
-        }
+        changes
     }
 }
 
@@ -425,9 +421,9 @@ mod tests {
 
     /// The settings button says what the settings change.
     #[test]
-    fn labels_the_settings_with_what_they_change() {
+    fn says_what_the_settings_change() {
         let mut view = View::default();
-        assert_eq!(view.settings_label(), "Settings");
+        assert!(view.changes().is_empty());
         assert!(!view.is_filtering());
         view = View {
             board: Some("Work".to_owned()),
@@ -435,10 +431,10 @@ mod tests {
         };
         flip(&mut view.hidden, "board:Personal");
         flip(&mut view.hidden, "group:Work/jira");
-        assert_eq!(view.settings_label(), "Settings (showing Work, 2 hidden)");
+        assert_eq!(view.changes(), ["showing Work", "2 hidden"]);
         assert!(view.is_filtering());
         flip(&mut view.hidden, "group:Work/jira");
-        assert_eq!(view.settings_label(), "Settings (showing Work, 1 hidden)");
+        assert_eq!(view.changes(), ["showing Work", "1 hidden"]);
     }
 
     #[test]

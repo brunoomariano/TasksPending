@@ -1190,7 +1190,7 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
             Scene::Activity | Scene::Light | Scene::Omarchy | Scene::Todo | Scene::Keys => {
                 pick_along_the_stages(&ctx, &firsts, true)
             }
-            Scene::Board | Scene::Settings | Scene::Sources => {
+            Scene::Board | Scene::Settings => {
                 ctx.show_tab(Tab::Board);
                 for id in ids.into_iter().take(2) {
                     ctx.send(Command::SetMark { id, marked: true });
@@ -1204,7 +1204,6 @@ fn stage_scene(ctx: &Rc<Ctx>, scene: crate::Scene) {
         }
         let ctx = ctx.clone();
         gtk::glib::timeout_add_local_once(DIALOG_AFTER - SCENE_AFTER, move || match scene {
-            Scene::Sources => dialogs::show_sources(&ctx),
             Scene::Settings => dialogs::show_settings(&ctx),
             Scene::Snoozed => dialogs::show_snoozed(&ctx),
             Scene::Todo => dialogs::show_todo(&ctx, None),

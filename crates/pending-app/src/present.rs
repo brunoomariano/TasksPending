@@ -181,6 +181,32 @@ pub enum Tab {
     Board,
 }
 
+/// The settings button's tooltip: a source that needs a look (the
+/// sources are in Settings), what the view changes, and the key.
+pub fn settings_tooltip(view: &View, attention: bool) -> String {
+    let mut changes = Vec::new();
+    if attention {
+        changes.push("a source needs a look".to_owned());
+    }
+    changes.extend(view.changes());
+    let label = if changes.is_empty() {
+        "Settings".to_owned()
+    } else {
+        format!("Settings ({})", changes.join(", "))
+    };
+    crate::keymap::hinted(&label, KeyCommand::Settings)
+}
+
+impl Tab {
+    /// The tab Tab goes to from this one.
+    pub fn other(self) -> Tab {
+        match self {
+            Tab::Activity => Tab::Board,
+            Tab::Board => Tab::Activity,
+        }
+    }
+}
+
 /// A tab's button: its name and, for the Activity, how many cards it holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TabView {
@@ -433,7 +459,7 @@ fn stage_short_name(stage: Stage) -> &'static str {
     }
 }
 
-/// One source in the Sources dialog.
+/// One source as Settings lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceView {
     pub name: String,
@@ -1156,7 +1182,7 @@ fn activity(snapshot: &DashboardSnapshot, flags: &Flags) -> ActivityView {
     }
 }
 
-/// Every source as the Sources dialog lists it, in config order.
+/// Every source as Settings lists it, in config order.
 fn sources(snapshot: &DashboardSnapshot, icons: &HashMap<&str, Option<Icon>>) -> Vec<SourceView> {
     let board_of = |source: &str| {
         snapshot
@@ -1993,6 +2019,34 @@ mod tests {
 
     fn drawn(state: &ViewState, view: &View) -> BoardView {
         drawn_tab(state, view, Tab::Board)
+    }
+
+    /// The sources' state lives in Settings, so the settings button says
+    /// when a source needs a look, with what the view changes and its key.
+    #[test]
+    fn the_settings_button_says_a_source_needs_a_look() {
+        let mut view = View::default();
+        assert_eq!(settings_tooltip(&view, false), "Settings (Ctrl+,)");
+        assert_eq!(
+            settings_tooltip(&view, true),
+            "Settings (a source needs a look; Ctrl+,)"
+        );
+        view.board = Some("Work".to_owned());
+        assert_eq!(
+            settings_tooltip(&view, true),
+            "Settings (a source needs a look, showing Work; Ctrl+,)"
+        );
+        assert_eq!(
+            settings_tooltip(&view, false),
+            "Settings (showing Work; Ctrl+,)"
+        );
+    }
+
+    /// Tab goes from one tab to the other and back.
+    #[test]
+    fn tab_goes_to_the_other_tab() {
+        assert_eq!(Tab::Activity.other(), Tab::Board);
+        assert_eq!(Tab::Board.other(), Tab::Activity);
     }
 
     fn drawn_tab(state: &ViewState, view: &View, tab: Tab) -> BoardView {

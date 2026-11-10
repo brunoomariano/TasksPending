@@ -40,6 +40,7 @@ sha2 = "0.10"
 thiserror = "2.0"
 tokio = { version = "1.0", features = ["macros", "net", "rt-multi-thread", "signal"] }
 toml = "0.9"
+toml_edit = "0.25"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"

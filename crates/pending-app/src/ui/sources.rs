@@ -96,7 +96,8 @@ fn append_form(
         move |typed| form.borrow_mut().board = typed.to_owned()
     }));
     content.append(&text(
-        "Boards are the tabs of the page; a new name makes a new one.",
+        "The group is labelled with it, and Settings can show one board alone; a new name \
+         makes a new board.",
         &["dialog-note"],
     ));
 

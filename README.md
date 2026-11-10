@@ -15,6 +15,7 @@ A click on the icon (ringed) drops the window down, and the next sends it away. 
 ## What it shows
 
 - **One group per source, in your order.** GitHub, GitLab, Jira, Linear, Plane, Todoist, Google Calendar and iCal feeds, each with its logo. Inside a group, every stack is a filter you declare in the config; stacks collapse, and long ones show their first cards.
+- **Set up from the window.** Settings adds, changes, reorders and removes sources and their stacks, and sets their tokens. It writes the config file, keeping your comments, so the config stays a TOML file you can also edit or keep in a repository, and the tokens go to an env file only you can read. The daemon follows both within seconds, without a restart.
 - **What to do next.** GitHub pull requests are split by next action (review requested, returned to you, ready to merge, not approved yet, drafts), with review state, checks and comment counts on the card.
 - **Activity.** Send the cards you are working on to the Activity tab, a board of three stages: Picked, In Progress, Done / to mark. The window opens on it; the Board tab holds the groups, where the picked cards stay highlighted.
 - **One menu per card.** Every action sits behind a three-dot button on the card: send to Activity, move between stages, snooze, alert, and for a todo edit and delete.
@@ -25,7 +26,7 @@ A click on the icon (ringed) drops the window down, and the next sends it away. 
 - **What changed.** A small dot marks the cards that changed since you last looked.
 - **Omarchy's theme.** The window has its own palette, dark unless the system asks for light. On Omarchy, Settings can switch it to the theme Omarchy applied, and it changes with it.
 - **On Omarchy's bar.** Settings can put an icon on Omarchy's bar: a click drops the window down over whatever you are doing, on the page it was on, and the next click, or Esc, sends it away. `tasks-pending toggle` does the same from a key. An alert that rang while the window was away leaves a dot on the icon until the window comes to the front.
-- **Local only.** The daemon listens on this machine, reads tokens from the environment, and keeps your marks and snoozes in a state folder. The window reads it over loopback; it reaches the network itself only for the sources' logos, and for the providers when no daemon is running and it runs the sources in its own process.
+- **Local only.** The daemon listens on this machine, reads tokens from its env file, and keeps your marks and snoozes in a state folder. The window reads it over loopback; it reaches the network itself only for the sources' logos, and for the providers when no daemon is running and it runs the sources in its own process.
 
 <p align="center">
   <img src="docs/assets/tasks-pending-board.png" alt="The Board tab: one group of stacks per source, with the picked cards highlighted" width="49%">
@@ -34,7 +35,12 @@ A click on the icon (ringed) drops the window down, and the next sends it away. 
 
 <p align="center">
   <img src="docs/assets/tasks-pending-keys.png" alt="The Keys dialog: a search by what a key does over the keys of the window, of moving between cards and of the card in focus" width="49%">
-  <img src="docs/assets/tasks-pending-settings.png" alt="The Settings dialog: the sources first, each with its board, status and last fetch, then the board filter" width="49%">
+  <img src="docs/assets/tasks-pending-settings.png" alt="The Settings dialog: the sources by board, each with its kind, status, last fetch and switch, then the board filter and how often the sources refresh" width="49%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/tasks-pending-source.png" alt="A source's page in Settings: its name, board and refresh, its credentials, which show only whether a token is set, and its stacks" width="49%">
+  <img src="docs/assets/tasks-pending-stack.png" alt="A stack's page in Settings: what it shows, chosen among its kind's modes, its filters and the order of its cards" width="49%">
 </p>
 
 <p align="center">
@@ -82,7 +88,7 @@ make app              # the window; without a daemon it runs the sources itself
 curl http://127.0.0.1:61000/healthz
 ```
 
-Configure sources by copying `config.example.toml` to `~/.config/tasks-pending/config.toml`; without it the daemon serves a built-in sample source. See [docs/operations.md](docs/operations.md).
+Configure sources in Settings, or by copying `config.example.toml` to `~/.config/tasks-pending/config.toml`; without it the daemon serves a built-in sample source. See [docs/operations.md](docs/operations.md).
 
 `make deploy` builds a release, installs it under `~/.local` and restarts the daemon on this machine.
 

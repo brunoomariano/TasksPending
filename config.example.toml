@@ -1,6 +1,7 @@
 # TasksPending config. Copy to ~/.config/tasks-pending/config.toml
 # (or $XDG_CONFIG_HOME/tasks-pending/config.toml), or point
 # TASKS_PENDING_CONFIG / --config at it. Tokens and secret URLs never go here.
+# Settings in the window changes this file too, keeping these comments.
 
 # Default wait between refreshes of a source, in seconds.
 refresh_seconds = 300

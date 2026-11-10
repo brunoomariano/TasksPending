@@ -6,6 +6,7 @@ pub mod model;
 pub mod release;
 pub mod sample;
 pub mod sandbox;
+pub mod schema;
 pub mod snapshot;
 pub mod source;
 pub mod weather;

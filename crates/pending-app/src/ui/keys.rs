@@ -110,6 +110,23 @@ pub fn run(ctx: &Rc<Ctx>, command: Command) {
             let tab = ctx.model.borrow().tab;
             ctx.show_tab(tab.other());
         }
+        Command::Snoozed => dialogs::show_snoozed(ctx),
+        Command::OpenStacks => {
+            let collapsed = ctx
+                .model
+                .borrow()
+                .drawn
+                .as_ref()
+                .map(|page| present::collapsed_stacks(&page.groups))
+                .unwrap_or_default();
+            if !collapsed.is_empty() {
+                ctx.change_view(|view| {
+                    for key in &collapsed {
+                        view.collapsed.remove(key);
+                    }
+                });
+            }
+        }
         Command::SendAway => {
             ctx.escape();
         }
@@ -140,6 +157,18 @@ pub fn run(ctx: &Rc<Ctx>, command: Command) {
 /// or to the first one.
 fn move_focus(ctx: &Rc<Ctx>, step: Move) {
     let from = board::focused(ctx).map(|(spot, _)| spot);
+    // Down from the last card a stack shows, while it hides more, opens
+    // the stack and goes on to the first card it was hiding.
+    if step == Move::Down
+        && let Some(spot) = from
+        && let Some(key) = board::opens(ctx, spot)
+    {
+        ctx.change_view(|view| {
+            view.open_columns.insert(key);
+        });
+        board::focus_card(ctx, (spot.0, spot.1 + 1), true);
+        return;
+    }
     if let Some(spot) = nav::step(&board::column_lengths(ctx), from, step) {
         board::focus_card(ctx, spot, true);
     }

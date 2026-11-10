@@ -4,8 +4,8 @@
 
 ### Changed
 
-- The keyboard moves only between the cards. The arrows do what **h**/**j**/**k**/**l** do from anywhere in the window, and the focus no longer lands on the buttons, the tabs, a stack's header, an empty stack or a card's link and menu button; the mouse clicks them as before. **Tab** (or **Shift+Tab**) switches between the Activity and the Board. The card in focus wears a ring in the text colour, so it no longer looks like a picked card or the open tab.
-- The sources are at the top of Settings, and the Sources button and its **s** key are gone: the gear shows the warning icon while a source needs a look.
+- The keyboard moves only between the cards. The arrows do what **h**/**j**/**k**/**l** do from anywhere in the window, and the focus no longer lands on the buttons, the tabs, a stack's header, an empty stack or a card's link and menu button; the mouse clicks them as before. **Tab** (or **Shift+Tab**) switches between the Activity and the Board. The card in focus wears a ring in the text colour, as do the controls in dialogs, so it no longer looks like a picked card or the open tab. What the focus no longer reaches has keys: **j** or **↓** on the last card a stack shows opens the rest, **c** opens the collapsed stacks and **s** lists the snoozed cards.
+- The sources are at the top of Settings, and the Sources button is gone, its **s** key now listing the snoozed cards: the gear shows the warning icon while a source needs a look.
 
 ### Fixed
 

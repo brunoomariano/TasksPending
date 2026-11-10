@@ -20,6 +20,7 @@ use tracing::{info, warn};
 
 pub mod cache;
 pub mod config;
+pub mod envfile;
 pub mod exclude;
 pub mod live;
 pub mod looks;
@@ -48,6 +49,10 @@ pub trait Dashboard: Send + Sync {
     /// Brings a snoozed card back now.
     fn wake(&self, _id: &str) -> Result<(), snoozes::SnoozeError> {
         Err(snoozes::SnoozeError::Unsupported)
+    }
+    /// The files the dashboard follows: none, unless it reads a config.
+    fn files(&self) -> pending_core::api::Files {
+        pending_core::api::Files::default()
     }
     /// Records that the user is looking at the dashboard now.
     fn look(&self) {}
@@ -90,6 +95,10 @@ impl Dashboard for live::Live {
 
     fn look(&self) {
         live::Live::look(self);
+    }
+
+    fn files(&self) -> pending_core::api::Files {
+        live::Live::files(self)
     }
 }
 

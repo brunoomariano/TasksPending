@@ -80,6 +80,8 @@ pub struct Model {
     pub weather: Option<WeatherReport>,
     /// A newer published version, when the daemon knows of one.
     pub update: Option<String>,
+    /// The config file and the env file the dashboard follows, once it said.
+    pub files: Option<pending_client::Files>,
     pub source_line: String,
     pub icons: icons::Cache,
     looks: LookThrottle,
@@ -655,6 +657,7 @@ pub fn run(
             refresh_hold: None,
             weather: None,
             update: None,
+            files: None,
             source_line: backend.source.describe(),
             icons: icons::Cache::default(),
             looks: LookThrottle::default(),
@@ -944,6 +947,7 @@ fn build_window(app: &adw::Application, ctx: &Rc<Ctx>) {
     ctx.looked();
     ctx.send(Command::Weather);
     ctx.send(Command::Version);
+    ctx.send(Command::Files);
     ctx.redraw(true);
 }
 
@@ -1054,6 +1058,7 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
                     ctx.model.borrow_mut().update = version;
                     ctx.refresh_controls();
                 }
+                Event::Files(files) => ctx.model.borrow_mut().files = files,
             }
         }
     });

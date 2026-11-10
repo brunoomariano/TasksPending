@@ -80,7 +80,7 @@ refresh_seconds = 300        # how often each source refreshes
 timeout_seconds = 60         # a slower refresh counts as a failure
 
 [[sources]]
-name = "agenda"              # unique; shown in the window and the Sources dialog
+name = "agenda"              # unique; shown in the window and in Settings
 kind = "google"              # github, gitlab, jira, linear, plane, google, ical, todoist, sample
 board = "Personal"           # area: the board filter in Settings
 icon = "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/google-calendar.svg"
@@ -101,7 +101,7 @@ timeout_seconds = 180        # per-source override (Plane is slow)
   state = ["In Review"]
 ```
 
-Every key, per kind, is in [`config.example.toml`](../config.example.toml) and [operations.md](operations.md). Saved changes are picked up within a couple of seconds, without restarting; a file with an error is reported in the **Sources** dialog while the previous config keeps running. Icons can come from [Dashboard Icons](https://dashboardicons.com) (`icon`, plus `icon_dark` for dark themes).
+Every key, per kind, is in [`config.example.toml`](../config.example.toml) and [operations.md](operations.md). Saved changes are picked up within a couple of seconds, without restarting; a file with an error is reported at the top of **Settings** while the previous config keeps running. Icons can come from [Dashboard Icons](https://dashboardicons.com) (`icon`, plus `icon_dark` for dark themes).
 
 ## 3. Tokens
 
@@ -186,5 +186,5 @@ The last successful data of each source is cached in `$XDG_STATE_HOME/tasks-pend
 - **GitHub works in the window without a daemon but not with one**: `gh` is not on the service's PATH; set `GITHUB_TOKEN` in the env file.
 - **No weather beside the clock on Omarchy**: the widget needs `omarchy-weather-status` to work for the daemon. Run it in a terminal first: it fails when offline or when the place is unknown (`omarchy-weather-location --set <name>`). The systemd service's PATH includes `/usr/share/omarchy/bin` and `~/.local/share/omarchy/bin`; a service file installed before that keeps the old PATH until you install again. A failure is retried after a minute, and the widget is hidden in windows narrower than 1440 px.
 - **Google Calendar fails in the daemon**: the service must run inside your desktop session (it does when started with `systemctl --user` after login).
-- **Config errors**: the **Sources** dialog shows the message, naming the file, source and stack.
+- **Config errors**: the top of **Settings** shows the message, naming the file, source and stack.
 - **`tasks-pending upgrade` refuses**: it only upgrades the release the installer unpacked outside Arch, `~/.local/lib/tasks-pending/bin/tasks-pending`. On Arch the installer put in the package, which upgrades by running the install command again (the refusal prints it) or with `sudo pacman -U`; a source install upgrades with `make deploy`.

@@ -229,4 +229,15 @@ async fn an_env_file_change_rebuilds_the_sources() {
     assert!(!live.reload_if_changed(), "and is now the one in use");
     settle().await;
     assert_eq!(source_names(&live), vec!["first"]);
+
+    // Saved as something that is not text, it keeps the values in use.
+    std::fs::write(&env_file, b"TODOIST_API_TOKEN=\xff\n").unwrap();
+    assert!(
+        !live.reload_if_changed(),
+        "an unreadable env file changes nothing"
+    );
+    std::fs::write(&env_file, "TODOIST_API_TOKEN=y\n").unwrap();
+    assert!(live.reload_if_changed(), "readable again, it is read");
+    std::fs::remove_file(&env_file).unwrap();
+    assert!(live.reload_if_changed(), "and gone, it is gone");
 }

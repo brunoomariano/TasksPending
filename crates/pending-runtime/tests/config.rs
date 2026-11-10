@@ -1003,6 +1003,20 @@ fn writes_through_links_and_keeps_secrets_private() {
     );
     assert_eq!(std::fs::read_to_string(&repo).unwrap(), "a = 2\n");
 
+    // A link made before its file: the file is written where it points.
+    let later = dir.join("dotfiles").join("later").join("env");
+    let dangling = dir.join("env-link");
+    std::os::unix::fs::symlink("dotfiles/later/env", &dangling).unwrap();
+    write_file(&dangling, "TOKEN=y\n", None, true).expect("through a dangling link");
+    assert!(
+        std::fs::symlink_metadata(&dangling)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "the link stays"
+    );
+    assert_eq!(std::fs::read_to_string(&later).unwrap(), "TOKEN=y\n");
+
     let env = dir.join("private").join("env");
     write_file(&env, "TOKEN=x\n", None, true).expect("a new env file");
     let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;

@@ -12,6 +12,7 @@ chrono.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 toml.workspace = true
+toml_edit.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

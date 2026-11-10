@@ -1869,7 +1869,7 @@ mod tests {
         assert_eq!(tabs(None)[0].count, None);
     }
 
-    /// The board filter and hidden items leave groups out; the picked cards
+    /// The board filter leaves groups out; the picked cards
     /// stay in the Activity area whatever the filter, in picking order,
     /// skipping ids that are not on the boards.
     #[test]

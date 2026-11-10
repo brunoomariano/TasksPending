@@ -252,9 +252,16 @@ impl EnvEdit {
 
     /// Sets `var` to `value` under its first name, or removes it when
     /// there is no value; either way its other names go, so the value
-    /// written is the one read.
+    /// written is the one read. A secret typed blank is refused: only
+    /// Remove takes one out.
     pub fn set(&mut self, var: &Var, value: Option<&str>) -> Result<(), Refusal> {
-        let value = value.map(str::trim).filter(|value| !value.is_empty());
+        let value = value.map(str::trim);
+        if var.secret && value.is_some_and(str::is_empty) {
+            return Err(Refusal::Invalid(
+                "a secret cannot be blank; Remove takes it out".to_owned(),
+            ));
+        }
+        let value = value.filter(|value| !value.is_empty());
         if value.is_some_and(|value| value.contains(['\n', '\r'])) {
             return Err(Refusal::Invalid("a value is one line".to_owned()));
         }
@@ -762,6 +769,15 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "# Plane\nPLANE_API_KEY=new\n"
         );
+        assert_eq!(
+            env.set(key, Some("  ")),
+            Err(Refusal::Invalid(
+                "a secret cannot be blank; Remove takes it out".into()
+            ))
+        );
+        assert_eq!(env.set_as(key), Some("PLANE_API_KEY"), "still set");
+        env.set(address, Some(" ")).unwrap();
+        assert_eq!(env.value(address), None, "an address typed blank goes");
         env.set(key, None).unwrap();
         assert_eq!(env.set_as(key), None);
         assert_eq!(

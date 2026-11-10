@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
+
+Settings sets the sources, their stacks and their tokens up, writing the config file with its comments kept and the env file, and the keyboard moves only between the cards.
 
 ### Features
 

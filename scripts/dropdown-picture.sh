@@ -5,7 +5,8 @@
 # bar icon runs), pictures the focused monitor with grim, sends it away,
 # quits the sandbox through its `quit` action and goes back to the
 # workspace it started on. A TasksPending window already running is kept
-# out of the picture meanwhile, and put back.
+# out of the picture meanwhile, and put back. Should a step fail, the
+# sandbox it started is stopped, by its PID, before that.
 set -euo pipefail
 
 out=${1:?usage: dropdown-picture.sh <picture.png>}
@@ -31,8 +32,13 @@ back=$(hyprctl -j activeworkspace | jq -r .id)
 # in another special workspace until the picture is taken.
 aside=$(hyprctl -j clients |
   jq -r '.[] | select(.workspace.name == "special:tasks-pending") | .address')
+# The sandbox's PID while it runs, for a step that fails before it quits.
+pid=
 restore() {
   local address
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" || true
+  fi
   for address in $aside; do
     move "$address" special:tasks-pending || true
   done
@@ -73,4 +79,5 @@ grim -o "$monitor" "$out"
 action toggle
 sleep 0.5
 action quit
+pid=
 echo "Saved $out ($monitor)."

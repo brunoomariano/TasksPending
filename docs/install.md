@@ -101,7 +101,7 @@ timeout_seconds = 180        # per-source override (Plane is slow)
   state = ["In Review"]
 ```
 
-Every key, per kind, is in [`config.example.toml`](../config.example.toml) and [operations.md](operations.md). Saved changes are picked up within a couple of seconds, without restarting; a file with an error is reported at the top of **Settings** while the previous config keeps running. Icons can come from [Dashboard Icons](https://dashboardicons.com) (`icon`, plus `icon_dark` for dark themes).
+Every key, per kind, is in [`config.example.toml`](../config.example.toml) and [operations.md](operations.md). **Settings** (the gear in the window) adds, changes, reorders and removes sources and stacks too, writing this file and keeping its comments ([operations.md](operations.md#the-window)). Saved changes are picked up within a couple of seconds, without restarting; a file with an error is reported at the top of **Settings** while the previous config keeps running. Icons can come from [Dashboard Icons](https://dashboardicons.com) (`icon`, plus `icon_dark` for dark themes).
 
 ## 3. Tokens
 
@@ -114,7 +114,7 @@ chmod 600 ~/.config/tasks-pending/env
 $EDITOR ~/.config/tasks-pending/env
 ```
 
-After changing it, restart the user service (`tasks-pending setup` does that too).
+**Settings** sets them too, on each source's page, and keeps the file readable only by you; a secret is never shown there, only whether it is set. The daemon reads the file again within a couple of seconds of a change, by hand or from Settings, so there is nothing to restart.
 
 | Source | Variables |
 |---|---|
@@ -129,7 +129,7 @@ After changing it, restart the user service (`tasks-pending setup` does that too
 
 Addresses that receive a token (`GITLAB_BASE_URL`, `JIRA_BASE_URL`, `LINEAR_API_URL`) must start with `https://`, so the token is never sent in the clear; `http://` is accepted only for `localhost`.
 
-The window run without a daemon (`tasks-pending app --no-daemon`, or when none answers) uses your shell's environment instead.
+The window run without a daemon (`tasks-pending app --no-daemon`, or when none answers) uses your shell's environment, with the env file's values over it.
 
 ## 4. The window
 
@@ -151,7 +151,7 @@ o.bind("SUPER + ALT + T", "TasksPending", "omarchy-launch-or-focus TasksPending 
 systemctl --user enable --now tasks-pending   # start now and at login
 systemctl --user status tasks-pending
 journalctl --user -u tasks-pending -f         # logs
-systemctl --user restart tasks-pending        # after editing the env file
+systemctl --user restart tasks-pending        # after changing the unit (below)
 ```
 
 The daemon only accepts loopback listen addresses, and its API only answers requests addressed to `localhost`, `127.0.0.1` or `[::1]`. Its address in a browser shows one line pointing at the app; there is no web page.
@@ -176,13 +176,13 @@ For a local install, replace `/usr/bin` with the absolute path to your own `task
 - An install or upgrade cut short (a power cut, a killed terminal) can leave the previous release in `~/.local/lib/tasks-pending.previous`. When `~/.local/lib/tasks-pending` is missing, move it back and run its `scripts/install.sh --start`; a `.staged` or `.previous` directory beside a working release is removed by the next run.
 - Uninstall: `./scripts/install.sh --uninstall` or `make uninstall` (stops and removes the service, the launcher entry and the executable or its link; your config, env file, cache and todos stay, and so does the release directory of a release install, `~/.local/lib/tasks-pending`, which you remove by hand). Arch: `sudo pacman -R tasks-pending-bin`.
 
-The last successful data of each source is cached in `$XDG_STATE_HOME/tasks-pending/` (`~/.local/state/tasks-pending/`), so the window has cards right after a restart. The window's own choices (board filter, collapsed stacks, hidden items, auto-refresh) are in `app-view.json` there. The todos are in `$XDG_DATA_HOME/tasks-pending/todos.sqlite3` (`~/.local/share/tasks-pending/todos.sqlite3`), beside the examples the installer puts there; uninstalling removes the examples and leaves the todos.
+The last successful data of each source is cached in `$XDG_STATE_HOME/tasks-pending/` (`~/.local/state/tasks-pending/`), so the window has cards right after a restart. The window's own choices (board filter, theme, collapsed stacks, the stages of the Activity) are in `app-view.json` there. The todos are in `$XDG_DATA_HOME/tasks-pending/todos.sqlite3` (`~/.local/share/tasks-pending/todos.sqlite3`), beside the examples the installer puts there; uninstalling removes the examples and leaves the todos.
 
 ## Troubleshooting
 
 - **The window says the dashboard is unavailable**: it could reach neither the daemon nor start the sources; the line under the controls says which. `systemctl --user status tasks-pending`; if port 61000 is taken, use another port (see "Manage the daemon").
 - **The window shows "no daemon running"**: it is showing the sources from your shell; start the service with `tasks-pending setup` to get background refreshes.
-- **A source shows "not configured"**: its variables are missing from the env file; fix it and restart the service.
+- **A source shows "not configured"**: its variables are missing from the env file; set them on its page in **Settings**, or in the file, and the daemon reads them within seconds.
 - **GitHub works in the window without a daemon but not with one**: `gh` is not on the service's PATH; set `GITHUB_TOKEN` in the env file.
 - **No weather beside the clock on Omarchy**: the widget needs `omarchy-weather-status` to work for the daemon. Run it in a terminal first: it fails when offline or when the place is unknown (`omarchy-weather-location --set <name>`). The systemd service's PATH includes `/usr/share/omarchy/bin` and `~/.local/share/omarchy/bin`; a service file installed before that keeps the old PATH until you install again. A failure is retried after a minute, and the widget is hidden in windows narrower than 1440 px.
 - **Google Calendar fails in the daemon**: the service must run inside your desktop session (it does when started with `systemctl --user` after login).

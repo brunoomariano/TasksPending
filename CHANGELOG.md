@@ -2,7 +2,16 @@
 
 ## Unreleased
 
+### Features
+
+- Settings sets the sources up. **Add a source…** adds one of any kind, and its page changes its name, board, refresh, timeout and icons, moves it within its board, switches it off and removes it; its stacks are set up the same way, on a page built from what their kind reads. **Refresh every** and **Give up on a refresh after** set the global `refresh_seconds` and `timeout_seconds`. Settings writes the config file the dashboard follows, keeping its comments and everything it does not change, and only after checking that the new text loads; it writes nothing over a file that changed since it was shown, and follows a link to where the file is kept, a dotfiles repository for instance.
+- Settings sets the credentials too, on each source's page, in the env file, which it keeps readable only by you. A secret is never shown, only whether it is set and under which name.
+- The daemon reads the env file again whenever it reads the config, so a changed token needs no restart. `GET /api/v1/files` names the config file and the env file it follows, and Settings needs a daemon of 0.10.0 or newer to change them.
+
 ### Changed
+
+- Settings' switches turn sources and stacks on or off in the config (`enabled`), for the daemon too, instead of hiding them from the window. What 0.9 hid shows again after the upgrade: switch it off in Settings. The gear's dot now means only that the board filter shows one board.
+- The window no longer asks for refreshes on its own: Auto-refresh is gone, and the daemon refreshes each source every `refresh_seconds` (5 minutes unless the config says otherwise), which Settings sets. The Refresh button works as before.
 
 - The keyboard moves only between the cards. The arrows do what **h**/**j**/**k**/**l** do from anywhere in the window, and the focus no longer lands on the buttons, the tabs, a stack's header, an empty stack or a card's link and menu button; the mouse clicks them as before. **Tab** (or **Shift+Tab**) switches between the Activity and the Board. The card in focus wears a ring in the text colour, as do the controls in dialogs, so it no longer looks like a picked card or the open tab. What the focus no longer reaches has keys: **j** or **↓** on the last card a stack shows opens the rest, **c** opens the collapsed stacks and **s** lists the snoozed cards.
 - The sources are at the top of Settings, and the Sources button is gone, its **s** key now listing the snoozed cards: the gear shows the warning icon while a source needs a look.

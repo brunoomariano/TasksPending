@@ -9,7 +9,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use pending_core::api::{DASHBOARD_HEADER, Health, REFRESH_COOLDOWN, RefreshWait};
+use pending_core::api::{DASHBOARD_HEADER, Files, Health, REFRESH_COOLDOWN, RefreshWait};
 use pending_core::{DashboardSnapshot, sandbox_snapshot};
 use pending_runtime::Dashboard;
 use pending_runtime::config::{Origin, cache_path};
@@ -223,6 +223,7 @@ fn app_with(
         .route("/api/v1/marks", post(set_mark))
         .route("/api/v1/snooze", post(set_snooze))
         .route("/api/v1/look", post(look))
+        .route("/api/v1/files", get(files))
         .merge(weather::routes(weather))
         .merge(update::routes(update))
         .layer(axum::middleware::from_fn(local_hosts_only))
@@ -274,6 +275,11 @@ async fn healthz() -> Json<Health> {
 
 async fn snapshot(State(state): State<AppState>) -> Json<DashboardSnapshot> {
     Json(state.dashboard.snapshot())
+}
+
+/// The config file and the env file the dashboard follows, for Settings.
+async fn files(State(state): State<AppState>) -> Json<Files> {
+    Json(state.dashboard.files())
 }
 
 #[derive(Debug, Serialize)]
@@ -548,6 +554,36 @@ mod tests {
         let report: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(report["current"], env!("CARGO_PKG_VERSION"));
         assert!(report["available"].is_null());
+    }
+
+    /// The files route says which config and env file the dashboard
+    /// follows, and nothing for one that follows none.
+    #[tokio::test]
+    async fn the_files_route_names_the_files_settings_edits() {
+        struct Following;
+        impl Dashboard for Following {
+            fn snapshot(&self) -> DashboardSnapshot {
+                sandbox_snapshot()
+            }
+            fn refresh_now(&self) {}
+            fn files(&self) -> Files {
+                Files {
+                    config: Some(PathBuf::from("/home/me/.config/tasks-pending/config.toml")),
+                    env: Some(PathBuf::from("/home/me/.config/tasks-pending/env")),
+                }
+            }
+        }
+        let (status, body) = get(test_app(Following), "/api/v1/files").await;
+        assert_eq!(status, StatusCode::OK);
+        let files: Files = serde_json::from_str(&body).unwrap();
+        assert_eq!(files, Following.files());
+
+        let (status, body) = get(test_app(idle_aggregator()), "/api/v1/files").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_str::<Files>(&body).unwrap(),
+            Files::default()
+        );
     }
 
     fn idle_aggregator() -> Aggregator {

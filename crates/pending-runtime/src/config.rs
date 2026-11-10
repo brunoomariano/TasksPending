@@ -44,6 +44,20 @@ pub enum Origin {
     },
 }
 
+/// Why a file was not written.
+#[derive(Debug, Error)]
+pub enum WriteError {
+    /// Someone else changed the file since it was read; writing would
+    /// undo what they did.
+    #[error("{} changed since it was read", .0.display())]
+    Changed(PathBuf),
+    #[error("writing {}: {source}", path.display())]
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
 /// Sources to schedule plus the refresh timeout.
 #[derive(Debug)]
 pub struct Plan {
@@ -193,6 +207,84 @@ pub fn load_plan_with(
     }
     let plan = plan(&config, &path, env, gh)?;
     Ok((plan, Origin::File(path)))
+}
+
+/// Whether `text` loads as the config at `path` would: TOML, the keys a
+/// config has, and each stack's keys for its source's kind, regular
+/// expressions included. Nothing is fetched and no credential is looked
+/// up, so a source missing its token still passes.
+pub fn check(text: &str, path: &Path) -> Result<AppConfig, LoadError> {
+    let path = path.to_owned();
+    let config: AppConfig = match toml::from_str(text) {
+        Ok(config) => config,
+        Err(source) => return Err(LoadError::Parse { path, source }),
+    };
+    if let Err(source) = config.validate() {
+        return Err(LoadError::Invalid { path, source });
+    }
+    plan(&config, &path, &|_| None, &|| None)?;
+    Ok(config)
+}
+
+/// Writes `text` to `path` in one step: into a file beside it, then put in
+/// its place, so the daemon, which rereads the file, never sees half of
+/// it. `was` is the text it held when read (`None`: there was no file);
+/// when it holds something else now, nothing is written. A link is
+/// followed, so a config kept in a dotfiles repository stays there.
+/// `private` files (the env file) are made readable by their owner only,
+/// in a folder only they can open when one is made; the others keep their
+/// permissions.
+pub fn write_file(
+    path: &Path,
+    text: &str,
+    was: Option<&str>,
+    private: bool,
+) -> Result<(), WriteError> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
+    let io = |path: &Path| {
+        let path = path.to_owned();
+        move |source| WriteError::Io { path, source }
+    };
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    let now = match std::fs::read_to_string(&path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(io(&path)(error)),
+    };
+    if now.as_deref() != was {
+        return Err(WriteError::Changed(path));
+    }
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(if private { 0o700 } else { 0o755 })
+        .create(dir)
+        .map_err(io(dir))?;
+    let mode = if private {
+        0o600
+    } else {
+        std::fs::metadata(&path).map_or(0o644, |meta| meta.permissions().mode() & 0o7777)
+    };
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let beside = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&beside);
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(&beside)
+        .and_then(|mut file| {
+            file.write_all(text.as_bytes())?;
+            file.sync_all()
+        })
+        .and_then(|()| std::fs::rename(&beside, &path));
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(&beside);
+        return Err(io(&path)(error));
+    }
+    Ok(())
 }
 
 fn plan(

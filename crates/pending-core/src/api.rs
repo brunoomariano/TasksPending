@@ -45,6 +45,17 @@ pub struct Health {
     pub version: String,
 }
 
+/// What `GET /api/v1/files` answers: the files the dashboard follows,
+/// which Settings edits. `None` where the environment names no place for
+/// one (no `HOME`), and for the sandbox, which has neither.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Files {
+    /// The config file, whether or not it exists yet.
+    pub config: Option<std::path::PathBuf>,
+    /// The env file with the sources' tokens, whether or not it exists.
+    pub env: Option<std::path::PathBuf>,
+}
+
 /// What `GET /api/v1/version` answers.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct VersionReport {

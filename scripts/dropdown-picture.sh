@@ -4,7 +4,8 @@
 # only), drops it down through its own `toggle` action (the code path the
 # bar icon runs), pictures the focused monitor with grim, sends it away,
 # quits the sandbox through its `quit` action and goes back to the
-# workspace it started on.
+# workspace it started on. A TasksPending window already running is kept
+# out of the picture meanwhile, and put back.
 set -euo pipefail
 
 out=${1:?usage: dropdown-picture.sh <picture.png>}
@@ -20,8 +21,27 @@ dispatch() {
   fi
 }
 
+move() {
+  dispatch "hl.dsp.window.move({ workspace = \"$2\", window = \"address:$1\", follow = false })"
+}
+
 back=$(hyprctl -j activeworkspace | jq -r .id)
-trap 'dispatch "hl.dsp.focus({ workspace = \"$back\" })" || true' EXIT
+# A TasksPending already running drops down in the same special workspace,
+# at the same place, and its cards would show through the sandbox: it waits
+# in another special workspace until the picture is taken.
+aside=$(hyprctl -j clients |
+  jq -r '.[] | select(.workspace.name == "special:tasks-pending") | .address')
+restore() {
+  local address
+  for address in $aside; do
+    move "$address" special:tasks-pending || true
+  done
+  dispatch "hl.dsp.focus({ workspace = \"$back\" })" || true
+}
+trap restore EXIT
+for address in $aside; do
+  move "$address" special:tasks-pending-aside
+done
 dispatch 'hl.dsp.focus({ workspace = "empty" })'
 sleep 0.5
 

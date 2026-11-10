@@ -610,24 +610,6 @@ button.filter:checked {
   font-weight: 600;
 }
 
-.switch-row {
-  padding: 5px 0;
-}
-
-.switch-row.inherited {
-  opacity: 0.45;
-}
-
-.switch-row.board-row {
-  font-weight: 600;
-}
-
-.visibility-board.after {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid {{border}};
-}
-
 .tasks-pending button.control.wake {
   min-height: 30px;
   padding: 0 12px;

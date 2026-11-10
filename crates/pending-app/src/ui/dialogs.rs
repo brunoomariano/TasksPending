@@ -14,17 +14,14 @@ use super::{Ctx, wrapped as text};
 use crate::backend::Command;
 use crate::omarchy_bar;
 use crate::present::{
-    BarState, BoardSwitches, Choice, Page, SwitchView, bar_choices, bar_note, bar_view,
-    board_choices, interval_choices, switches, theme_choices, theme_note, todo_dialog_words,
-    todo_note,
+    BarState, Choice, Page, bar_choices, bar_note, bar_view, board_choices, theme_choices,
+    theme_note, todo_dialog_words, todo_note,
 };
-use crate::view::{View, flip};
+use crate::view::View;
 
 /// Every dialog's width: enough for a source's message or a stack's name
 /// on one line, and the same for all three so they open in one place.
 const DIALOG_WIDTH: i32 = 600;
-/// How far each level of the show/hide tree is set in from the one above.
-const INDENT: i32 = 18;
 
 /// A dialog titled `title` over the window, holding `content`.
 fn present(ctx: &Rc<Ctx>, title: &str, content: &gtk::Box) {
@@ -254,10 +251,8 @@ pub fn show_todo(ctx: &Rc<Ctx>, editing: Option<&str>) {
     show_over(ctx, &dialog);
 }
 
-/// Settings: which board to show, the auto-refresh interval, the theme,
-/// the icon on Omarchy's bar (where Omarchy's shell is), and what to show
-/// or hide. Rebuilt on each change, so a hidden board greys out its
-/// groups and stacks.
+/// Settings: which board to show, the theme and the icon on Omarchy's bar
+/// (where Omarchy's shell is). Rebuilt on each change.
 pub fn show_settings(ctx: &Rc<Ctx>) {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
     fill_settings(ctx, &content);
@@ -320,13 +315,6 @@ fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) 
         board_choices(&snapshot, &view),
         |view, board| view.board = board,
     ));
-    content.append(&heading("Auto-refresh"));
-    content.append(&pills(
-        ctx,
-        &rebuild,
-        interval_choices(&view),
-        |view, minutes| view.auto_refresh_minutes = minutes,
-    ));
     content.append(&heading("Theme"));
     content.append(&pills(
         ctx,
@@ -342,8 +330,6 @@ fn fill_settings_with(ctx: &Rc<Ctx>, content: &gtk::Box, rebuild: Rc<dyn Fn()>) 
         content.append(&bar_pills(ctx, &rebuild, on));
         content.append(&text(&bar_note(&state), &["dialog-note"]));
     }
-    content.append(&heading("Show or hide"));
-    content.append(&visibility(ctx, &rebuild, &switches(&snapshot, &view)));
 }
 
 /// A pill for each of `choices`; choosing one applies it with `set`.
@@ -520,93 +506,9 @@ async fn run(argv: &[&str]) -> Result<(bool, String, String), String> {
     ))
 }
 
-/// The show/hide switches: each board, its groups under it, and their
-/// stacks under those.
-fn visibility(ctx: &Rc<Ctx>, rebuild: &Rc<dyn Fn()>, boards: &[BoardSwitches]) -> gtk::Box {
-    let tree = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    for (index, board) in boards.iter().enumerate() {
-        let board_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        board_box.add_css_class("visibility-board");
-        if index > 0 {
-            board_box.add_css_class("after");
-        }
-        board_box.append(&switch_row(ctx, rebuild, &board.board, None, true));
-        for group in &board.groups {
-            let group_box = gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .margin_start(INDENT)
-                .build();
-            let logo = source_icon(ctx, group.icon.as_ref(), size::CONTROL);
-            group_box.append(&switch_row(ctx, rebuild, &group.group, Some(logo), false));
-            for stack in &group.stacks {
-                let row = switch_row(ctx, rebuild, stack, None, false);
-                row.set_margin_start(INDENT);
-                group_box.append(&row);
-            }
-            board_box.append(&group_box);
-        }
-        tree.append(&board_box);
-    }
-    tree
-}
-
 fn flow_child(widget: &impl IsA<gtk::Widget>) -> gtk::FlowBoxChild {
     gtk::FlowBoxChild::builder()
         .child(widget)
         .focusable(false)
         .build()
-}
-
-/// The row for `switch`, after `prefix` (a logo) when there is one.
-fn switch_row(
-    ctx: &Rc<Ctx>,
-    rebuild: &Rc<dyn Fn()>,
-    switch: &SwitchView,
-    prefix: Option<gtk::Widget>,
-    is_board: bool,
-) -> gtk::Box {
-    let SwitchView {
-        label,
-        key,
-        on,
-        inherited,
-    } = switch.clone();
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    row.add_css_class("switch-row");
-    if inherited {
-        row.add_css_class("inherited");
-    }
-    if is_board {
-        row.add_css_class("board-row");
-    }
-    let name = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(8)
-        .hexpand(true)
-        .build();
-    if let Some(prefix) = prefix {
-        name.append(&prefix);
-    }
-    let text = text(&label, &[]);
-    text.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    text.set_wrap(false);
-    name.append(&text);
-    row.append(&name);
-    let switch = gtk::Switch::builder()
-        .active(on)
-        .sensitive(!inherited)
-        .valign(gtk::Align::Center)
-        .build();
-    {
-        let ctx = ctx.clone();
-        let rebuild = rebuild.clone();
-        switch.connect_state_set(move |_, _| {
-            let key = key.clone();
-            ctx.change_view(|view| flip(&mut view.hidden, &key));
-            rebuild();
-            gtk::glib::Propagation::Proceed
-        });
-    }
-    row.append(&switch);
-    row
 }

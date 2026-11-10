@@ -30,8 +30,8 @@ use crate::backend::{self, Command, Event, spawn_worker};
 use crate::dropdown::{self, Close, Hyprland, Toggle};
 use crate::omarchy_bar;
 use crate::present::{
-    BarState, BoardView, CardAction, CardView, Page, Tab, Timer, auto_refresh_every, board_view,
-    lasting, on_timer, page, refreshed,
+    BarState, BoardView, CardAction, CardView, Page, Tab, Timer, board_view, lasting, on_timer,
+    page, refreshed,
 };
 use crate::session::{Session, Todos};
 use crate::snooze::until;
@@ -85,8 +85,6 @@ pub struct Model {
     pub source_line: String,
     pub icons: icons::Cache,
     looks: LookThrottle,
-    /// The auto-refresh timer, replaced when the interval changes.
-    auto_refresh: Option<gtk::glib::SourceId>,
     /// Omarchy's theme as last read, while the window follows it.
     pub omarchy: Option<Result<OmarchyTheme, String>>,
     /// The icon on Omarchy's bar while Omarchy puts it on or takes it
@@ -165,22 +163,16 @@ impl Ctx {
 
     /// Changes the view, remembers it and redraws.
     pub fn change_view(self: &Rc<Self>, change: impl FnOnce(&mut View)) {
-        let (interval, theme) = {
+        let theme = {
             let mut model = self.model.borrow_mut();
-            let before = (model.view.auto_refresh_minutes, model.view.theme);
+            let before = model.view.theme;
             change(&mut model.view);
             if let Some(path) = &model.view_path {
                 model.view.save(path);
             }
-            (
-                (before.0, model.view.auto_refresh_minutes),
-                (before.1, model.view.theme),
-            )
+            (before, model.view.theme)
         };
         self.redraw(true);
-        if interval.0 != interval.1 {
-            schedule_auto_refresh(self);
-        }
         if theme.0 != theme.1 {
             self.restyle();
         }
@@ -661,7 +653,6 @@ pub fn run(
             source_line: backend.source.describe(),
             icons: icons::Cache::default(),
             looks: LookThrottle::default(),
-            auto_refresh: None,
             omarchy: None,
             bar_change: None,
             bar_wanted: None,
@@ -748,7 +739,6 @@ pub fn run(
             pump_events(&ctx, events);
         }
         schedule_polling(&ctx);
-        schedule_auto_refresh(&ctx);
         if demo {
             stage_demo(&ctx);
         }
@@ -1024,8 +1014,8 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
                         hero::update_weather(&ctx, widgets);
                     }
                 }
-                Event::Refreshed { manual, result } => {
-                    let shown = refreshed(manual, &result);
+                Event::Refreshed(result) => {
+                    let shown = refreshed(&result);
                     if let Some(note) = &shown.note
                         && let Some(widgets) = ctx.widgets.borrow().as_ref()
                     {
@@ -1080,31 +1070,14 @@ fn schedule_polling(ctx: &Rc<Ctx>) {
 }
 
 /// Fires `timer` every `interval`, sending what it asks of the daemon.
-fn repeat(ctx: &Rc<Ctx>, interval: Duration, timer: Timer) -> gtk::glib::SourceId {
+fn repeat(ctx: &Rc<Ctx>, interval: Duration, timer: Timer) {
     let ctx = ctx.clone();
     gtk::glib::timeout_add_local(interval, move || {
         if let Some(command) = on_timer(timer, is_hidden(&ctx)) {
             ctx.send(command);
         }
         gtk::glib::ControlFlow::Continue
-    })
-}
-
-/// Refreshes every source at the interval the settings ask for, while the
-/// window is shown. Called again when the interval changes.
-fn schedule_auto_refresh(ctx: &Rc<Ctx>) {
-    let minutes = {
-        let mut model = ctx.model.borrow_mut();
-        if let Some(timer) = model.auto_refresh.take() {
-            timer.remove();
-        }
-        model.view.auto_refresh_minutes
-    };
-    let Some(interval) = auto_refresh_every(minutes) else {
-        return;
-    };
-    let timer = repeat(ctx, interval, Timer::AutoRefresh);
-    ctx.model.borrow_mut().auto_refresh = Some(timer);
+    });
 }
 
 fn is_hidden(ctx: &Ctx) -> bool {

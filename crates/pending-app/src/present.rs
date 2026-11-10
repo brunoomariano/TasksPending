@@ -19,7 +19,7 @@ use crate::session::{Session, Todo};
 use crate::snooze::{self, until_text};
 use crate::state::ViewState;
 use crate::theme::OmarchyTheme;
-use crate::view::{AUTO_REFRESH_CHOICES, Stage, Theme, View, column_key, group_key, hide_key};
+use crate::view::{Stage, Theme, View, column_key, group_key};
 
 /// Cards a stack shows before "show more".
 pub const COLUMN_LIMIT: usize = 5;
@@ -583,22 +583,6 @@ pub fn board_choices(snapshot: &DashboardSnapshot, view: &View) -> Vec<Choice<Op
         .collect()
 }
 
-/// Settings' auto-refresh intervals, in minutes.
-pub fn interval_choices(view: &View) -> Vec<Choice<u32>> {
-    AUTO_REFRESH_CHOICES
-        .into_iter()
-        .map(|minutes| Choice {
-            label: if minutes == 0 {
-                "Off".to_owned()
-            } else {
-                format!("{minutes} min")
-            },
-            value: minutes,
-            active: view.auto_refresh_minutes == minutes,
-        })
-        .collect()
-}
-
 /// Settings' themes: the window's own colours, or Omarchy's.
 pub fn theme_choices(view: &View) -> Vec<Choice<Theme>> {
     [
@@ -706,77 +690,6 @@ pub fn bar_note(state: &BarState) -> String {
     }
 }
 
-/// A show/hide switch in Settings.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SwitchView {
-    pub label: String,
-    /// Its entry in the view's hidden set (see [`hide_key`]).
-    pub key: String,
-    pub on: bool,
-    /// A board or group above it is hidden: the switch is greyed out and
-    /// keeps its own setting for when that comes back.
-    pub inherited: bool,
-}
-
-/// A board's switch, then its groups'.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BoardSwitches {
-    pub board: SwitchView,
-    pub groups: Vec<GroupSwitches>,
-}
-
-/// A group's switch, with its logo, then its stacks'.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GroupSwitches {
-    pub group: SwitchView,
-    pub icon: Option<Icon>,
-    pub stacks: Vec<SwitchView>,
-}
-
-/// Every board, group and stack that Settings can show or hide.
-pub fn switches(snapshot: &DashboardSnapshot, view: &View) -> Vec<BoardSwitches> {
-    let switch = |label: &str, key: String, inherited: bool| SwitchView {
-        label: label.to_owned(),
-        on: !view.hidden.contains(&key),
-        key,
-        inherited,
-    };
-    snapshot
-        .boards
-        .iter()
-        .map(|board| {
-            let board_switch = switch(&board.name, hide_key::board(&board.name), false);
-            let board_off = !board_switch.on;
-            let groups = board
-                .groups
-                .iter()
-                .map(|group| {
-                    let key = hide_key::group(&board.name, &group.source);
-                    let group_switch = switch(&group.source, key, board_off);
-                    let off = board_off || !group_switch.on;
-                    GroupSwitches {
-                        stacks: group
-                            .columns
-                            .iter()
-                            .map(|column| {
-                                let key =
-                                    hide_key::column(&board.name, &group.source, &column.name);
-                                switch(&column.name, key, off)
-                            })
-                            .collect(),
-                        group: group_switch,
-                        icon: group.icon.clone(),
-                    }
-                })
-                .collect();
-            BoardSwitches {
-                board: board_switch,
-                groups,
-            }
-        })
-        .collect()
-}
-
 /// What stands above the board, or instead of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Notice {
@@ -830,15 +743,12 @@ pub struct Refreshed {
     pub note: Option<String>,
 }
 
-/// The answer to a refresh, `manual` when the user asked for it. One the
-/// daemon took holds the button until it would take another. A refusal
-/// shows only for a refresh the user asked for, since the auto-refresh
-/// timer tries again at its next turn: a wait holds the button for as long
-/// as the daemon said, and a failure is a note, too long for a button.
-pub fn refreshed(manual: bool, result: &Result<(), Refusal>) -> Refreshed {
+/// The answer to a refresh. One the daemon took holds the button until it
+/// would take another; a wait holds it for as long as the daemon said, and
+/// a failure is a note, too long for a button.
+pub fn refreshed(result: &Result<(), Refusal>) -> Refreshed {
     let (hold, note) = match result {
         Ok(()) => (Some((REFRESH_COOLDOWN, REFRESHING.to_owned())), None),
-        Err(_) if !manual => (None, None),
         Err(Refusal::Wait(secs)) => (Some((Duration::from_secs(*secs), wait_label(*secs))), None),
         Err(Refusal::Failed(error)) => (None, Some(format!("Could not refresh ({error})"))),
     };
@@ -890,7 +800,6 @@ pub enum Timer {
     Poll,
     Weather,
     Version,
-    AutoRefresh,
 }
 
 /// What a timer asks of the daemon when it fires. While the window is
@@ -901,14 +810,7 @@ pub fn on_timer(timer: Timer, hidden: bool) -> Option<Command> {
         _ if hidden => None,
         Timer::Poll => Some(Command::Poll),
         Timer::Weather => Some(Command::Weather),
-        Timer::AutoRefresh => Some(Command::Refresh { manual: false }),
     }
-}
-
-/// How often every source is refreshed for the setting of `minutes`, or
-/// `None` when it is off.
-pub fn auto_refresh_every(minutes: u32) -> Option<Duration> {
-    (minutes > 0).then(|| Duration::from_secs(u64::from(minutes) * 60))
 }
 
 /// `at` in local time, as written on the page.
@@ -1070,31 +972,13 @@ fn groups(snapshot: &DashboardSnapshot, view: &View, flags: &Flags) -> Vec<Group
     };
     let mut groups: Vec<(usize, GroupView)> = Vec::new();
     for board in &snapshot.boards {
-        if view.board.as_deref().is_some_and(|only| only != board.name)
-            || view.hidden.contains(&hide_key::board(&board.name))
-        {
+        if view.board.as_deref().is_some_and(|only| only != board.name) {
             continue;
         }
         for group in &board.groups {
-            if view
-                .hidden
-                .contains(&hide_key::group(&board.name, &group.source))
-            {
-                continue;
-            }
             let key = group_key(&board.name, &group.source);
             let expanded = view.expanded.contains(&key);
-            let visible: Vec<_> = group
-                .columns
-                .iter()
-                .filter(|column| {
-                    !view.hidden.contains(&hide_key::column(
-                        &board.name,
-                        &group.source,
-                        &column.name,
-                    ))
-                })
-                .collect();
+            let visible: Vec<_> = group.columns.iter().collect();
             if visible.is_empty() {
                 continue;
             }
@@ -2002,19 +1886,6 @@ mod tests {
         assert_eq!(ids, ["j:1", "gh:2"]);
         assert_eq!(picked[0].source, "jira");
         assert!(picked[0].icon.is_some());
-
-        let mut view = View::default();
-        view.hidden
-            .insert(hide_key::column("Work", "github", "Review"));
-        view.hidden
-            .insert(hide_key::column("Work", "github", "Drafts"));
-        let shown = page(&snapshot(), &view);
-        assert_eq!(
-            shown.groups.len(),
-            1,
-            "a group with every stack hidden is gone"
-        );
-        assert_eq!(shown.groups[0].source, "jira");
     }
 
     /// The controls know when a source needs attention, and the dialogs
@@ -2168,29 +2039,22 @@ mod tests {
     }
 
     /// A refresh the daemon took holds the button until it would take
-    /// another. A refusal shows only for a refresh the user asked for: as
-    /// a wait on the button, or as a note when it failed outright.
+    /// another. A refusal shows as a wait on the button, or as a note when
+    /// it failed outright.
     #[test]
     fn shows_the_answer_to_a_refresh() {
-        let none = Refreshed {
-            hold: None,
-            note: None,
-        };
         let accepted = Some((REFRESH_COOLDOWN, "Refreshing…".to_owned()));
-        assert_eq!(refreshed(false, &Ok(())).hold, accepted);
-        assert_eq!(refreshed(true, &Ok(())).hold, accepted);
+        assert_eq!(refreshed(&Ok(())).hold, accepted);
         let failed = Err(Refusal::Failed("HTTP 500".to_owned()));
-        assert_eq!(refreshed(false, &Err(Refusal::Wait(7))), none);
-        assert_eq!(refreshed(false, &failed), none);
         assert_eq!(
-            refreshed(true, &Err(Refusal::Wait(7))),
+            refreshed(&Err(Refusal::Wait(7))),
             Refreshed {
                 hold: Some((Duration::from_secs(7), "Wait 7s".to_owned())),
                 note: None,
             }
         );
         assert_eq!(
-            refreshed(true, &failed),
+            refreshed(&failed),
             Refreshed {
                 hold: None,
                 note: Some("Could not refresh (HTTP 500)".to_owned()),
@@ -2226,21 +2090,9 @@ mod tests {
         assert_eq!(asked(Timer::Poll, false), "Some(Poll)");
         assert_eq!(asked(Timer::Weather, false), "Some(Weather)");
         assert_eq!(asked(Timer::Version, false), "Some(Version)");
-        assert_eq!(
-            asked(Timer::AutoRefresh, false),
-            "Some(Refresh { manual: false })"
-        );
         assert_eq!(asked(Timer::Poll, true), "None");
         assert_eq!(asked(Timer::Weather, true), "None");
-        assert_eq!(asked(Timer::AutoRefresh, true), "None");
         assert_eq!(asked(Timer::Version, true), "Some(Version)");
-    }
-
-    /// The auto-refresh setting is in minutes, and none means off.
-    #[test]
-    fn refreshes_every_source_as_often_as_set() {
-        assert_eq!(auto_refresh_every(0), None);
-        assert_eq!(auto_refresh_every(15), Some(Duration::from_secs(15 * 60)));
     }
 
     /// What the mouse opens, the keys open too: Down from the last card a
@@ -2361,7 +2213,7 @@ mod tests {
     /// keeps its own setting.
     #[test]
     fn lays_out_the_settings() {
-        let mut view = View {
+        let view = View {
             board: Some("Work".to_owned()),
             ..View::default()
         };
@@ -2377,33 +2229,6 @@ mod tests {
                 ("Personal".to_owned(), Some("Personal".to_owned()), false),
             ]
         );
-        let intervals: Vec<_> = interval_choices(&view)
-            .into_iter()
-            .map(|c| (c.label, c.value, c.active))
-            .collect();
-        assert_eq!(intervals[0], ("Off".to_owned(), 0, false));
-        assert_eq!(intervals[1], ("1 min".to_owned(), 1, true));
-        assert_eq!(intervals.len(), 5);
-
-        view.hidden.insert(hide_key::board("Work"));
-        view.hidden
-            .insert(hide_key::column("Work", "github", "Drafts"));
-        let tree = switches(&snapshot(), &view);
-        let work = &tree[0];
-        assert_eq!(work.board.label, "Work");
-        assert!(!work.board.on && !work.board.inherited);
-        let github = &work.groups[0];
-        assert_eq!(github.group.key, hide_key::group("Work", "github"));
-        assert!(github.group.on && github.group.inherited);
-        let stacks: Vec<_> = github
-            .stacks
-            .iter()
-            .map(|s| (s.label.as_str(), s.on, s.inherited))
-            .collect();
-        assert_eq!(stacks, [("Review", true, true), ("Drafts", false, true)]);
-        let personal = &tree[1].groups[0];
-        assert!(personal.icon.is_some());
-        assert!(!personal.stacks[0].inherited);
     }
 
     /// The words and icons that do not depend on the snapshot.
@@ -2435,10 +2260,10 @@ mod tests {
         let words =
             |text: &str| -> String { text.chars().filter(|c| !c.is_ascii_digit()).collect() };
         let mut shown = vec![refresh_button(None, Instant::now()).0];
-        shown.extend(refreshed(true, &Ok(())).hold.map(|(_, label)| label));
+        shown.extend(refreshed(&Ok(())).hold.map(|(_, label)| label));
         for secs in 1..=REFRESH_COOLDOWN.as_secs() {
             shown.extend(
-                refreshed(true, &Err(Refusal::Wait(secs)))
+                refreshed(&Err(Refusal::Wait(secs)))
                     .hold
                     .map(|(_, label)| label),
             );

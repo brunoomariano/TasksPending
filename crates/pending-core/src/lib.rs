@@ -1,6 +1,7 @@
 pub mod api;
 pub mod config;
 pub mod due;
+pub mod edit;
 pub mod model;
 pub mod release;
 pub mod sample;

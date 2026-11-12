@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.10.1
+
+A todo 40 minutes in Done is deleted, and nothing of it is kept.
 
 ### Changed
 

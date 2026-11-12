@@ -15,7 +15,7 @@ use pending_core::{
 use crate::alert;
 use crate::backend::{Command, Refusal};
 use crate::keymap::Command as KeyCommand;
-use crate::session::{Session, Todo};
+use crate::session::{DONE_LASTS, Session, Todo};
 use crate::snooze::{self, until_text};
 use crate::state::ViewState;
 use crate::theme::OmarchyTheme;
@@ -454,8 +454,14 @@ pub fn todo_note(kept: bool, unsaved: Option<&str>) -> String {
         Some(why) => {
             format!("{TODO_UNSAVED} ({why}): quitting TasksPending forgets the changes.")
         }
-        None if kept => "Todos are kept; alerts last as long as TasksPending runs.".to_owned(),
-        None => "Kept only while TasksPending runs: quitting it forgets every todo.".to_owned(),
+        None if kept => format!(
+            "Kept until {} minutes in Done; alerts last as long as TasksPending runs.",
+            DONE_LASTS.num_minutes()
+        ),
+        None => format!(
+            "Kept until {} minutes in Done, and only while TasksPending runs.",
+            DONE_LASTS.num_minutes()
+        ),
     }
 }
 
@@ -1436,7 +1442,11 @@ mod tests {
             .add("Write the release notes", "for 0.7")
             .unwrap();
         let second = session.todos.add("Call the bank", "").unwrap();
-        assert!(session.todos.move_to(&second, Stage::InProgress));
+        assert!(
+            session
+                .todos
+                .move_to(&second, Stage::InProgress, chrono::Utc::now())
+        );
         let view = View {
             board: Some("Work".to_owned()),
             ..View::default()
@@ -1644,17 +1654,18 @@ mod tests {
         assert!(quick_menu(&card, Place::Board, K::Pick).is_empty());
     }
 
-    /// The todo dialog says what becomes of the todo: kept in the file,
-    /// kept for the run (the sandbox), or not saved, and why.
+    /// The todo dialog says what becomes of the todo: kept in the file
+    /// until it has been 40 minutes in Done, kept for the run (the
+    /// sandbox), or not saved, and why.
     #[test]
     fn the_todo_dialog_says_whether_todos_are_kept() {
         assert_eq!(
             todo_note(true, None),
-            "Todos are kept; alerts last as long as TasksPending runs."
+            "Kept until 40 minutes in Done; alerts last as long as TasksPending runs."
         );
         assert_eq!(
             todo_note(false, None),
-            "Kept only while TasksPending runs: quitting it forgets every todo."
+            "Kept until 40 minutes in Done, and only while TasksPending runs."
         );
         assert_eq!(
             todo_note(true, Some("disk full")),

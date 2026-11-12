@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- A todo 40 minutes in Done is deleted, with its alert, and nothing of it is kept; moving it out of Done stops the 40 minutes, and moving it back starts them over. The todo dialog says so. A todo already in Done when the window starts gets its 40 minutes from then. The todo file gains a column for when a todo went to Done, so 0.10.0 and older read it without writing to it.
+
 ## 0.10.0
 
 Settings sets the sources, their stacks and their tokens up, writing the config file with its comments kept and the env file, and the keyboard moves only between the cards.

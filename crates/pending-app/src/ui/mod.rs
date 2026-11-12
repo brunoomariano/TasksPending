@@ -309,7 +309,7 @@ impl Ctx {
         if card.local {
             match action {
                 CardAction::Stage(stage) => {
-                    self.change_todos(|todos| todos.move_to(&id, stage));
+                    self.change_todos(|todos| todos.move_to(&id, stage, Utc::now()));
                 }
                 CardAction::Edit => dialogs::show_todo(self, Some(&id)),
                 CardAction::Delete => self.change_session(|session| session.forget_todo(&id)),
@@ -466,6 +466,12 @@ impl Ctx {
             self.tell_bar();
         }
         self.redraw(true);
+    }
+
+    /// Deletes the todos [`crate::session::DONE_LASTS`] or more in Done,
+    /// and the alerts set on them.
+    fn expire_todos(self: &Rc<Self>) {
+        self.change_session(|session| session.expire_todos(Utc::now()));
     }
 
     /// The window came to the front: the alerts that rang meanwhile were
@@ -1065,16 +1071,20 @@ fn pump_events(ctx: &Rc<Ctx>, mut events: tokio::sync::mpsc::UnboundedReceiver<E
 }
 
 /// Reads the snapshot now and then every [`POLL_INTERVAL`] while the
-/// window is shown; the weather every [`WEATHER_INTERVAL`]. The alerts
-/// are looked at every [`ALERT_TICK`], shown or not.
+/// window is shown; the weather every [`WEATHER_INTERVAL`]. The alerts,
+/// and the todos long enough in Done, are looked at every [`ALERT_TICK`],
+/// shown or not.
 fn schedule_polling(ctx: &Rc<Ctx>) {
     ctx.send(Command::Poll);
     repeat(ctx, POLL_INTERVAL, Timer::Poll);
     repeat(ctx, WEATHER_INTERVAL, Timer::Weather);
     repeat(ctx, UPDATE_INTERVAL, Timer::Version);
     let alerts = ctx.clone();
+    // A todo done long enough before TasksPending started goes at once.
+    alerts.expire_todos();
     gtk::glib::timeout_add_local(ALERT_TICK, move || {
         alerts.ring_due();
+        alerts.expire_todos();
         gtk::glib::ControlFlow::Continue
     });
 }

@@ -30,7 +30,7 @@ A click on the icon (ringed) drops the window down, and the next sends it away. 
 
 <p align="center">
   <img src="docs/assets/tasks-pending-board.png" alt="The Board tab: one group of stacks per source, with the picked cards highlighted" width="49%">
-  <img src="docs/assets/tasks-pending-todo.png" alt="The New todo dialog: a title, optional details, and the note that todos are kept while alerts last as long as TasksPending runs" width="49%">
+  <img src="docs/assets/tasks-pending-todo.png" alt="The New todo dialog: a title, optional details, and the note that todos are kept until 40 minutes in Done while alerts last as long as TasksPending runs" width="49%">
 </p>
 
 <p align="center">

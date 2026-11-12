@@ -2,6 +2,9 @@
 //! that TasksPending alone writes. Each change rewrites the list in one
 //! transaction, so a write that failed is made good by the next one.
 //!
+//! A todo in Done keeps when it went there, so it is deleted on time
+//! across restarts.
+//!
 //! The file says it is TasksPending's (its `application_id`) and which
 //! schema it holds (its `user_version`). A file that is not ours, or not a
 //! database at all, is left as it is; one written by a newer TasksPending
@@ -13,6 +16,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use chrono::DateTime;
 use rusqlite::{Connection, ErrorCode, OpenFlags, params};
 
 use crate::session::Todo;
@@ -29,7 +33,7 @@ const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// The schemas in order: the migration at index `n` takes the file from
 /// version `n` to `n + 1`. The last one is what this build writes.
-const MIGRATIONS: [&str; 1] = [
+const MIGRATIONS: [&str; 2] = [
     // 1: the todos and the last id given.
     "CREATE TABLE todos (
         seq   INTEGER PRIMARY KEY CHECK (seq > 0),
@@ -42,6 +46,8 @@ const MIGRATIONS: [&str; 1] = [
         last INTEGER NOT NULL CHECK (last >= 0)
     ) STRICT;
     INSERT INTO ids (one, last) VALUES (1, 0);",
+    // 2: when a todo in Done went there, in seconds since the epoch.
+    "ALTER TABLE todos ADD COLUMN done_at INTEGER;",
 ];
 
 /// The schema this build writes.
@@ -156,25 +162,34 @@ impl Store {
     pub fn load(&self) -> Result<Saved, StoreError> {
         let mut statement = self
             .conn
-            .prepare("SELECT seq, title, body, stage FROM todos ORDER BY seq")?;
+            .prepare("SELECT seq, title, body, stage, done_at FROM todos ORDER BY seq")?;
         let rows = statement.query_map([], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, Option<i64>>(4)?,
             ))
         })?;
         let mut todos = Vec::new();
         for row in rows {
-            let (seq, title, body, stage) = row?;
+            let (seq, title, body, stage, done_at) = row?;
             let stage = parse_stage(&stage)
                 .ok_or_else(|| StoreError::Malformed(format!("todo:{seq} is at {stage:?}")))?;
+            let done_at = done_at
+                .map(|secs| {
+                    DateTime::from_timestamp(secs, 0).ok_or_else(|| {
+                        StoreError::Malformed(format!("todo:{seq} went to Done at {secs}"))
+                    })
+                })
+                .transpose()?;
             todos.push(Todo {
                 id: format!("todo:{seq}"),
                 title,
                 body,
                 stage,
+                done_at,
             });
         }
         let last: i64 = self
@@ -196,8 +211,9 @@ impl Store {
         tx.execute("DELETE FROM todos", [])?;
         let mut highest = last;
         {
-            let mut insert =
-                tx.prepare("INSERT INTO todos (seq, title, body, stage) VALUES (?1, ?2, ?3, ?4)")?;
+            let mut insert = tx.prepare(
+                "INSERT INTO todos (seq, title, body, stage, done_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
             for todo in todos {
                 let n = seq(&todo.id)
                     .filter(|n| *n > 0)
@@ -207,6 +223,7 @@ impl Store {
                     todo.title,
                     todo.body,
                     stage_name(todo.stage),
+                    todo.done_at.map(|at| at.timestamp()),
                 ])?;
                 highest = highest.max(n);
             }
@@ -311,7 +328,13 @@ mod tests {
             title: title.to_owned(),
             body: body.to_owned(),
             stage,
+            done_at: None,
         }
+    }
+
+    /// A moment, as the file keeps it: to the second.
+    fn moment(secs: i64) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::from_timestamp(secs, 0).unwrap()
     }
 
     /// The file holds the todos in the order they were written, each with
@@ -484,6 +507,64 @@ mod tests {
             .pragma_query_value(None, "application_id", |row| row.get(0))
             .unwrap();
         assert_eq!((version, id), (SCHEMA, APPLICATION_ID));
+    }
+
+    /// When a todo went to Done is kept with it, and one in Done from
+    /// before the time was kept stays without one.
+    #[test]
+    fn keeps_when_a_todo_went_to_done() {
+        let scratch = Scratch::new("done-at");
+        let path = scratch.file();
+        let mut store = Store::open(&path).unwrap();
+        let done = Todo {
+            done_at: Some(moment(1_794_500_000)),
+            ..todo(1, "Call the bank", "", Stage::Done)
+        };
+        let undated = todo(2, "From 0.10.0", "", Stage::Done);
+        store.save(&[done.clone(), undated.clone()], 2).unwrap();
+        drop(store);
+        assert_eq!(
+            Store::open(&path).unwrap().load().unwrap().todos,
+            [done, undated]
+        );
+    }
+
+    /// A file of the first schema, as 0.9 and 0.10.0 write it, is brought
+    /// up to date with its todos, those in Done without a time yet.
+    #[test]
+    fn brings_a_first_schema_file_up_to_date() {
+        let scratch = Scratch::new("first");
+        let path = scratch.file();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch(MIGRATIONS[0]).unwrap();
+        old.execute_batch(
+            "INSERT INTO todos (seq, title, body, stage) VALUES (3, 'Ship 0.10', '', 'done');
+             UPDATE ids SET last = 3;",
+        )
+        .unwrap();
+        old.pragma_update(None, "application_id", APPLICATION_ID)
+            .unwrap();
+        old.pragma_update(None, "user_version", 1).unwrap();
+        drop(old);
+
+        let mut store = Store::open(&path).unwrap();
+        assert!(store.writable());
+        let saved = store.load().unwrap();
+        assert_eq!(saved.todos, [todo(3, "Ship 0.10", "", Stage::Done)]);
+        assert_eq!(saved.last, 3);
+        let dated = Todo {
+            done_at: Some(moment(1_794_500_000)),
+            ..todo(3, "Ship 0.10", "", Stage::Done)
+        };
+        store.save(std::slice::from_ref(&dated), 3).unwrap();
+        drop(store);
+        let version: i32 = Connection::open(&path)
+            .unwrap()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        assert_eq!(Store::open(&path).unwrap().load().unwrap().todos, [dated]);
     }
 
     /// The sandbox's store works the same, and leaves nothing on disk.

@@ -4,6 +4,8 @@
 
 use std::path::Path;
 
+use chrono::{DateTime, TimeDelta, Utc};
+
 use crate::alert::{Alerts, Missed};
 use crate::todo_store::{Saved, Store};
 use crate::view::Stage;
@@ -38,7 +40,20 @@ impl Session {
         self.alerts.cancel(id);
         true
     }
+
+    /// Deletes the todos [`DONE_LASTS`] or more in Done at `now`, and the
+    /// alerts set on them. Says whether any went.
+    pub fn expire_todos(&mut self, now: DateTime<Utc>) -> bool {
+        let gone = self.todos.expire(now);
+        for id in &gone {
+            self.alerts.cancel(id);
+        }
+        !gone.is_empty()
+    }
 }
+
+/// How long a todo stays in Done before it is deleted.
+pub const DONE_LASTS: TimeDelta = TimeDelta::minutes(40);
 
 /// A todo written down in the window: a card of the window's own, on no
 /// source, that lives in the Activity area.
@@ -49,6 +64,9 @@ pub struct Todo {
     pub body: String,
     /// Where it stands in the Activity area.
     pub stage: Stage,
+    /// When it went to Done, while it is there; `None` in Done for one
+    /// written down before the time was kept.
+    pub done_at: Option<DateTime<Utc>>,
 }
 
 /// The todos, in the order they were written. Each change goes to the
@@ -156,6 +174,7 @@ impl Todos {
             title: title.to_owned(),
             body: body.trim().to_owned(),
             stage: Stage::Picked,
+            done_at: None,
         });
         self.save();
         Some(id)
@@ -188,16 +207,51 @@ impl Todos {
         true
     }
 
-    /// Moves the todo `id` to `stage` of the Activity area.
-    pub fn move_to(&mut self, id: &str, stage: Stage) -> bool {
+    /// Moves the todo `id` to `stage` of the Activity area at `now`. Going
+    /// to Done starts its [`DONE_LASTS`]; leaving Done stops them.
+    pub fn move_to(&mut self, id: &str, stage: Stage, now: DateTime<Utc>) -> bool {
         match self.list.iter_mut().find(|todo| todo.id == id) {
             Some(todo) => {
+                todo.done_at = match stage {
+                    Stage::Done if todo.stage == Stage::Done => todo.done_at,
+                    Stage::Done => Some(now),
+                    Stage::Picked | Stage::InProgress => None,
+                };
                 todo.stage = stage;
                 self.save();
                 true
             }
             None => false,
         }
+    }
+
+    /// Deletes the todos [`DONE_LASTS`] or more in Done at `now`, and
+    /// gives their ids. One in Done without a time (from before the time
+    /// was kept) starts its [`DONE_LASTS`] now.
+    pub fn expire(&mut self, now: DateTime<Utc>) -> Vec<String> {
+        let mut changed = false;
+        for todo in &mut self.list {
+            if todo.stage == Stage::Done && todo.done_at.is_none() {
+                todo.done_at = Some(now);
+                changed = true;
+            }
+        }
+        let gone: Vec<String> = self
+            .list
+            .iter()
+            .filter(|todo| {
+                todo.stage == Stage::Done && todo.done_at.is_some_and(|at| now - at >= DONE_LASTS)
+            })
+            .map(|todo| todo.id.clone())
+            .collect();
+        if !gone.is_empty() {
+            self.list.retain(|todo| !gone.contains(&todo.id));
+            changed = true;
+        }
+        if changed {
+            self.save();
+        }
+        gone
     }
 
     pub fn get(&self, id: &str) -> Option<&Todo> {
@@ -215,6 +269,11 @@ mod tests {
 
     use super::*;
     use crate::alert::Alert;
+
+    /// `minutes` after nine on a morning.
+    fn at(minutes: i64) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 11, 12, 9, 0, 0).unwrap() + TimeDelta::minutes(minutes)
+    }
 
     /// An alert set on a todo goes with it: deleted, nothing rings about
     /// it; rewritten, the alert rings with the new title.
@@ -274,6 +333,7 @@ mod tests {
                 title: "Write the release notes".to_owned(),
                 body: "for 0.7".to_owned(),
                 stage: Stage::Picked,
+                done_at: None,
             })
         );
         assert!(todos.edit(&first, "Write the notes", ""));
@@ -342,7 +402,7 @@ mod tests {
         let bank = todos.add("Call the bank", "").unwrap();
         let notes = todos.add("Write the notes", "for 0.9").unwrap();
         let gone = todos.add("Forget me", "").unwrap();
-        assert!(todos.move_to(&bank, Stage::InProgress));
+        assert!(todos.move_to(&bank, Stage::InProgress, at(0)));
         assert!(todos.edit(&notes, "Write the release notes", "for 0.9"));
         assert!(todos.remove(&gone));
         drop(todos);
@@ -482,8 +542,99 @@ mod tests {
         let mut todos = Todos::default();
         let id = todos.add("Call the bank", "").unwrap();
         assert_eq!(todos.get(&id).map(|t| t.stage), Some(Stage::Picked));
-        assert!(todos.move_to(&id, Stage::InProgress));
+        assert!(todos.move_to(&id, Stage::InProgress, at(0)));
         assert_eq!(todos.get(&id).map(|t| t.stage), Some(Stage::InProgress));
-        assert!(!todos.move_to("todo:9", Stage::Picked));
+        assert!(!todos.move_to("todo:9", Stage::Picked, at(0)));
+    }
+
+    /// A todo 40 minutes in Done is deleted, and the alert set on it goes
+    /// too; one there for less stays, and so do those in other stages.
+    #[test]
+    fn a_todo_40_minutes_in_done_is_deleted() {
+        let mut session = Session::default();
+        let done = session.todos.add("Call the bank", "").unwrap();
+        let doing = session.todos.add("Write the notes", "").unwrap();
+        assert!(session.todos.move_to(&doing, Stage::InProgress, at(0)));
+        assert!(session.todos.move_to(&done, Stage::Done, at(0)));
+        session.alerts.set(
+            &done,
+            Alert {
+                at: Local.with_ymd_and_hms(2026, 11, 13, 9, 0, 0).unwrap(),
+                title: "Call the bank".to_owned(),
+                source: "Todo".to_owned(),
+            },
+        );
+
+        assert!(!session.expire_todos(at(39)), "39 minutes in Done");
+        assert!(session.todos.get(&done).is_some());
+        assert!(session.expire_todos(at(40)));
+        assert_eq!(session.todos.get(&done), None);
+        assert_eq!(session.alerts.cancel(&done), None, "its alert went too");
+        assert!(session.todos.get(&doing).is_some(), "In progress stays");
+        assert!(!session.expire_todos(at(600)));
+    }
+
+    /// The 40 minutes count from the last time the todo went to Done:
+    /// leaving Done stops them, and moving it to Done again while there
+    /// does not start them over.
+    #[test]
+    fn the_40_minutes_count_from_going_to_done() {
+        let mut todos = Todos::default();
+        let id = todos.add("Call the bank", "").unwrap();
+        assert!(todos.move_to(&id, Stage::Done, at(0)));
+        assert_eq!(todos.get(&id).and_then(|t| t.done_at), Some(at(0)));
+        assert!(todos.move_to(&id, Stage::InProgress, at(30)));
+        assert_eq!(todos.get(&id).and_then(|t| t.done_at), None);
+        assert!(todos.expire(at(45)).is_empty(), "not in Done");
+        assert!(todos.move_to(&id, Stage::Done, at(45)));
+        assert!(todos.move_to(&id, Stage::Done, at(60)));
+        assert!(todos.expire(at(84)).is_empty());
+        assert_eq!(todos.expire(at(85)), [id]);
+    }
+
+    /// When a todo went to Done is kept in the file: one done before a
+    /// restart goes on time after it, and its deletion is kept too.
+    #[test]
+    fn the_time_in_done_outlasts_the_window() {
+        let scratch = Scratch::new("done");
+        let path = scratch.file();
+        let mut todos = Todos::open(&path);
+        let done = todos.add("Call the bank", "").unwrap();
+        let kept = todos.add("Write the notes", "").unwrap();
+        assert!(todos.move_to(&done, Stage::Done, at(0)));
+        drop(todos);
+
+        let mut todos = Todos::open(&path);
+        assert!(todos.expire(at(39)).is_empty());
+        assert_eq!(todos.expire(at(40)), std::slice::from_ref(&done));
+        drop(todos);
+        let todos = Todos::open(&path);
+        assert_eq!(todos.get(&done), None, "gone for good");
+        assert!(todos.get(&kept).is_some());
+    }
+
+    /// A todo in Done from before the time was kept (0.10.0 kept none)
+    /// gets its 40 minutes from when they are first counted, and a
+    /// restart does not start them over.
+    #[test]
+    fn a_todo_done_before_the_time_was_kept_gets_40_minutes() {
+        let scratch = Scratch::new("undated");
+        let path = scratch.file();
+        let mut todos = Todos::open(&path);
+        let id = todos.add("Call the bank", "").unwrap();
+        assert!(todos.move_to(&id, Stage::Done, at(0)));
+        drop(todos);
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute("UPDATE todos SET done_at = NULL", [])
+            .unwrap();
+
+        let mut todos = Todos::open(&path);
+        assert_eq!(todos.get(&id).and_then(|t| t.done_at), None);
+        assert!(todos.expire(at(100)).is_empty(), "counted from now on");
+        drop(todos);
+        let mut todos = Todos::open(&path);
+        assert!(todos.expire(at(139)).is_empty());
+        assert_eq!(todos.expire(at(140)), [id]);
     }
 }

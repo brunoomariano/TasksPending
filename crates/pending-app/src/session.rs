@@ -95,12 +95,18 @@ impl Todos {
         });
         match opened {
             Ok((store, Saved { todos, last })) => Todos {
-                unsaved: (!store.writable()).then(|| {
-                    format!(
-                        "{} comes from a newer TasksPending; changes last until it quits",
+                unsaved: match store.stuck() {
+                    Some(why) => Some(format!(
+                        "Could not save the todos (could not bring {} up to date: {why})",
                         path.display()
-                    )
-                }),
+                    )),
+                    None => (!store.writable()).then(|| {
+                        format!(
+                            "{} comes from a newer TasksPending; changes last until it quits",
+                            path.display()
+                        )
+                    }),
+                },
                 list: todos,
                 next: last,
                 store: Some(store),
@@ -227,11 +233,12 @@ impl Todos {
 
     /// Deletes the todos [`DONE_LASTS`] or more in Done at `now`, and
     /// gives their ids. One in Done without a time (from before the time
-    /// was kept) starts its [`DONE_LASTS`] now.
+    /// was kept), or with one ahead of `now` (the clock was set back),
+    /// starts its [`DONE_LASTS`] now.
     pub fn expire(&mut self, now: DateTime<Utc>) -> Vec<String> {
         let mut changed = false;
         for todo in &mut self.list {
-            if todo.stage == Stage::Done && todo.done_at.is_none() {
+            if todo.stage == Stage::Done && todo.done_at.is_none_or(|at| at > now) {
                 todo.done_at = Some(now);
                 changed = true;
             }
@@ -611,6 +618,41 @@ mod tests {
         let todos = Todos::open(&path);
         assert_eq!(todos.get(&done), None, "gone for good");
         assert!(todos.get(&kept).is_some());
+    }
+
+    /// A time in Done later than now (the clock was ahead, then set right)
+    /// counts from now instead.
+    #[test]
+    fn a_time_in_done_ahead_of_the_clock_counts_from_now() {
+        let mut todos = Todos::default();
+        let id = todos.add("Call the bank", "").unwrap();
+        assert!(todos.move_to(&id, Stage::Done, at(24 * 60)));
+        assert!(todos.expire(at(0)).is_empty());
+        assert_eq!(todos.get(&id).and_then(|t| t.done_at), Some(at(0)));
+        assert_eq!(todos.expire(at(40)), [id]);
+    }
+
+    /// A todo file from 0.9 or 0.10.0 that cannot be brought up to date
+    /// shows its todos all the same, and the Activity says they are not
+    /// being saved, and why.
+    #[test]
+    fn shows_an_old_file_it_cannot_bring_up_to_date() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let scratch = Scratch::new("old-readonly");
+        let path = scratch.file();
+        crate::todo_store::write_first_schema(&path, "Ship 0.10");
+        if std::fs::metadata(&path).unwrap().uid() == 0 {
+            return; // root writes to a read-only file all the same
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+
+        let mut todos = Todos::open(&path);
+        assert_eq!(titles(&todos), [("Ship 0.10", Stage::Done)]);
+        let unsaved = todos.unsaved().unwrap().to_owned();
+        assert!(unsaved.starts_with("Could not save the todos"), "{unsaved}");
+        assert!(todos.expire(at(0)).is_empty());
+        assert_eq!(todos.expire(at(40)), ["todo:3"], "in Done all the same");
     }
 
     /// A todo in Done from before the time was kept (0.10.0 kept none)

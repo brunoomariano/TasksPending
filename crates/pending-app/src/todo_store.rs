@@ -7,8 +7,9 @@
 //!
 //! The file says it is TasksPending's (its `application_id`) and which
 //! schema it holds (its `user_version`). A file that is not ours, or not a
-//! database at all, is left as it is; one written by a newer TasksPending
-//! is read and never written.
+//! database at all, is left as it is; one written by a newer TasksPending,
+//! or an older one that cannot be brought up to date, is read and never
+//! written. A todo deleted leaves no text of it in the file.
 
 use std::fs;
 use std::io;
@@ -65,6 +66,8 @@ pub enum StoreError {
     },
     #[error("the todo file comes from a newer TasksPending")]
     Newer,
+    #[error("the todo file could not be brought up to date: {0}")]
+    Stuck(String),
     #[error("a saved todo is unreadable: {0}")]
     Malformed(String),
     #[error(transparent)]
@@ -74,8 +77,13 @@ pub enum StoreError {
 /// The todo file, open.
 pub struct Store {
     conn: Connection,
-    /// Off for a file from a newer TasksPending.
+    /// Off for a file from a newer TasksPending, or one that could not be
+    /// brought up to date.
     writable: bool,
+    /// The schema the file holds.
+    schema: i32,
+    /// Why an older file could not be brought up to date.
+    stuck: Option<String>,
 }
 
 impl std::fmt::Debug for Store {
@@ -129,27 +137,39 @@ impl Store {
                 return Err(StoreError::Foreign(path.to_owned()));
             }
         }
+        // What is deleted is overwritten, not left in free pages.
+        conn.pragma_update(None, "secure_delete", true)?;
         if version > SCHEMA {
             return Ok(Store {
                 conn,
                 writable: false,
+                schema: version,
+                stuck: None,
             });
         }
         let pending = MIGRATIONS
             .get(version.max(0) as usize..)
             .unwrap_or_default();
-        if !pending.is_empty() {
-            let tx = conn.transaction()?;
-            for migration in pending {
-                tx.execute_batch(migration)?;
+        if !pending.is_empty()
+            && let Err(error) = migrate(&mut conn, pending)
+        {
+            // An older file that cannot be written (read-only, a full
+            // disk) still shows its todos; a new one is no todo file yet.
+            if version == 0 {
+                return Err(error);
             }
-            tx.pragma_update(None, "application_id", APPLICATION_ID)?;
-            tx.pragma_update(None, "user_version", SCHEMA)?;
-            tx.commit()?;
+            return Ok(Store {
+                conn,
+                writable: false,
+                schema: version,
+                stuck: Some(error.to_string()),
+            });
         }
         Ok(Store {
             conn,
             writable: true,
+            schema: SCHEMA,
+            stuck: None,
         })
     }
 
@@ -158,11 +178,19 @@ impl Store {
         self.writable
     }
 
+    /// Why an older file, which this build would write once brought up
+    /// to date, is only read.
+    pub fn stuck(&self) -> Option<&str> {
+        self.stuck.as_deref()
+    }
+
     /// The todos in the file.
     pub fn load(&self) -> Result<Saved, StoreError> {
-        let mut statement = self
-            .conn
-            .prepare("SELECT seq, title, body, stage, done_at FROM todos ORDER BY seq")?;
+        // The first schema kept no time in Done.
+        let done_at = if self.schema >= 2 { "done_at" } else { "NULL" };
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT seq, title, body, stage, {done_at} FROM todos ORDER BY seq"
+        ))?;
         let rows = statement.query_map([], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -205,7 +233,10 @@ impl Store {
     /// given. All of it or none: a todo refused leaves the file as it was.
     pub fn save(&mut self, todos: &[Todo], last: u64) -> Result<(), StoreError> {
         if !self.writable {
-            return Err(StoreError::Newer);
+            return Err(match &self.stuck {
+                Some(why) => StoreError::Stuck(why.clone()),
+                None => StoreError::Newer,
+            });
         }
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM todos", [])?;
@@ -237,6 +268,19 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+}
+
+/// Runs `pending` on `conn` in one transaction, leaving the file at the
+/// current schema, or as it was.
+fn migrate(conn: &mut Connection, pending: &[&str]) -> Result<(), StoreError> {
+    let tx = conn.transaction()?;
+    for migration in pending {
+        tx.execute_batch(migration)?;
+    }
+    tx.pragma_update(None, "application_id", APPLICATION_ID)?;
+    tx.pragma_update(None, "user_version", SCHEMA)?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// Makes the folders up to `path` and an empty `path`, for the user
@@ -293,9 +337,27 @@ fn seq(id: &str) -> Option<u64> {
     id.strip_prefix("todo:")?.parse().ok()
 }
 
+/// Writes a todo file at `path` as 0.9 and 0.10.0 write it (the first
+/// schema), holding one todo, `todo:3`, in Done.
+#[cfg(test)]
+pub(crate) fn write_first_schema(path: &Path, title: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let old = Connection::open(path).unwrap();
+    old.execute_batch(MIGRATIONS[0]).unwrap();
+    old.execute(
+        "INSERT INTO todos (seq, title, body, stage) VALUES (3, ?1, '', 'done')",
+        params![title],
+    )
+    .unwrap();
+    old.execute_batch("UPDATE ids SET last = 3;").unwrap();
+    old.pragma_update(None, "application_id", APPLICATION_ID)
+        .unwrap();
+    old.pragma_update(None, "user_version", 1).unwrap();
+}
+
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     use super::*;
 
@@ -535,18 +597,7 @@ mod tests {
     fn brings_a_first_schema_file_up_to_date() {
         let scratch = Scratch::new("first");
         let path = scratch.file();
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let old = Connection::open(&path).unwrap();
-        old.execute_batch(MIGRATIONS[0]).unwrap();
-        old.execute_batch(
-            "INSERT INTO todos (seq, title, body, stage) VALUES (3, 'Ship 0.10', '', 'done');
-             UPDATE ids SET last = 3;",
-        )
-        .unwrap();
-        old.pragma_update(None, "application_id", APPLICATION_ID)
-            .unwrap();
-        old.pragma_update(None, "user_version", 1).unwrap();
-        drop(old);
+        write_first_schema(&path, "Ship 0.10");
 
         let mut store = Store::open(&path).unwrap();
         assert!(store.writable());
@@ -565,6 +616,54 @@ mod tests {
             .unwrap();
         assert_eq!(version, 2);
         assert_eq!(Store::open(&path).unwrap().load().unwrap().todos, [dated]);
+    }
+
+    /// A file of the first schema that cannot be brought up to date (read
+    /// only here; a full disk does the same) is read as it is, says why it
+    /// is not written, and is left byte for byte as it was.
+    #[test]
+    fn reads_a_first_schema_file_it_cannot_bring_up_to_date() {
+        let scratch = Scratch::new("first-readonly");
+        let path = scratch.file();
+        write_first_schema(&path, "Ship 0.10");
+        if fs::metadata(&path).unwrap().uid() == 0 {
+            return; // root writes to a read-only file all the same
+        }
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+        let before = fs::read(&path).unwrap();
+
+        let mut store = Store::open(&path).unwrap();
+        assert!(!store.writable());
+        let why = store.stuck().unwrap().to_owned();
+        assert!(why.contains("readonly"), "{why}");
+        assert_eq!(
+            store.load().unwrap().todos,
+            [todo(3, "Ship 0.10", "", Stage::Done)]
+        );
+        assert!(matches!(store.save(&[], 3), Err(StoreError::Stuck(_))));
+        drop(store);
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    /// A todo deleted leaves no text of it in the file.
+    #[test]
+    fn a_deleted_todo_leaves_nothing_in_the_file() {
+        let scratch = Scratch::new("secure");
+        let path = scratch.file();
+        let mut store = Store::open(&path).unwrap();
+        let words = "Ask the zebra about the plan";
+        store
+            .save(&[todo(1, words, "and its details", Stage::Done)], 1)
+            .unwrap();
+        store.save(&[], 1).unwrap();
+        drop(store);
+        let bytes = fs::read(&path).unwrap();
+        for text in [words, "and its details"] {
+            assert!(
+                !bytes.windows(text.len()).any(|w| w == text.as_bytes()),
+                "{text:?} is still in the file"
+            );
+        }
     }
 
     /// The sandbox's store works the same, and leaves nothing on disk.

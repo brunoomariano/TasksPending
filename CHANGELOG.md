@@ -4,7 +4,7 @@
 
 ### Changed
 
-- A todo 40 minutes in Done is deleted, with its alert, and nothing of it is kept; moving it out of Done stops the 40 minutes, and moving it back starts them over. The todo dialog says so. A todo already in Done when the window starts gets its 40 minutes from then. The todo file gains a column for when a todo went to Done, so 0.10.0 and older read it without writing to it.
+- A todo 40 minutes in Done is deleted, with its alert, and nothing of it is kept, in the todo file either; moving it out of Done stops the 40 minutes, and moving it back starts them over. The 40 minutes go on while TasksPending is closed, and the todo dialog says how long todos are kept. A todo already in Done in the file of 0.9.0 or 0.10.0 gets its 40 minutes from the first time 0.10.1 counts them. The todo file gains a column for when a todo went to Done, so 0.9.0 and 0.10.0 open it read-only: what changes in them is lost when they quit.
 
 ## 0.10.0
 
